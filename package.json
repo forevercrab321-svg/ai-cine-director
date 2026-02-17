@@ -1,0 +1,41 @@
+{
+  "name": "ai-cine-director",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "server": "tsx server/index.ts",
+    "dev:all": "concurrently \"npm run server\" \"npm run dev\"",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@google/genai": "^1.40.0",
+    "@stripe/stripe-js": "^8.7.0",
+    "@supabase/supabase-js": "^2.95.3",
+    "better-sqlite3": "^12.6.2",
+    "concurrently": "^9.2.1",
+    "cors": "^2.8.6",
+    "dotenv": "^17.2.4",
+    "express": "^5.2.1",
+    "fs": "^0.0.1-security",
+    "next": "^16.1.6",
+    "node-fetch": "^3.3.2",
+    "path": "^0.12.7",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "stripe": "^20.3.1",
+    "tsx": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.14.0",
+    "@types/stripe": "^8.0.416",
+    "@vercel/node": "^5.6.2",
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0"
+  }
+}

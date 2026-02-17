@@ -1,0 +1,8 @@
+{
+  "name": "AI Cine-Director",
+  "description": "An advanced storyboard generator that turns story ideas into consistent, production-ready AI image and video prompts using the Anchor Method.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
