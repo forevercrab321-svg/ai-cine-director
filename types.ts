@@ -47,7 +47,8 @@ export type VideoModel =
   | 'seedance_lite'
   | 'hailuo_02_fast'
   | 'hailuo_live'
-  | 'kling_2_5';
+  | 'kling_2_5'
+  | 'google_gemini_nano_banana';
 
 export type GenerationMode = 'storyboard' | 'story';
 
@@ -139,6 +140,7 @@ export const MODEL_COSTS: Record<VideoModel | 'DEFAULT', number> = {
   hailuo_02_fast: 18,     // API: ~$0.12/video → 12 × 1.5 = 18
   hailuo_live: 75,        // API: ~$0.50/video → 50 × 1.5 = 75   🎭 Live2D 专用
   kling_2_5: 53,          // API: ~$0.35/video → 35 × 1.5 ≈ 53   🏆 最佳物理
+  google_gemini_nano_banana: 5, // Budget model
   DEFAULT: 28
 };
 
@@ -171,6 +173,12 @@ export const MODEL_METADATA: Record<VideoModel, { label: string; tags: string[];
     tags: ["🎭 Live2D", "🎨 动画专用"],
     badge: "🎭 Live2D",
     priceLabel: "75 credits"
+  },
+  google_gemini_nano_banana: {
+    label: "Google Gemini Nano Banana",
+    tags: ["🍌 Experimental", "⚡ Fast"],
+    badge: "New",
+    priceLabel: "5 credits"
   }
 };
 
@@ -194,7 +202,8 @@ export const MODEL_MULTIPLIERS: Record<VideoModel, number> = {
   hailuo_02_fast: 1.2,
   seedance_lite: 1.3,
   kling_2_5: 1.6,
-  hailuo_live: 2.0
+  hailuo_live: 2.0,
+  google_gemini_nano_banana: 1.0
 };
 
 export const CREDIT_PACKS = [
