@@ -50,7 +50,7 @@ const getSupabaseAdmin = () => {
 const getStripe = () => {
     const key = process.env.STRIPE_SECRET_KEY;
     if (!key) throw new Error('STRIPE_SECRET_KEY missing');
-    return new Stripe(key, { apiVersion: '2023-10-16' });
+    return new Stripe(key, { apiVersion: '2026-01-28.clover' });
 };
 
 // Auth Middleware
@@ -88,90 +88,102 @@ const estimateCost = (model: string): number => {
 // 1. Replicate Prediction (With Credit Check)
 app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
     try {
-        const { version, input } = req.body; // version is full model path (owner/name) or ID
+        const { version, input } = req.body;
         const userId = req.user.id;
-        const supabase = getSupabaseAdmin();
+        const authHeader = req.headers.authorization; // "Bearer <user_token>"
 
         // 1. Identify Model & Estimate Cost
-        // If version is a hash, we might need a mapping, but assuming full path for now based on service
-        // Let's rely on what the frontend sends. Services usually send full path now.
-        // If it's a hash, we default to 20.
-        const modelKey = version.split(':')[0]; // simpler check
         const estimatedCost = estimateCost(version);
 
-        // 2. Reserve Credits (Atomic RPC)
-        const { data: reserveResult, error: reserveError } = await supabase
-            .rpc('reserve_credits', {
-                p_user_id: userId,
-                p_amount: estimatedCost,
-                p_meta: { action: 'predict', model: version }
-            });
+        // 2. Deduct Credits using user-context client (so auth.uid() works in RPC)
+        // Using deduct_credits RPC which is atomic and prevents negative credits
+        const supabaseUserClient = createClient(
+            process.env.VITE_SUPABASE_URL!,
+            process.env.VITE_SUPABASE_ANON_KEY!,
+            { global: { headers: { Authorization: authHeader } } }
+        );
 
-        if (reserveError) throw new Error(reserveError.message);
+        const { data: deductSuccess, error: deductError } = await supabaseUserClient.rpc('deduct_credits', {
+            amount_to_deduct: estimatedCost,
+            model_used: version,
+            base_cost: estimatedCost,
+            multiplier: 1
+        });
 
-        // 3. Handle Insufficient Funds
-        // RPC returns { success: bool, error?: string, ... }
-        const result = reserveResult as any;
-        if (!result || !result.success) {
-            return res.status(402).json(result);
+        if (deductError) {
+            console.error('[Credit Deduct Error]', deductError);
+            return res.status(500).json({ error: 'Credit verification failed: ' + deductError.message });
         }
 
-        // 4. Call Replicate
+        // deduct_credits returns boolean: true = deducted, false = insufficient
+        if (!deductSuccess) {
+            return res.status(402).json({
+                error: 'INSUFFICIENT_CREDITS',
+                code: 'INSUFFICIENT_CREDITS',
+                message: 'Insufficient credits to perform this action'
+            });
+        }
+
+        // 3. Call Replicate API
         const token = getReplicateToken();
         const REPLICATE_API_BASE = 'https://api.replicate.com/v1';
 
-        // Use standard model path or version
         const isModelPath = version.includes('/') && !version.match(/^[a-f0-9]{64}$/);
         const targetUrl = isModelPath
             ? `${REPLICATE_API_BASE}/models/${version}/predictions`
             : `${REPLICATE_API_BASE}/predictions`;
-
-        // Setup Webhook for async completion
-        // If deployed on Vercel, we need the real URL.
-        // For dev, we might verify via polling or ngrok.
-        // Here we'll stick to frontend polling for simplicity unless user provided a domain.
-        // BUT Requirement 7 says: "implement /api/billing/webhook". 
-        // Replicate webhook isn't strictly requested but is good practice.
-        // For now, let's keep the synchronous start + frontend poll pattern 
-        // BUT we must track the specific prediction ID to settle credits later.
 
         const response = await fetch(targetUrl, {
             method: 'POST',
             headers: {
                 Authorization: `Bearer ${token}`,
                 'Content-Type': 'application/json',
-                Prefer: 'wait', // Trying to get result immediately if fast
+                Prefer: 'wait',
             },
             body: JSON.stringify(isModelPath ? { input } : { version, input }),
         });
 
         if (!response.ok) {
-            // Refund on immediate API failure
-            await supabase.rpc('release_credits', {
-                p_user_id: userId,
-                p_amount: estimatedCost,
-                p_meta: { reason: 'api_error' }
-            });
+            // Replicate call failed after credit deduction — refund credits via admin client
+            try {
+                const supabaseAdmin = getSupabaseAdmin();
+                const { data: profile } = await supabaseAdmin
+                    .from('profiles')
+                    .select('credits')
+                    .eq('id', userId)
+                    .single();
+                if (profile) {
+                    await supabaseAdmin
+                        .from('profiles')
+                        .update({ credits: Math.max(0, (profile.credits || 0) + estimatedCost) })
+                        .eq('id', userId);
+                    console.log(`[Replicate] Refunded ${estimatedCost} credits to user ${userId} after API failure`);
+                }
+            } catch (refundErr) {
+                console.error('[Replicate] Failed to refund credits after API error:', refundErr);
+            }
             const errText = await response.text();
+            console.error(`[Replicate] Error ${response.status}: ${errText}`);
             return res.status(response.status).json({ error: errText });
         }
 
         const prediction = await response.json() as ReplicateResponse;
 
-        // 5. Record Job
-        await supabase.from('generation_jobs').insert({
-            user_id: userId,
-            prediction_id: prediction.id,
-            status: prediction.status,
-            model: version,
-            estimated_cost: estimatedCost,
-            actual_cost: estimatedCost // placeholder
-        });
+        // 4. Log the job (best effort)
+        try {
+            const supabaseAdmin = getSupabaseAdmin();
+            await supabaseAdmin.from('generation_jobs').insert({
+                user_id: userId,
+                prediction_id: prediction.id,
+                status: prediction.status,
+                model: version,
+                estimated_cost: estimatedCost,
+                actual_cost: estimatedCost
+            });
+        } catch (e) {
+            console.warn('[Job Log] Failed to log job (non-fatal):', e);
+        }
 
-        // 6. Return to Frontend
-        // Frontend will poll. If it fails later, we need a way to refund.
-        // Ideally we need a Replicate Webhook.
-        // For now, we will rely on a "check status" endpoint that also settles credits if finished.
         res.json(prediction);
 
     } catch (error: any) {
@@ -180,12 +192,11 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
     }
 });
 
-// 2. Replicate Status Check & Credit Settlement
+// 2. Replicate Status Check (simple pass-through, no credit settlement needed)
+// Credits are deducted upfront atomically via deduct_credits RPC
 app.get('/api/replicate/status/:id', requireAuth, async (req: any, res: any) => {
     try {
         const { id } = req.params;
-        const userId = req.user.id;
-        const supabase = getSupabaseAdmin();
         const token = getReplicateToken();
 
         const response = await fetch(`https://api.replicate.com/v1/predictions/${id}`, {
@@ -194,45 +205,6 @@ app.get('/api/replicate/status/:id', requireAuth, async (req: any, res: any) => 
 
         if (!response.ok) return res.status(response.status).json({ error: await response.text() });
         const prediction = await response.json() as ReplicateResponse;
-
-        // Sync Status to DB
-        // If terminal state, settle credits
-        if (['succeeded', 'failed', 'canceled'].includes(prediction.status)) {
-            // Get job to know estimated cost
-            const { data: job } = await supabase
-                .from('generation_jobs')
-                .select('*')
-                .eq('prediction_id', id)
-                .single();
-
-            if (job && job.status !== prediction.status) {
-                // Settle
-                if (prediction.status === 'succeeded') {
-                    // Commit (burn reserved)
-                    // If we want exact time-based billing, we'd adjust cost here. 
-                    // For now, commit estimated cost.
-                    await supabase.rpc('commit_credits', {
-                        p_user_id: userId,
-                        p_amount: job.estimated_cost,
-                        p_meta: { prediction_id: id }
-                    });
-                } else {
-                    // Refund
-                    await supabase.rpc('release_credits', {
-                        p_user_id: userId,
-                        p_amount: job.estimated_cost,
-                        p_meta: { reason: prediction.status, prediction_id: id }
-                    });
-                }
-
-                // Update Job
-                await supabase
-                    .from('generation_jobs')
-                    .update({ status: prediction.status, updated_at: new Date().toISOString() })
-                    .eq('id', job.id);
-            }
-        }
-
         res.json(prediction);
     } catch (error: any) {
         res.status(500).json({ error: error.message });
@@ -308,12 +280,20 @@ app.post('/api/billing/webhook', async (req: any, res: any) => {
 
         if (userId && credits) {
             const supabase = getSupabaseAdmin();
-            await supabase.rpc('add_credits', {
-                p_user_id: userId,
-                p_amount: credits,
-                p_meta: { stripe_session_id: session.id }
-            });
-            console.log(`[Billing] Added ${credits} credits to user ${userId}`);
+            // Use direct update since add_credits RPC may not exist or have diff params
+            const { data: profile } = await supabase
+                .from('profiles')
+                .select('credits')
+                .eq('id', userId)
+                .single();
+
+            if (profile) {
+                await supabase
+                    .from('profiles')
+                    .update({ credits: (profile.credits || 0) + credits })
+                    .eq('id', userId);
+                console.log(`[Billing] Added ${credits} credits to user ${userId}. New balance: ${(profile.credits || 0) + credits}`);
+            }
         }
     }
 

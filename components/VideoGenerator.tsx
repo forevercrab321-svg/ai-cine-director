@@ -37,17 +37,18 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
         settings,
         userState,
         isAuthenticated,
-        deductCredits,
         openPricingModal,
         hasEnoughCredits,
         refreshBalance  // ★ Sync balance from DB after operations
     } = useAppContext();
 
     // ★ Credit guard: compute whether user can afford at least one generation
+    // NOTE: hasEnoughCredits opens pricing modal as a side-effect when called with insufficient balance
+    // We do NOT call it here at render time (would open modal on every render) — only call on button click
     const imageCost = settings.imageModel === 'flux_schnell' ? CREDIT_COSTS.IMAGE_FLUX_SCHNELL : CREDIT_COSTS.IMAGE_FLUX;
     const videoCostPerScene = MODEL_COSTS[settings.videoModel] || 28;
-    const insufficientForImage = !userState.isAdmin && !hasEnoughCredits(imageCost);
-    const insufficientForVideo = !userState.isAdmin && !hasEnoughCredits(videoCostPerScene);
+    const insufficientForImage = !userState.isAdmin && userState.balance < imageCost;
+    const insufficientForVideo = !userState.isAdmin && userState.balance < videoCostPerScene;
 
     // Local State Management
     const [activeVideoJobs, setActiveVideoJobs] = useState<Record<number, { id: string, startTime: number }>>({});
@@ -101,13 +102,11 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
     const executeImageGeneration = async (scene: Scene) => {
         const cost = settings.imageModel === 'flux_schnell' ? CREDIT_COSTS.IMAGE_FLUX_SCHNELL : CREDIT_COSTS.IMAGE_FLUX;
 
-        // ★ Use deductCredits (which uses ref) as the ONLY credit check
-        // deductCredits auto-opens pricing modal if insufficient
-        if (!userState.isAdmin) {
-            const canDeduct = await deductCredits(cost);
-            if (!canDeduct) {
-                throw new Error("Insufficient credits");
-            }
+        // ★ GUARD ONLY — backend API handles actual DB deduction
+        // Calling deductCredits() here would cause DOUBLE DEDUCTION
+        if (!userState.isAdmin && !hasEnoughCredits(cost)) {
+            // hasEnoughCredits auto-opens pricing modal
+            throw new Error("INSUFFICIENT_CREDITS");
         }
 
         setSceneStatus(prev => ({ ...prev, [scene.scene_number]: { status: 'image_gen', message: '🎨 Generating Image...' } }));
@@ -122,9 +121,10 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
                 project.character_anchor
             );
 
-            // Credits already deducted above
             setSceneImages(prev => ({ ...prev, [scene.scene_number]: url }));
             setSceneStatus(prev => ({ ...prev, [scene.scene_number]: { status: 'ready', message: 'Image Ready' } }));
+            // Sync balance after each image generated
+            await refreshBalance();
             return url;
         } catch (e: any) {
             setSceneStatus(prev => ({ ...prev, [scene.scene_number]: { status: 'failed', error: e.message, message: 'Image Gen Failed' } }));
@@ -161,12 +161,11 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
             }
 
             try {
-                // executeImageGeneration now handles credit check atomically via ref
                 await executeImageGeneration(scene);
             } catch (e: any) {
-                if (e.message === "Insufficient credits" || e.code === 'INSUFFICIENT_CREDITS') {
-                    console.warn("Credit limit reached, stopping batch.");
-                    break; // deductCredits already opened paywall
+                if (e.message === 'INSUFFICIENT_CREDITS' || e.code === 'INSUFFICIENT_CREDITS') {
+                    console.warn("[CREDIT GUARD] Credit limit reached, stopping batch.");
+                    break; // hasEnoughCredits already opened paywall
                 }
                 console.error(e);
             }
@@ -174,7 +173,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
             setImageProgress({ completed, total });
         }
         setIsRenderingImages(false);
-        // ★ Sync balance from DB after batch completes
+        // ★ Sync true balance from DB after batch
         await refreshBalance();
     };
 
@@ -227,16 +226,13 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
             }
 
             const baseCost = MODEL_COSTS[settings.videoModel] || 28;
-            // Removed redundant model multiplier that was inflating costs (e.g. 18 * 1.2 = 22)
-            // The MODEL_COSTS values (18) are already the final intended price.
             const finalCost = baseCost;
 
-            // ★ Atomic deduct via ref — auto-opens pricing modal if insufficient
-            if (!userState.isAdmin) {
-                const canDeduct = await deductCredits(finalCost, { model: settings.videoModel, base: baseCost, mult: 1 });
-                if (!canDeduct) {
-                    break; // deductCredits already opened paywall
-                }
+            // ★ GUARD ONLY — backend handles actual DB deduction via RPC
+            // Do NOT call deductCredits() here (causes double-deduction)
+            if (!userState.isAdmin && !hasEnoughCredits(finalCost)) {
+                // hasEnoughCredits auto-opens pricing modal
+                break;
             }
 
             try {
@@ -253,19 +249,19 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
                     project.character_anchor
                 );
 
-                // Credits already deducted above
                 setActiveVideoJobs(prev => ({ ...prev, [sNum]: { id: res.id, startTime: Date.now() } }));
                 setScenePredictionIds(prev => ({ ...prev, [sNum]: res.id }));
                 setSceneStatus(prev => ({ ...prev, [sNum]: { status: 'starting', message: '🚀 Sent to Replicate' } }));
             } catch (e: any) {
-                if (e.code === 'INSUFFICIENT_CREDITS') {
-                    break; // deductCredits already opened paywall
+                if (e.code === 'INSUFFICIENT_CREDITS' || e.message === 'INSUFFICIENT_CREDITS') {
+                    openPricingModal();
+                    break;
                 }
                 console.error(e);
                 setSceneStatus(prev => ({ ...prev, [sNum]: { status: 'failed', error: e.message, message: friendlyError(e.message) } }));
             }
         }
-        // ★ Sync balance from DB after video batch
+        // ★ Sync true balance from DB after video batch
         await refreshBalance();
     };
 
@@ -277,15 +273,12 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
         if (!scene || !imgUrl) return;
 
         const baseCost = MODEL_COSTS[settings.videoModel] || 28;
-        // Removed redundant multiplier
         const finalCost = baseCost;
 
-        // ★ Atomic deduct via ref — auto-opens pricing modal if insufficient
-        if (!userState.isAdmin) {
-            const canDeduct = await deductCredits(finalCost, { model: settings.videoModel, base: baseCost, mult: 1 });
-            if (!canDeduct) {
-                return; // deductCredits already opened paywall
-            }
+        // ★ GUARD ONLY — backend handles actual DB deduction
+        if (!userState.isAdmin && !hasEnoughCredits(finalCost)) {
+            // hasEnoughCredits auto-opens pricing modal
+            return;
         }
 
         setSceneStatus(prev => ({ ...prev, [sceneNum]: { status: 'queued', message: 'Starting...' } }));
@@ -302,17 +295,19 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
                 settings.videoResolution,
                 project.character_anchor
             );
-            // Credits already deducted above
             setActiveVideoJobs(prev => ({ ...prev, [sceneNum]: { id: res.id, startTime: Date.now() } }));
             setScenePredictionIds(prev => ({ ...prev, [sceneNum]: res.id }));
             setSceneStatus(prev => ({ ...prev, [sceneNum]: { status: 'starting', message: '🚀 Started' } }));
         } catch (e: any) {
-            if (e.code === 'INSUFFICIENT_CREDITS') {
-                return; // deductCredits already opened paywall
+            if (e.code === 'INSUFFICIENT_CREDITS' || e.message === 'INSUFFICIENT_CREDITS') {
+                openPricingModal();
+                return;
             }
             console.error(e);
             setSceneStatus(prev => ({ ...prev, [sceneNum]: { status: 'failed', error: e.message, message: friendlyError(e.message) } }));
         }
+        // ★ Sync balance after single video starts
+        await refreshBalance();
     };
 
     return (
@@ -389,7 +384,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
                             videoStyle={settings.videoStyle}
                             aspectRatio={settings.aspectRatio}
                             userCredits={userState.balance}
-                            onDeductCredits={deductCredits}
+                            onDeductCredits={async () => true /* no-op: backend handles deduction */}
                             generationMode={settings.generationMode}
                             globalVideoQuality={settings.videoQuality}
                             globalVideoDuration={settings.videoDuration}

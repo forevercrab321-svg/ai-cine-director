@@ -220,32 +220,33 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const deductCredits = async (amount: number, details?: { model: string, base: number, mult: number }): Promise<boolean> => {
     if (userState.isAdmin) return true;
 
-    // ★ CRITICAL: Strict check — must have ENOUGH credits (not just non-negative after)
+    // ★ CRITICAL: Pure guard check — does NOT write to DB (backend API handles DB deduction)
+    // This prevents DOUBLE DEDUCTION (frontend ref + backend RPC both deducting)
     if (balanceRef.current < amount || balanceRef.current <= 0) {
       console.warn(`[CREDIT GUARD] Blocked: ref=${balanceRef.current}, need=${amount}`);
       setIsPricingOpen(true);
       return false;
     }
 
-    // ★ Optimistic deduct from ref (prevents rapid-click sending multiple API calls)
-    // ★ CRITICAL: Floor clamp to 0 — NEVER allow negative
+    // ★ Optimistic UI update ONLY — reserve amount in ref to prevent rapid-click race
+    // The REAL deduction happens on the backend. refreshBalance() will sync the true value.
     balanceRef.current = Math.max(0, balanceRef.current - amount);
-    console.log(`[CREDIT DEDUCT] Reserved ${amount} for UI, ref now=${balanceRef.current}`);
+    console.log(`[CREDIT GUARD] UI pre-reserved ${amount}, ref now=${balanceRef.current}`);
 
-    // Update React state for UI
+    // Update React state for immediate UI feedback
     setUserState(prev => ({
       ...prev,
       balance: Math.max(0, balanceRef.current),
       monthlyUsage: prev.monthlyUsage + amount
     }));
 
-    // ★ AUTO-PAYWALL: If balance hit 0 after deduction, show pricing for NEXT action
+    // ★ AUTO-PAYWALL: If balance hits 0, show pricing for NEXT action
     if (balanceRef.current <= 0 && !hasAutoShownPaywall.current) {
       hasAutoShownPaywall.current = true;
       setTimeout(() => {
         setIsPricingOpen(true);
-        console.log('[CREDIT GUARD] Auto-opened paywall after deduction: balance =', balanceRef.current);
-      }, 300);
+        console.log('[CREDIT GUARD] Auto-opened paywall: balance =', balanceRef.current);
+      }, 500);
     }
 
     return true;
@@ -303,17 +304,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         .eq('id', session.user.id);
     }
 
-    balanceRef.current += amount; // ★ Sync ref
+    balanceRef.current = Math.max(0, balanceRef.current + amount); // ★ Sync ref, clamp
     hasAutoShownPaywall.current = false; // Reset auto-paywall flag after purchase
-    setUserState(prev => ({ ...prev, balance: balanceRef.current }));
+    setUserState(prev => ({ ...prev, balance: Math.max(0, balanceRef.current) }));
   };
 
   const upgradeUser = async (tier: 'creator' | 'director') => {
     if (!session?.user) return;
     const creditsToAdd = tier === 'creator' ? 1000 : 3500;
 
-    balanceRef.current += creditsToAdd; // ★ Sync ref
-    setUserState(prev => ({ ...prev, balance: balanceRef.current, isPro: true, planType: tier }));
+    balanceRef.current = Math.max(0, balanceRef.current + creditsToAdd); // ★ Sync ref, clamp
+    setUserState(prev => ({ ...prev, balance: Math.max(0, balanceRef.current), isPro: true, planType: tier }));
 
     await supabase
       .from('profiles')

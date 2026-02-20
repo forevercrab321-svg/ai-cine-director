@@ -137,12 +137,12 @@ const SceneCard: React.FC<SceneCardProps> = ({
 
     const cost = imageModel === 'flux_schnell' ? CREDIT_COSTS.IMAGE_FLUX_SCHNELL : CREDIT_COSTS.IMAGE_FLUX;
 
-    // ★ Atomic deduct via ref — auto-opens pricing modal if insufficient
-    if (!userState.isAdmin) {
-      const canDeduct = await onDeductCredits(cost);
-      if (!canDeduct) {
-        return; // deductCredits already opened the pricing modal
-      }
+    // ★ GUARD ONLY — do NOT call onDeductCredits here!
+    // The backend API (/api/replicate/predict) handles the actual DB deduction.
+    // Calling onDeductCredits would cause DOUBLE DEDUCTION (frontend ref + backend RPC).
+    if (!userState.isAdmin && !hasEnoughCredits(cost)) {
+      // hasEnoughCredits auto-opens pricing modal
+      return;
     }
 
     setIsImageLoading(true);
@@ -161,10 +161,9 @@ const SceneCard: React.FC<SceneCardProps> = ({
         characterAnchor
       );
 
-      // Credits already deducted above
       onImageGenerated(resultImageUrl);
     } catch (e: any) {
-      if (e.message === "Insufficient credits" || e.code === 'INSUFFICIENT_CREDITS') {
+      if (e.code === 'INSUFFICIENT_CREDITS' || e.message === 'INSUFFICIENT_CREDITS') {
         openPricingModal();
         return;
       }
@@ -176,9 +175,10 @@ const SceneCard: React.FC<SceneCardProps> = ({
   };
 
   const handleGenerateVideoClick = () => {
-    // ★ Use hasEnoughCredits (ref-based) — auto-opens pricing modal if insufficient
-    if (!hasEnoughCredits(videoCost)) {
-      return; // hasEnoughCredits already opened the pricing modal
+    // ★ GUARD ONLY — actual deduction done by VideoGenerator via backend
+    if (!userState.isAdmin && !hasEnoughCredits(videoCost)) {
+      // hasEnoughCredits auto-opens pricing modal
+      return;
     }
     if (onGenerateVideo) onGenerateVideo();
   };
