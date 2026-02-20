@@ -55,7 +55,9 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
     const [sceneVideoUrls, setSceneVideoUrls] = useState<Record<number, string>>({});
     const [scenePredictionIds, setScenePredictionIds] = useState<Record<number, string>>({});
 
+    // ★ 核心状态锁
     const [isRenderingImages, setIsRenderingImages] = useState(false);
+    const [isRenderingVideos, setIsRenderingVideos] = useState(false);
     const [imageProgress, setImageProgress] = useState({ completed: 0, total: 0 });
 
     // Poll for video status
@@ -131,90 +133,98 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
 
     const handleRenderImages = async () => {
         if (!isAuthenticated) return alert("请先登录以生成图片。");
+        if (isRenderingImages || isRenderingVideos) return; // ★ 防止多重点击
 
         setIsRenderingImages(true);
-        let completed = 0;
-        const total = project.scenes.length;
-        setImageProgress({ completed, total });
+        try {
+            let completed = 0;
+            const total = project.scenes.length;
+            setImageProgress({ completed, total });
 
-        for (const scene of project.scenes) {
-            if (sceneImages[scene.scene_number]) {
+            for (const scene of project.scenes) {
+                if (sceneImages[scene.scene_number]) {
+                    completed++;
+                    setImageProgress({ completed, total });
+                    continue;
+                }
+
+                try {
+                    await executeImageGeneration(scene);
+                } catch (e: any) {
+                    if (e.code === 'INSUFFICIENT_CREDITS' || e.message === 'INSUFFICIENT_CREDITS') {
+                        openPricingModal();
+                        break; // 低余额时立即停止后续排队
+                    }
+                    console.error(e);
+                }
+
                 completed++;
                 setImageProgress({ completed, total });
-                continue;
             }
-
-            try {
-                await executeImageGeneration(scene);
-            } catch (e: any) {
-                if (e.code === 'INSUFFICIENT_CREDITS' || e.message === 'INSUFFICIENT_CREDITS') {
-                    openPricingModal();
-                    break; // ★ STOP batch on low credit
-                }
-                console.error(e);
-            }
-
-            completed++;
-            setImageProgress({ completed, total });
+        } finally {
+            // ★ 无论成功失败，确保状态解锁
+            setIsRenderingImages(false);
+            await refreshBalance();
         }
-
-        setIsRenderingImages(false);
-        await refreshBalance();
     };
 
     const handleRenderVideos = async () => {
         if (!isAuthenticated) return alert("请先登录以生成视频。");
+        if (isRenderingVideos || isRenderingImages) return; // ★ 绝对锁定，防连击
 
-        const baseCost = MODEL_COSTS[settings.videoModel] || 28;
+        setIsRenderingVideos(true);
+        try {
+            for (const scene of project.scenes) {
+                const sNum = scene.scene_number;
+                if (activeVideoJobs[sNum] || sceneStatus[sNum]?.status === 'done') continue;
 
-        for (const scene of project.scenes) {
-            const sNum = scene.scene_number;
-            if (activeVideoJobs[sNum] || sceneStatus[sNum]?.status === 'done') continue;
+                let imgUrl = sceneImages[sNum];
 
-            let imgUrl = sceneImages[sNum];
+                // 缺图则先补图
+                if (!imgUrl) {
+                    try {
+                        imgUrl = await executeImageGeneration(scene);
+                    } catch (e: any) {
+                        if (e.code === 'INSUFFICIENT_CREDITS' || e.message === 'INSUFFICIENT_CREDITS') {
+                            openPricingModal();
+                            break;
+                        }
+                        console.error(e);
+                        continue;
+                    }
+                }
 
-            // If no image yet, generate it first
-            if (!imgUrl) {
                 try {
-                    imgUrl = await executeImageGeneration(scene);
+                    const res = await startVideoTask(
+                        scene.shot_type || "cinematic motion",
+                        imgUrl!,
+                        settings.videoModel,
+                        settings.videoStyle,
+                        settings.generationMode,
+                        settings.videoQuality,
+                        settings.videoDuration,
+                        settings.videoFps,
+                        settings.videoResolution,
+                        project.character_anchor
+                    );
+
+                    setActiveVideoJobs(prev => ({ ...prev, [sNum]: { id: res.id, startTime: Date.now() } }));
+                    setScenePredictionIds(prev => ({ ...prev, [sNum]: res.id }));
+                    setSceneStatus(prev => ({ ...prev, [sNum]: { status: 'starting', message: '🚀 已发送请求' } }));
                 } catch (e: any) {
                     if (e.code === 'INSUFFICIENT_CREDITS' || e.message === 'INSUFFICIENT_CREDITS') {
                         openPricingModal();
-                        break; // ★ STOP batch on low credit
+                        break; // 扣费失败立刻中止后续发车
                     }
                     console.error(e);
-                    continue;
+                    setSceneStatus(prev => ({ ...prev, [sNum]: { status: 'failed', error: e.message, message: friendlyError(e.message) } }));
                 }
             }
-
-            try {
-                const res = await startVideoTask(
-                    scene.shot_type || "cinematic motion",
-                    imgUrl!,
-                    settings.videoModel,
-                    settings.videoStyle,
-                    settings.generationMode,
-                    settings.videoQuality,
-                    settings.videoDuration,
-                    settings.videoFps,
-                    settings.videoResolution,
-                    project.character_anchor
-                );
-
-                setActiveVideoJobs(prev => ({ ...prev, [sNum]: { id: res.id, startTime: Date.now() } }));
-                setScenePredictionIds(prev => ({ ...prev, [sNum]: res.id }));
-                setSceneStatus(prev => ({ ...prev, [sNum]: { status: 'starting', message: '🚀 已发送请求' } }));
-            } catch (e: any) {
-                if (e.code === 'INSUFFICIENT_CREDITS' || e.message === 'INSUFFICIENT_CREDITS') {
-                    openPricingModal();
-                    break; // ★ STOP batch on low credit
-                }
-                console.error(e);
-                setSceneStatus(prev => ({ ...prev, [sNum]: { status: 'failed', error: e.message, message: friendlyError(e.message) } }));
-            }
+        } finally {
+            // ★ 释放锁
+            setIsRenderingVideos(false);
+            await refreshBalance();
         }
-
-        await refreshBalance();
     };
 
     const handleGenerateSingleVideo = async (sceneNum: number) => {
@@ -227,6 +237,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
         const baseCost = MODEL_COSTS[settings.videoModel] || 28;
 
         if (!userState.isAdmin && !hasEnoughCredits(baseCost)) {
+            openPricingModal();
             return;
         }
 
@@ -278,26 +289,29 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
                     <div className="flex gap-3 w-full md:w-auto">
                         <button
                             onClick={insufficientForImage ? openPricingModal : handleRenderImages}
-                            disabled={isRenderingImages}
+                            disabled={isRenderingImages || isRenderingVideos}
                             className={`flex-1 md:flex-none px-6 py-3 rounded-lg font-bold transition-all flex items-center justify-center gap-2 text-sm
                 ${isRenderingImages ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                                    : insufficientForImage ? 'bg-red-900/40 border border-red-500/30 text-red-300 hover:bg-red-900/60'
+                                    : (insufficientForImage || isRenderingVideos) ? 'bg-red-900/40 border border-red-500/30 text-red-300 hover:bg-red-900/60'
                                         : 'bg-slate-800 hover:bg-sky-600 text-white hover:shadow-lg hover:shadow-sky-500/20'}
               `}
                         >
-                            {isRenderingImages ? <LoaderIcon className="w-4 h-4" /> : <PhotoIcon className="w-4 h-4" />}
-                            {insufficientForImage ? `充值后渲染图片` : '一键生成全部图片'}
+                            {isRenderingImages ? <LoaderIcon className="w-4 h-4 animate-spin" /> : <PhotoIcon className="w-4 h-4" />}
+                            {isRenderingImages ? '排队生成中...' : insufficientForImage ? `充值后渲染图片` : '一键生成全部图片'}
                         </button>
+
                         <button
                             onClick={insufficientForVideo ? openPricingModal : handleRenderVideos}
+                            disabled={isRenderingVideos || isRenderingImages}
                             className={`flex-1 md:flex-none px-6 py-3 rounded-lg text-white font-bold transition-all shadow-lg flex items-center justify-center gap-2 text-sm
-                ${insufficientForVideo
-                                    ? 'bg-red-900/40 border border-red-500/30 text-red-300 hover:bg-red-900/60 shadow-red-500/10'
-                                    : 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-500/20'}
+                ${isRenderingVideos ? 'bg-indigo-900/50 text-indigo-300 cursor-not-allowed shadow-none'
+                                    : (insufficientForVideo || isRenderingImages)
+                                        ? 'bg-red-900/40 border border-red-500/30 text-red-300 hover:bg-red-900/60 shadow-red-500/10'
+                                        : 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-500/20'}
               `}
                         >
-                            <VideoCameraIcon className="w-4 h-4" />
-                            {insufficientForVideo ? `充值后渲染视频` : '一键生成全部视频'}
+                            {isRenderingVideos ? <LoaderIcon className="w-4 h-4 animate-spin" /> : <VideoCameraIcon className="w-4 h-4" />}
+                            {isRenderingVideos ? '视频请求列队中...' : insufficientForVideo ? `充值后渲染视频` : '一键生成全部视频'}
                         </button>
                     </div>
                 </div>

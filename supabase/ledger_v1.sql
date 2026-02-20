@@ -36,8 +36,7 @@ CREATE POLICY "Service role full access" ON credits_ledger
   FOR ALL USING (true) WITH CHECK (true);
 
 -- 3) reserve_credits(amount, ref_type, ref_id)
---    Called by user-context client → auth.uid() is the user
---    Returns BOOLEAN: true = reserved, false = insufficient
+--    ★ FIXED: Refactored to absolute atomic UPDATE to prevent Race Conditions
 DROP FUNCTION IF EXISTS reserve_credits(numeric, text, text);
 DROP FUNCTION IF EXISTS reserve_credits(uuid, numeric, jsonb);
 CREATE OR REPLACE FUNCTION reserve_credits(
@@ -47,24 +46,25 @@ CREATE OR REPLACE FUNCTION reserve_credits(
 ) RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
-  v_balance numeric;
-  v_reserved numeric;
   v_uid uuid := auth.uid();
+  affected_rows integer;
 BEGIN
   IF v_uid IS NULL THEN RETURN false; END IF;
 
-  SELECT credits, COALESCE(credits_reserved, 0)
-    INTO v_balance, v_reserved
-    FROM profiles WHERE id = v_uid FOR UPDATE;
-
-  IF NOT FOUND OR v_balance < amount THEN
-    RETURN false;
-  END IF;
-
+  -- ★ 核心防御：直接 UPDATE，并加上 credits >= amount 的严格条件，不给并发留任何空隙
   UPDATE profiles
   SET credits = credits - amount,
-      credits_reserved = v_reserved + amount
-  WHERE id = v_uid;
+      credits_reserved = COALESCE(credits_reserved, 0) + amount
+  WHERE id = v_uid 
+    AND credits >= amount;
+
+  -- 检查上一条 UPDATE 语句是否成功修改了数据
+  GET DIAGNOSTICS affected_rows = ROW_COUNT;
+
+  -- 如果影响的行数是 0，说明要么用户不存在，要么余额不足以扣减，直接拦截
+  IF affected_rows = 0 THEN
+    RETURN false;
+  END IF;
 
   INSERT INTO credits_ledger (user_id, delta, kind, ref_type, ref_id, status)
   VALUES (v_uid, -amount, 'reserve', ref_type, ref_id, 'pending');
@@ -74,7 +74,6 @@ END;
 $$;
 
 -- 4) finalize_reserve(ref_type, ref_id)
---    Job succeeded → burn the reserved amount (mark as settled)
 DROP FUNCTION IF EXISTS finalize_reserve(text, text);
 DROP FUNCTION IF EXISTS commit_credits(uuid, numeric, jsonb);
 CREATE OR REPLACE FUNCTION finalize_reserve(
@@ -114,7 +113,6 @@ END;
 $$;
 
 -- 5) refund_reserve(amount, ref_type, ref_id)
---    Job failed → return credits from reserved back to available
 DROP FUNCTION IF EXISTS refund_reserve(numeric, text, text);
 DROP FUNCTION IF EXISTS release_credits(uuid, numeric, jsonb);
 CREATE OR REPLACE FUNCTION refund_reserve(
@@ -147,14 +145,9 @@ BEGIN
 END;
 $$;
 
--- 6) Keep old deduct_credits for backward compat (gemini route uses it)
---    This is a simple atomic deduct, no reserve/finalize cycle needed
---    for cheap operations like storyboard (cost=1)
-
 -- 7) Safety: Fix any existing negative credits in DB
 UPDATE profiles SET credits = 0 WHERE credits < 0;
 
 -- 8) DB-level constraint: prevent credits going below 0
--- (reserve_credits already checks, this is a safety net)
 ALTER TABLE profiles DROP CONSTRAINT IF EXISTS credits_non_negative;
 ALTER TABLE profiles ADD CONSTRAINT credits_non_negative CHECK (credits >= 0);

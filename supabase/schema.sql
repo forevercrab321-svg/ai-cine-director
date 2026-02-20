@@ -1,9 +1,9 @@
--- Create profiles table
+-- Create profiles table (★ 已添加底层防负数约束)
 create table public.profiles (
   id uuid references auth.users not null primary key,
   name text,
   role text,
-  credits integer default 50,
+  credits integer default 50 check (credits >= 0), -- ★ 终极防线：在建表时直接锁死，积分永远不可能小于 0
   is_pro boolean default false,
   is_admin boolean default false,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
@@ -100,6 +100,8 @@ begin
 end;
 $$ language plpgsql security definer;
 
+-- Trigger check (drop before create just in case)
+drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure public.handle_new_user();

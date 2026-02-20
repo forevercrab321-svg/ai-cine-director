@@ -40,7 +40,7 @@ CREATE POLICY "Users can view own ledger" ON credit_ledger FOR SELECT USING (aut
 DROP POLICY IF EXISTS "Users can view own jobs" ON generation_jobs;
 CREATE POLICY "Users can view own jobs" ON generation_jobs FOR SELECT USING (auth.uid() = user_id);
 
--- RPC: reserve_credits (Atomic Check & Freeze)
+-- RPC: reserve_credits (Atomic Check & Freeze - 终极防并发版)
 CREATE OR REPLACE FUNCTION reserve_credits(
   p_user_id uuid,
   p_amount numeric,
@@ -50,41 +50,28 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 DECLARE
-  v_current_balance numeric;
-  v_current_reserved numeric;
+  v_updated_balance numeric;
 BEGIN
-  -- Lock the user row to prevent race conditions
-  SELECT credits, credits_reserved INTO v_current_balance, v_current_reserved
-  FROM profiles
-  WHERE id = p_user_id
-  FOR UPDATE;
+  -- 核心防御：直接使用原子的 UPDATE 并带有余额条件，利用 RETURNING 捕获更新后的余额
+  UPDATE profiles
+  SET credits = credits - p_amount,
+      credits_reserved = COALESCE(credits_reserved, 0) + p_amount
+  WHERE id = p_user_id AND credits >= p_amount
+  RETURNING credits INTO v_updated_balance;
 
-  -- Check if user exists
-  IF NOT FOUND THEN
-    RETURN jsonb_build_object('success', false, 'error', 'User not found');
-  END IF;
-
-  -- Init reserved if null
-  IF v_current_reserved IS NULL THEN v_current_reserved := 0; END IF;
-
-  -- Check balance
-  IF v_current_balance >= p_amount THEN
-    -- Deduct from available, add to reserved
-    UPDATE profiles
-    SET credits = credits - p_amount,
-        credits_reserved = v_current_reserved + p_amount
-    WHERE id = p_user_id;
-
-    -- Log to ledger
+  -- 如果 v_updated_balance 不是 NULL，说明更新成功（余额充足）
+  IF v_updated_balance IS NOT NULL THEN
+    -- 记录到账本
     INSERT INTO credit_ledger (user_id, amount, type, meta)
     VALUES (p_user_id, -p_amount, 'reserve', p_meta);
 
-    RETURN jsonb_build_object('success', true, 'remaining', v_current_balance - p_amount);
+    RETURN jsonb_build_object('success', true, 'remaining', v_updated_balance);
   ELSE
+    -- 更新失败（要么用户不存在，要么余额不足以扣除）
     RETURN jsonb_build_object(
       'success', false, 
       'error', 'INSUFFICIENT_CREDITS', 
-      'available', v_current_balance, 
+      'available', COALESCE((SELECT credits FROM profiles WHERE id = p_user_id), 0), 
       'required', p_amount
     );
   END IF;
@@ -100,28 +87,13 @@ CREATE OR REPLACE FUNCTION commit_credits(
 LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
-DECLARE
-  v_reserved_amount numeric; -- Amount we originally reserved
 BEGIN
-  -- Try to find the reservation amount from the matching prediction_id in meta if possible, 
-  -- but for simplicity, we assume the caller passes the correct amount to 'commit' (finalize).
-  -- In a strictly reserved system, we'd deduct p_amount from reserved.
-  -- But here 'reserve' essentially ALREADY deducted from 'credits' and moved to 'reserved'.
-  -- So 'commit' means: "Remove from reserved (burn it)".
-  
-  -- However, if Actual Cost < Estimated (Reserved), we need to Refund the difference.
-  -- Let's simplify: Standard flow is Reserve X -> Commit X.
-  -- If logic varies, we might need 'release_credits' for the difference.
-  
-  -- For this implementation: We just decrease credits_reserved. 
-  -- The 'credits' (balance) was already reduced during reserve.
-  
   UPDATE profiles
   SET credits_reserved = GREATEST(0, credits_reserved - p_amount)
   WHERE id = p_user_id;
 
   INSERT INTO credit_ledger (user_id, amount, type, meta)
-  VALUES (p_user_id, 0, 'commit', p_meta); -- amount 0 because value already moved out of balance
+  VALUES (p_user_id, 0, 'commit', p_meta);
 
   RETURN jsonb_build_object('success', true);
 END;

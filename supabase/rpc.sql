@@ -14,7 +14,7 @@ create table if not exists public.generation_logs (
   created_at timestamptz default now()
 );
 
--- 3. Upgrade Deduct Credits Function
+-- 3. Upgrade Deduct Credits Function (★ 终极防并发穿仓版)
 create or replace function public.deduct_credits(
   amount_to_deduct integer,
   model_used text default 'unknown',
@@ -26,48 +26,29 @@ language plpgsql
 security definer
 as $$
 declare
-  current_credits integer;
-  current_usage integer;
-  user_plan text;
-  plan_limit integer;
-  purchased_flag boolean;
+  affected_rows integer;
 begin
-  -- Get user details
-  select credits, monthly_credits_used, plan_type, has_purchased_credits
-  into current_credits, current_usage, user_plan, purchased_flag
-  from public.profiles
-  where id = auth.uid();
+  -- ★ 核心防御：绝对不能“先查后改”。必须直接使用原子的 UPDATE，在同一条语句中完成检查和扣减！
+  update public.profiles
+  set 
+    credits = credits - amount_to_deduct,
+    monthly_credits_used = coalesce(monthly_credits_used, 0) + amount_to_deduct
+  where id = auth.uid() 
+    and credits >= amount_to_deduct; -- 这一行是锁死并发的灵魂：只有余额充足时才允许修改
 
-  -- Set plan limits
-  if user_plan = 'director' then
-    plan_limit := 3500;
-  else
-    plan_limit := 1000; -- default creator
-  end if;
+  -- 获取上一条 update 语句实际修改的行数
+  get diagnostics affected_rows = row_count;
 
-  -- Fair Use Check:
-  -- If usage > limit AND they haven't purchased extra credits, we might want to block?
-  -- But usually "credits" IS the hard limit. If they have credits, let them spend.
-  -- The "Fair Use" is mostly a soft limit for subscription credits.
-  -- STRICT MODE: If (current_usage + amount_to_deduct) > plan_limit AND purchased_flag = false AND current_credits < amount_to_deduct THEN return false;
-  -- For now, we trust the "credits" balance is the ultimate source of truth.
-
-  if current_credits >= amount_to_deduct then
-    -- 1. Deduct credits
-    update public.profiles
-    set 
-      credits = credits - amount_to_deduct,
-      monthly_credits_used = coalesce(monthly_credits_used, 0) + amount_to_deduct
-    where id = auth.uid();
-
-    -- 2. Log transaction
-    insert into public.generation_logs (user_id, model, base_cost, multiplier, final_cost)
-    values (auth.uid(), model_used, base_cost, multiplier, amount_to_deduct);
-
-    return true;
-  else
+  -- 如果影响的行数为 0，说明要么用户不存在，要么余额已经被别的并发请求扣没了（不足以支付本次金额），直接拒绝
+  if affected_rows = 0 then
     return false;
   end if;
+
+  -- 扣减成功后，记录交易日志
+  insert into public.generation_logs (user_id, model, base_cost, multiplier, final_cost)
+  values (auth.uid(), model_used, base_cost, multiplier, amount_to_deduct);
+
+  return true;
 end;
 $$;
 

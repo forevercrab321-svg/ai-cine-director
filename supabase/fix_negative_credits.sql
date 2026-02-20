@@ -3,49 +3,45 @@ UPDATE public.profiles
 SET credits = 0
 WHERE credits < 0;
 
--- ★ STEP 2: Add CHECK constraint to prevent DB-level negative credits
+-- ★ STEP 2: Add CHECK constraint to prevent DB-level negative credits (Ultimate Defense)
 ALTER TABLE public.profiles
 DROP CONSTRAINT IF EXISTS credits_non_negative;
 
 ALTER TABLE public.profiles
 ADD CONSTRAINT credits_non_negative CHECK (credits >= 0);
 
--- ★ STEP 3: Ensure deduct_credits function also has GREATEST(0,...) guard
--- This prevents race conditions from causing negative values
-CREATE OR REPLACE FUNCTION public.deduct_credits(
-  amount_to_deduct integer,
-  model_used text DEFAULT 'unknown',
-  base_cost integer DEFAULT 0,
-  multiplier numeric DEFAULT 1.0
+-- ★ STEP 3: Create atomic reserve_credits function (Matching your Node.js API)
+CREATE OR REPLACE FUNCTION public.reserve_credits(
+  amount numeric,
+  ref_type text,
+  ref_id text
 )
 RETURNS boolean
 LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 DECLARE
-  current_credits integer;
+  affected_rows integer;
 BEGIN
-  -- Get user credit balance (row lock prevents race condition)
-  SELECT credits INTO current_credits
-  FROM public.profiles
-  WHERE id = auth.uid()
-  FOR UPDATE;
+  -- 原子操作：在一行内同时完成验证和扣费，彻底阻断并发击穿
+  UPDATE public.profiles
+  SET 
+    credits = credits - amount,
+    monthly_credits_used = COALESCE(monthly_credits_used, 0) + amount
+  WHERE id = auth.uid() 
+    AND credits >= amount; -- 核心防线：只在余额充足时才执行修改
 
-  -- Reject if insufficient credits
-  IF current_credits IS NULL OR current_credits < amount_to_deduct THEN
+  -- 检查上一条 UPDATE 是否成功执行
+  GET DIAGNOSTICS affected_rows = ROW_COUNT;
+
+  -- 如果影响的行数为 0，说明要么用户不存在，要么 credits 不够扣，直接拒绝
+  IF affected_rows = 0 THEN
     RETURN false;
   END IF;
 
-  -- Deduct (GREATEST guard: never go below 0 even under race)
-  UPDATE public.profiles
-  SET
-    credits = GREATEST(0, credits - amount_to_deduct),
-    monthly_credits_used = COALESCE(monthly_credits_used, 0) + amount_to_deduct
-  WHERE id = auth.uid();
-
-  -- Log transaction
-  INSERT INTO public.generation_logs (user_id, model, base_cost, multiplier, final_cost)
-  VALUES (auth.uid(), model_used, base_cost, multiplier, amount_to_deduct);
+  -- 记录账本/日志 (这里兼容了你的 ref_type 和 ref_id 参数)
+  INSERT INTO public.credits_ledger (user_id, delta, kind, ref_type, ref_id, status)
+  VALUES (auth.uid(), -amount, 'reserve', ref_type, ref_id, 'pending');
 
   RETURN true;
 END;
@@ -53,4 +49,3 @@ $$;
 
 -- ★ STEP 4: Verify the fix worked
 SELECT id, credits FROM public.profiles WHERE credits < 0;
--- Should return 0 rows
