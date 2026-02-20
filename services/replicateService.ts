@@ -62,7 +62,13 @@ export const generateImage = async (
   //   const { useMockMode } = getConfig(); // Disabled for robust credit test
   //   if (useMockMode) return generateMockImage(prompt);
 
-  const finalPrompt = characterAnchor ? `${characterAnchor}, ${prompt}` : prompt;
+  // ★ HARDCODED CONSISTENCY: Strict character lock
+  const CONSISTENCY_PREFIX = "[CRITICAL: Maintain exact same character identity across all frames. Same face, same hairstyle, same costume, same body proportions. Do NOT change or deviate from the character description below.]";
+  const CONSISTENCY_SUFFIX = "[IMPORTANT: The character must look IDENTICAL to the description above. Do not alter any facial features, hair color, outfit, or art style.]";
+
+  const finalPrompt = characterAnchor
+    ? `${CONSISTENCY_PREFIX} ${characterAnchor}. ${prompt}. ${CONSISTENCY_SUFFIX}`
+    : prompt;
 
   // Logical Change: If modelType contains '/', treat it as a direct Replicate ID.
   const modelIdentifier = modelType.includes('/')
@@ -115,7 +121,7 @@ export const generateImage = async (
 };
 
 function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string): Record<string, any> {
-  const STRICT_CONSISTENCY = "High fidelity. Strict consistency with the first frame. Do not change the character face or costume. Smooth motion.";
+  const STRICT_CONSISTENCY = "Strict visual consistency with the input image. Do NOT change the character's face, hair, skin tone, costume, or art style. The character must remain IDENTICAL across all frames. Maintain exact same proportions and appearance. Smooth natural motion only.";
   const strictPrompt = `${STRICT_CONSISTENCY} ${prompt}`;
 
   switch (modelType) {

@@ -232,11 +232,26 @@ app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
         const systemInstruction = `
 **Role:** Professional Hollywood Screenwriter & Director of Photography.
 **Task:** Break down the User's Story Concept into a production-ready script with 5 distinct scenes.
-**CORE PHILOSOPHY: THE ANCHOR METHOD**
-1. **Character Continuity:** ${identityAnchor
-                ? `The character is LOCKED to: "${identityAnchor}". Keep all visual descriptions consistent with this anchor.`
-                : `First, define a unique, memorable visual identity (the "Anchor") for the protagonist.`}
-2. **Technical Precision:** Describe camera movements, lighting, and action keywords.
+
+**★ CRITICAL — CHARACTER CONSISTENCY RULES (MANDATORY):**
+The "character_anchor" field is the SINGLE SOURCE OF TRUTH for the protagonist's appearance.
+It MUST be an extremely detailed, frozen visual identity containing ALL of the following:
+- Exact ethnicity and age range (e.g., "East Asian male, early 20s")
+- Face shape, eye color, eye shape, eyebrow style
+- Hair: exact color, length, style (e.g., "jet black spiky hair, shoulder length")
+- Outfit: exact clothing with colors and materials (e.g., "red silk scarf, golden armor plates, dark leather boots")
+- Body type and posture
+- Art style lock (e.g., "3D donghua style" or "photorealistic" — MUST match the user's chosen visual style)
+
+${identityAnchor
+                ? `The character is HARD-LOCKED to: "${identityAnchor}". Copy this identity EXACTLY into character_anchor. Do NOT modify it.`
+                : `You MUST invent a highly specific, unique character_anchor. Be extremely detailed — face, hair, skin, outfit, accessories, art style. The more detail, the better.`}
+
+**★ SCENE CONSISTENCY RULE:**
+EVERY scene's "visual_description" MUST begin with the EXACT character_anchor text, word for word, followed by the scene-specific action and environment. This ensures the same character appears in every frame. Do NOT paraphrase or abbreviate the anchor.
+
+**Technical Precision:** Describe camera movements (dolly, tracking, crane), lighting (golden hour, neon, overcast), and composition.
+
 **Language Rule:**
 * **visual_description** & **shot_type**: ALWAYS in English.
 * **audio_description** & **project_title**: ${language === 'zh' ? "Chinese (Simplified)" : "English"}.
