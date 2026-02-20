@@ -84,7 +84,7 @@ const Header: React.FC<HeaderProps> = ({ lang, toggleLang, onOpenSettings, userS
           <span className="text-lg">{userState.isAdmin ? '👑' : '💎'}</span>
           <div className="flex flex-col leading-none items-start">
             <div className="flex items-center gap-1">
-              <span className={`font-bold ${userState.balance <= 0 && !userState.isAdmin ? 'text-red-400' : 'text-white'}`}>{Math.max(0, userState.balance)}</span>
+              <span className={`font-bold ${userState.balance <= 0 && !userState.isAdmin ? 'text-red-400' : 'text-white'}`}>{userState.balance}</span>
               {userState.isAdmin && (
                 <span className="text-[9px] bg-amber-500 text-black font-bold px-1 rounded ml-1">ADMIN</span>
               )}

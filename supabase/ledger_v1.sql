@@ -150,3 +150,11 @@ $$;
 -- 6) Keep old deduct_credits for backward compat (gemini route uses it)
 --    This is a simple atomic deduct, no reserve/finalize cycle needed
 --    for cheap operations like storyboard (cost=1)
+
+-- 7) Safety: Fix any existing negative credits in DB
+UPDATE profiles SET credits = 0 WHERE credits < 0;
+
+-- 8) DB-level constraint: prevent credits going below 0
+-- (reserve_credits already checks, this is a safety net)
+ALTER TABLE profiles DROP CONSTRAINT IF EXISTS credits_non_negative;
+ALTER TABLE profiles ADD CONSTRAINT credits_non_negative CHECK (credits >= 0);

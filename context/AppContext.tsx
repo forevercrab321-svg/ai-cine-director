@@ -119,7 +119,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       if (data) {
         setProfile({ id: data.id, name: data.name, role: data.role });
-        const newBalance = Math.max(0, data.credits ?? 0); // ★ CLAMP: Never allow negative from DB
+        const newBalance = data.credits ?? 0; // ★ NO CLAMP — show real DB value, negative means overcharged
 
         // Restore God Mode from LocalStorage if active
         const isGodMode = localStorage.getItem('ai_cine_god_mode') === 'true';
@@ -228,16 +228,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return false;
     }
 
-    // ★ Optimistic UI update ONLY — reserve amount in ref to prevent rapid-click race
-    // The REAL deduction happens on the backend. refreshBalance() will sync the true value.
-    balanceRef.current = Math.max(0, balanceRef.current - amount);
+    // ★ PURE GUARD — DO NOT deduct here. The backend reserve_credits RPC handles ALL deduction.
+    // We only mark the ref as "reserved" to prevent rapid-click race conditions in the UI.
+    // refreshBalance() will sync the TRUE value from DB after the backend call completes.
+    balanceRef.current = balanceRef.current - amount;
     console.log(`[CREDIT GUARD] UI pre-reserved ${amount}, ref now=${balanceRef.current}`);
 
     // Update React state for immediate UI feedback
     setUserState(prev => ({
       ...prev,
-      balance: Math.max(0, balanceRef.current),
-      monthlyUsage: prev.monthlyUsage + amount
+      balance: balanceRef.current
     }));
 
     // ★ AUTO-PAYWALL: If balance hits 0, show pricing for NEXT action
@@ -255,7 +255,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // ★ Credit check + auto-paywall: Returns false AND opens pricing modal if insufficient
   const hasEnoughCredits = (amount: number): boolean => {
     if (userState.isAdmin) return true;
-    const available = Math.max(0, balanceRef.current);
+    const available = balanceRef.current;
     if (available >= amount) return true;
     console.log(`[CREDIT GUARD] hasEnoughCredits failed: have=${available}, need=${amount}`);
     setIsPricingOpen(true);
@@ -272,7 +272,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         .eq('id', session.user.id)
         .single();
       if (!error && data) {
-        const dbBalance = Math.max(0, data.credits ?? 0); // ★ CLAMP
+        const dbBalance = data.credits ?? 0; // ★ NO CLAMPING — show real value from DB
         balanceRef.current = dbBalance;
         setUserState(prev => ({ ...prev, balance: dbBalance }));
         console.log(`[CREDIT SYNC] Balance refreshed from DB: ${dbBalance}`);
