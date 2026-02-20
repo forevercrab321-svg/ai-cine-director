@@ -38,6 +38,8 @@ CREATE POLICY "Service role full access" ON credits_ledger
 -- 3) reserve_credits(amount, ref_type, ref_id)
 --    Called by user-context client → auth.uid() is the user
 --    Returns BOOLEAN: true = reserved, false = insufficient
+DROP FUNCTION IF EXISTS reserve_credits(numeric, text, text);
+DROP FUNCTION IF EXISTS reserve_credits(uuid, numeric, jsonb);
 CREATE OR REPLACE FUNCTION reserve_credits(
   amount numeric,
   ref_type text DEFAULT 'unknown',
@@ -73,6 +75,8 @@ $$;
 
 -- 4) finalize_reserve(ref_type, ref_id)
 --    Job succeeded → burn the reserved amount (mark as settled)
+DROP FUNCTION IF EXISTS finalize_reserve(text, text);
+DROP FUNCTION IF EXISTS commit_credits(uuid, numeric, jsonb);
 CREATE OR REPLACE FUNCTION finalize_reserve(
   ref_type text,
   ref_id text
@@ -111,6 +115,8 @@ $$;
 
 -- 5) refund_reserve(amount, ref_type, ref_id)
 --    Job failed → return credits from reserved back to available
+DROP FUNCTION IF EXISTS refund_reserve(numeric, text, text);
+DROP FUNCTION IF EXISTS release_credits(uuid, numeric, jsonb);
 CREATE OR REPLACE FUNCTION refund_reserve(
   amount numeric,
   ref_type text,
