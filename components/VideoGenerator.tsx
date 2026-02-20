@@ -101,10 +101,10 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
         const cost = settings.imageModel === 'flux_schnell' ? CREDIT_COSTS.IMAGE_FLUX_SCHNELL : CREDIT_COSTS.IMAGE_FLUX;
 
         // ★ Use deductCredits (which uses ref) as the ONLY credit check
+        // deductCredits auto-opens pricing modal if insufficient
         if (!userState.isAdmin) {
             const canDeduct = await deductCredits(cost);
             if (!canDeduct) {
-                openPricingModal();
                 throw new Error("Insufficient credits");
             }
         }
@@ -141,14 +141,8 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
         const totalEstCost = remainingScenes.length * costPerImage;
 
         if (!hasEnoughCredits(totalEstCost)) {
-            // Optional: Allow partial? The user said "intercept... if < estimated".
-            // Stricter interpretation: Block if ANY shortage.
-            // Or at least block if < 1.
-            // Let's block if balance < totalEstCost to prevent getting stuck halfway.
-            // But if balance > 0 but < total, maybe let them process some?
-            // User requirement: "If Current < Estimated, Intercept". So strictly block.
-            if (!userState.isAdmin) { // Admin bypass
-                openPricingModal();
+            // hasEnoughCredits auto-opens pricing modal if insufficient
+            if (!userState.isAdmin) {
                 return;
             }
         }
@@ -171,8 +165,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
             } catch (e: any) {
                 if (e.message === "Insufficient credits" || e.code === 'INSUFFICIENT_CREDITS') {
                     console.warn("Credit limit reached, stopping batch.");
-                    openPricingModal();
-                    break; // Stop batch
+                    break; // deductCredits already opened paywall
                 }
                 console.error(e);
             }
@@ -207,8 +200,8 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
         });
 
         if (!hasEnoughCredits(totalEstCost)) {
+            // hasEnoughCredits auto-opens pricing modal if insufficient
             if (!userState.isAdmin) {
-                openPricingModal();
                 return;
             }
         }
@@ -224,8 +217,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
                     imgUrl = await executeImageGeneration(scene);
                 } catch (e: any) {
                     if (e.message === "Insufficient credits" || e.code === 'INSUFFICIENT_CREDITS') {
-                        openPricingModal();
-                        break;
+                        break; // deductCredits already opened paywall
                     }
                     continue;
                 }
@@ -236,13 +228,11 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
             // The MODEL_COSTS values (18) are already the final intended price.
             const finalCost = baseCost;
 
-            // ★ Atomic deduct via ref
+            // ★ Atomic deduct via ref — auto-opens pricing modal if insufficient
             if (!userState.isAdmin) {
-                // Double check individual cost (though batch checked already)
                 const canDeduct = await deductCredits(finalCost, { model: settings.videoModel, base: baseCost, mult: 1 });
                 if (!canDeduct) {
-                    openPricingModal();
-                    break;
+                    break; // deductCredits already opened paywall
                 }
             }
 
@@ -266,8 +256,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
                 setSceneStatus(prev => ({ ...prev, [sNum]: { status: 'starting', message: '🚀 Sent to Replicate' } }));
             } catch (e: any) {
                 if (e.code === 'INSUFFICIENT_CREDITS') {
-                    openPricingModal();
-                    break;
+                    break; // deductCredits already opened paywall
                 }
                 console.error(e);
                 setSceneStatus(prev => ({ ...prev, [sNum]: { status: 'failed', error: e.message, message: friendlyError(e.message) } }));
@@ -286,12 +275,11 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
         // Removed redundant multiplier
         const finalCost = baseCost;
 
-        // ★ Atomic deduct via ref
+        // ★ Atomic deduct via ref — auto-opens pricing modal if insufficient
         if (!userState.isAdmin) {
             const canDeduct = await deductCredits(finalCost, { model: settings.videoModel, base: baseCost, mult: 1 });
             if (!canDeduct) {
-                openPricingModal();
-                return;
+                return; // deductCredits already opened paywall
             }
         }
 
@@ -315,8 +303,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
             setSceneStatus(prev => ({ ...prev, [sceneNum]: { status: 'starting', message: '🚀 Started' } }));
         } catch (e: any) {
             if (e.code === 'INSUFFICIENT_CREDITS') {
-                openPricingModal();
-                return;
+                return; // deductCredits already opened paywall
             }
             console.error(e);
             setSceneStatus(prev => ({ ...prev, [sceneNum]: { status: 'failed', error: e.message, message: friendlyError(e.message) } }));

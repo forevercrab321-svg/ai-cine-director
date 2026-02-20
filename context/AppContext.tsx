@@ -222,6 +222,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // ★ CRITICAL: Use ref for atomic check-and-deduct (NOT React state!)
     if (balanceRef.current < amount) {
       console.warn(`[CREDIT GUARD] Blocked: ref=${balanceRef.current}, need=${amount}`);
+      // ★ AUTO-PAYWALL: Immediately open pricing modal when credits insufficient
+      setIsPricingOpen(true);
+      console.log('[CREDIT GUARD] Auto-opened paywall: insufficient credits for deduction');
       return false;
     }
 
@@ -252,10 +255,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return true;
   };
 
-  // ★ NEW: Quick check if user has enough credits (does NOT deduct)
+  // ★ Credit check + auto-paywall: Returns false AND opens pricing modal if insufficient
   const hasEnoughCredits = (amount: number): boolean => {
     if (userState.isAdmin) return true;
-    return balanceRef.current >= amount;
+    if (balanceRef.current >= amount) return true;
+    // ★ AUTO-PAYWALL: Open pricing modal automatically
+    console.log(`[CREDIT GUARD] hasEnoughCredits failed: have=${balanceRef.current}, need=${amount}`);
+    setIsPricingOpen(true);
+    return false;
   };
 
   const buyCredits = async (amount: number, cost: number) => {
