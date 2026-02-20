@@ -39,7 +39,8 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
         isAuthenticated,
         deductCredits,
         openPricingModal,
-        hasEnoughCredits
+        hasEnoughCredits,
+        refreshBalance  // ★ Sync balance from DB after operations
     } = useAppContext();
 
     // ★ Credit guard: compute whether user can afford at least one generation
@@ -173,6 +174,8 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
             setImageProgress({ completed, total });
         }
         setIsRenderingImages(false);
+        // ★ Sync balance from DB after batch completes
+        await refreshBalance();
     };
 
     const handleRenderVideos = async () => {
@@ -262,6 +265,8 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
                 setSceneStatus(prev => ({ ...prev, [sNum]: { status: 'failed', error: e.message, message: friendlyError(e.message) } }));
             }
         }
+        // ★ Sync balance from DB after video batch
+        await refreshBalance();
     };
 
     const handleGenerateSingleVideo = async (sceneNum: number) => {

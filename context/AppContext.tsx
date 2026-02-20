@@ -42,6 +42,7 @@ interface AppContextType {
   upgradeUser: (tier: 'creator' | 'director') => Promise<void>;
   buyCredits: (amount: number, cost: number) => Promise<void>;
   enableGodMode: () => void;
+  refreshBalance: () => Promise<void>; // ★ NEW: Sync balance from DB
 
   // UI Control
   isPricingOpen: boolean;
@@ -118,7 +119,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       if (data) {
         setProfile({ id: data.id, name: data.name, role: data.role });
-        const newBalance = data.credits ?? 0;
+        const newBalance = Math.max(0, data.credits ?? 0); // ★ CLAMP: Never allow negative from DB
 
         // Restore God Mode from LocalStorage if active
         const isGodMode = localStorage.getItem('ai_cine_god_mode') === 'true';
@@ -219,27 +220,26 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const deductCredits = async (amount: number, details?: { model: string, base: number, mult: number }): Promise<boolean> => {
     if (userState.isAdmin) return true;
 
-    // ★ CRITICAL: Use ref for atomic check-and-deduct (NOT React state!)
-    if (balanceRef.current < amount) {
+    // ★ CRITICAL: Strict check — must have ENOUGH credits (not just non-negative after)
+    if (balanceRef.current < amount || balanceRef.current <= 0) {
       console.warn(`[CREDIT GUARD] Blocked: ref=${balanceRef.current}, need=${amount}`);
-      // ★ AUTO-PAYWALL: Immediately open pricing modal when credits insufficient
       setIsPricingOpen(true);
-      console.log('[CREDIT GUARD] Auto-opened paywall: insufficient credits for deduction');
       return false;
     }
 
-    // ★ Synchronously deduct from ref BEFORE any async work
-    balanceRef.current -= amount;
-    console.log(`[CREDIT DEDUCT] Deducted ${amount}, ref now=${balanceRef.current}`);
+    // ★ Optimistic deduct from ref (prevents rapid-click sending multiple API calls)
+    // ★ CRITICAL: Floor clamp to 0 — NEVER allow negative
+    balanceRef.current = Math.max(0, balanceRef.current - amount);
+    console.log(`[CREDIT DEDUCT] Reserved ${amount} for UI, ref now=${balanceRef.current}`);
 
     // Update React state for UI
     setUserState(prev => ({
       ...prev,
-      balance: balanceRef.current,
+      balance: Math.max(0, balanceRef.current),
       monthlyUsage: prev.monthlyUsage + amount
     }));
 
-    // ★ AUTO-PAYWALL: If balance just dropped to 0 or below, show pricing modal
+    // ★ AUTO-PAYWALL: If balance hit 0 after deduction, show pricing for NEXT action
     if (balanceRef.current <= 0 && !hasAutoShownPaywall.current) {
       hasAutoShownPaywall.current = true;
       setTimeout(() => {
@@ -248,21 +248,43 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }, 300);
     }
 
-    // ★ NOTE: We do NOT call a DB RPC here.
-    // The backend api/index.ts handles atomic credit reservation via reserve_credits RPC.
-    // This frontend deduction is purely optimistic (keeps UI in sync instantly).
-
     return true;
   };
 
   // ★ Credit check + auto-paywall: Returns false AND opens pricing modal if insufficient
   const hasEnoughCredits = (amount: number): boolean => {
     if (userState.isAdmin) return true;
-    if (balanceRef.current >= amount) return true;
-    // ★ AUTO-PAYWALL: Open pricing modal automatically
-    console.log(`[CREDIT GUARD] hasEnoughCredits failed: have=${balanceRef.current}, need=${amount}`);
+    const available = Math.max(0, balanceRef.current);
+    if (available >= amount) return true;
+    console.log(`[CREDIT GUARD] hasEnoughCredits failed: have=${available}, need=${amount}`);
     setIsPricingOpen(true);
     return false;
+  };
+
+  // ★ NEW: Refresh balance from DB (call after API operations)
+  const refreshBalance = async () => {
+    if (!session?.user) return;
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('credits')
+        .eq('id', session.user.id)
+        .single();
+      if (!error && data) {
+        const dbBalance = Math.max(0, data.credits ?? 0); // ★ CLAMP
+        balanceRef.current = dbBalance;
+        setUserState(prev => ({ ...prev, balance: dbBalance }));
+        console.log(`[CREDIT SYNC] Balance refreshed from DB: ${dbBalance}`);
+
+        // Auto-paywall if DB says 0
+        if (dbBalance <= 0 && !hasAutoShownPaywall.current) {
+          hasAutoShownPaywall.current = true;
+          setIsPricingOpen(true);
+        }
+      }
+    } catch (e) {
+      console.error('[CREDIT SYNC] Failed to refresh balance:', e);
+    }
   };
 
   const buyCredits = async (amount: number, cost: number) => {
@@ -335,6 +357,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       buyCredits,
       upgradeUser,
       enableGodMode,
+      refreshBalance,
       isPricingOpen,
       openPricingModal: () => setIsPricingOpen(true),
       closePricingModal: () => setIsPricingOpen(false),
