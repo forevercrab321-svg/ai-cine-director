@@ -65,13 +65,13 @@ const downloadFile = async (url: string, filename: string) => {
 
 // Simulated terminal output logs
 const LOADING_LOGS = [
-  "Initializing generative context...",
-  "Analyzing visual consistency anchor...",
-  "Injecting style modifier vectors...",
-  "Rendering wireframe structure...",
-  "Calculating ray-traced lighting...",
-  "Refining detailed textures...",
-  "Finalizing color grading..."
+  "正在初始化生成上下文...",
+  "正在分析角色一致性锚点...",
+  "正在注入风格修改向量...",
+  "正在渲染线框结构...",
+  "正在计算光线追踪照明...",
+  "正在精细化纹理细节...",
+  "正在完成色彩分级..."
 ];
 
 const TerminalLoader = () => {
@@ -88,7 +88,7 @@ const TerminalLoader = () => {
     <div className="flex flex-col items-start gap-2 w-full px-8">
       <div className="flex items-center gap-2 mb-2">
         <LoaderIcon className="w-5 h-5 text-sky-500" />
-        <span className="text-xs font-bold text-sky-400 uppercase tracking-widest">Processing</span>
+        <span className="text-xs font-bold text-sky-400 uppercase tracking-widest">处理中</span>
       </div>
       <div className="font-mono text-[10px] text-slate-500 space-y-1 w-full opacity-80">
         <p className="opacity-40">root@ai-director:~$ start-render --hq</p>
@@ -131,7 +131,7 @@ const SceneCard: React.FC<SceneCardProps> = ({
 
   const handleGenerateImage = async () => {
     if (!isAuthenticated) {
-      alert("Please sign in to generate images.");
+      alert("请先登录以生成图片。");
       return;
     }
 
@@ -168,7 +168,7 @@ const SceneCard: React.FC<SceneCardProps> = ({
         return;
       }
       console.error("Image Gen Error:", e);
-      alert(`Generation Failed: ${e.message}`);
+      alert(`生成失败：${e.message}`);
     } finally {
       setIsImageLoading(false);
     }
@@ -199,7 +199,7 @@ const SceneCard: React.FC<SceneCardProps> = ({
         <div className="flex flex-col gap-3 relative group/image">
           <div className="flex justify-between items-center px-1">
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-sky-500"></span> Source Frame
+              <span className="w-1.5 h-1.5 rounded-full bg-sky-500"></span> 原画帧
             </span>
           </div>
 
@@ -240,7 +240,7 @@ const SceneCard: React.FC<SceneCardProps> = ({
                 <div className="absolute inset-0 bg-sky-500/10 translate-y-full group-hover/btn:translate-y-0 transition-transform duration-300"></div>
                 <div className="relative flex flex-col items-center gap-2">
                   <PhotoIcon className="w-6 h-6" />
-                  <span className="text-xs font-bold tracking-widest">{canAffordImage ? 'GENERATE FRAME' : `RECHARGE (${imgCost} 💎)`}</span>
+                  <span className="text-xs font-bold tracking-widest">{canAffordImage ? '生成原画帧' : `充值 (${imgCost} 💎)`}</span>
                 </div>
               </button>
             )}
@@ -251,9 +251,9 @@ const SceneCard: React.FC<SceneCardProps> = ({
         <div className="flex flex-col gap-3 relative group/video">
           <div className="flex justify-between items-center px-1">
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span> Motion Output
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span> 动态输出
             </span>
-            {externalVideoStatus === 'success' && <span className="text-[10px] text-green-500 font-mono">DONE</span>}
+            {externalVideoStatus === 'success' && <span className="text-[10px] text-green-500 font-mono">完成</span>}
           </div>
 
           <div className="aspect-video bg-black rounded-lg border border-slate-800 flex items-center justify-center overflow-hidden relative shadow-inner">
@@ -263,7 +263,7 @@ const SceneCard: React.FC<SceneCardProps> = ({
                   <div className="h-full bg-rose-500/80 animate-[progress_2s_ease-in-out_infinite] w-1/3 rounded-full"></div>
                 </div>
                 <div className="font-mono text-[10px] text-rose-300 animate-pulse">
-                  Rendering Motion Vectors...
+                  正在渲染运动向量...
                 </div>
               </div>
             ) : externalVideoUrl ? (
@@ -291,11 +291,11 @@ const SceneCard: React.FC<SceneCardProps> = ({
               >
                 <VideoCameraIcon className={`w-8 h-8 transition-colors ${!canAffordVideo ? 'text-red-400' : 'text-slate-500 group-hover/btn:text-rose-500'}`} />
                 {!imageUrl ? (
-                  <span className="text-[10px] font-mono text-slate-600">Waiting for source image...</span>
+                  <span className="text-[10px] font-mono text-slate-600">等待原画图片...</span>
                 ) : (
                   <div className="flex flex-col items-center gap-1">
                     <span className={`text-xs font-bold tracking-widest uppercase transition-colors ${!canAffordVideo ? 'text-red-300' : 'group-hover/btn:text-white'}`}>
-                      {canAffordVideo ? 'Generate Motion' : 'Recharge First'}
+                      {canAffordVideo ? '生成动态' : '请先充值'}
                     </span>
                     <span className={`text-[10px] px-2 py-0.5 rounded-full border transition-all
                       ${!canAffordVideo

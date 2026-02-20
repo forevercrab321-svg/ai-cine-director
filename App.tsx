@@ -49,7 +49,7 @@ const MainLayout: React.FC = () => {
       // The profile will auto-refresh via Supabase auth listener.
       // Show confirmation to user.
       setTimeout(() => {
-        alert('✅ 支付成功！Credits 已添加到您的账户。/ Payment successful! Credits have been added.');
+        alert('✅ 支付成功！额度已添加到您的账户。');
       }, 500);
     }
     if (params.get('canceled') === 'true') {
@@ -93,7 +93,7 @@ const MainLayout: React.FC = () => {
     if (!project) return;
 
     if (!profile?.id) {
-      alert("Please login to save your project.");
+      alert("请登入以保存项目。");
       return;
     }
 
@@ -194,7 +194,7 @@ const MainLayout: React.FC = () => {
               <div className="flex gap-3">
                 <button onClick={() => setWorkflowStage('input')} className="text-slate-400 hover:text-white px-4 py-2 text-sm">{t(settings.lang, 'backToConcept')}</button>
                 <button onClick={handleGoToProduction} className="px-6 py-2 bg-green-600 hover:bg-green-500 rounded-lg text-white font-bold shadow-lg shadow-green-500/20">
-                  Go to Production &rarr;
+                  进入制片环节 &rarr;
                 </button>
               </div>
             </div>

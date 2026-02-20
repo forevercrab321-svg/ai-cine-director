@@ -18,7 +18,7 @@ const API_BASE = '/api/replicate';
 // Helper: Get Auth Token
 const getAuthHeaders = async () => {
   const { data: { session } } = await supabase.auth.getSession();
-  if (!session) throw new Error("Please sign in to generate content.");
+  if (!session) throw new Error("请先登录以生成内容。");
   return {
     'Content-Type': 'application/json',
     'Authorization': `Bearer ${session.access_token}`

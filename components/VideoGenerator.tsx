@@ -20,16 +20,17 @@ const ProgressBar = ({ current, total, label }: { current: number, total: number
         <div className="h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700">
             <div
                 className="h-full bg-indigo-500 transition-all duration-500 ease-out shadow-[0_0_10px_rgba(99,102,241,0.5)]"
-                style={{ width: `${(current / total) * 100}%` }}
+                style={{ width: `${total === 0 ? 0 : (current / total) * 100}%` }}
             />
         </div>
     </div>
 );
 
 const friendlyError = (msg: string) => {
-    if (msg.includes("NSFW")) return "⚠️ NSFW Content Detected";
-    if (msg.includes("credits")) return "⚠️ Insufficient Server Credits";
-    return "⚠️ Generation Failed";
+    if (!msg) return "⚠️ 生成失败";
+    if (msg.includes("NSFW")) return "⚠️ 包含违规内容";
+    if (msg.toLowerCase().includes("credit")) return "⚠️ 额度不足";
+    return "⚠️ 生成失败";
 };
 
 const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript }) => {
@@ -39,18 +40,15 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
         isAuthenticated,
         openPricingModal,
         hasEnoughCredits,
-        refreshBalance  // ★ Sync balance from DB after operations
+        refreshBalance
     } = useAppContext();
 
-    // ★ Credit guard: compute whether user can afford at least one generation
-    // NOTE: hasEnoughCredits opens pricing modal as a side-effect when called with insufficient balance
-    // We do NOT call it here at render time (would open modal on every render) — only call on button click
     const imageCost = settings.imageModel === 'flux_schnell' ? CREDIT_COSTS.IMAGE_FLUX_SCHNELL : CREDIT_COSTS.IMAGE_FLUX;
     const videoCostPerScene = MODEL_COSTS[settings.videoModel] || 28;
+
     const insufficientForImage = !userState.isAdmin && userState.balance < imageCost;
     const insufficientForVideo = !userState.isAdmin && userState.balance < videoCostPerScene;
 
-    // Local State Management
     const [activeVideoJobs, setActiveVideoJobs] = useState<Record<number, { id: string, startTime: number }>>({});
     const [sceneStatus, setSceneStatus] = useState<Record<number, { status: string, message?: string, error?: string }>>({});
     const [sceneImages, setSceneImages] = useState<Record<number, string>>({});
@@ -73,23 +71,25 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
 
                     if (statusRes.status === 'succeeded' && statusRes.output) {
                         setSceneVideoUrls(prev => ({ ...prev, [sNum]: String(statusRes.output) }));
-                        setSceneStatus(prev => ({ ...prev, [sNum]: { status: 'done', message: '✅ Complete' } }));
+                        setSceneStatus(prev => ({ ...prev, [sNum]: { status: 'done', message: '✅ 渲染完成' } }));
                         setActiveVideoJobs(prev => {
                             const next = { ...prev };
                             delete next[sNum];
                             return next;
                         });
                     } else if (statusRes.status === 'failed' || statusRes.status === 'canceled') {
-                        setSceneStatus(prev => ({ ...prev, [sNum]: { status: 'failed', error: statusRes.error, message: friendlyError(statusRes.error || 'Failed') } }));
+                        setSceneStatus(prev => ({
+                            ...prev,
+                            [sNum]: { status: 'failed', error: statusRes.error, message: friendlyError(statusRes.error || 'Failed') }
+                        }));
                         setActiveVideoJobs(prev => {
                             const next = { ...prev };
                             delete next[sNum];
                             return next;
                         });
                     } else {
-                        // Still processing
                         const elapsed = Math.floor((Date.now() - activeVideoJobs[sNum].startTime) / 1000);
-                        setSceneStatus(prev => ({ ...prev, [sNum]: { status: statusRes.status, message: `Running ${elapsed}s...` } }));
+                        setSceneStatus(prev => ({ ...prev, [sNum]: { status: statusRes.status, message: `正在生成中 ${elapsed}秒...` } }));
                     }
                 } catch (e) {
                     console.error("Polling error", e);
@@ -100,16 +100,11 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
     }, [activeVideoJobs]);
 
     const executeImageGeneration = async (scene: Scene) => {
-        const cost = settings.imageModel === 'flux_schnell' ? CREDIT_COSTS.IMAGE_FLUX_SCHNELL : CREDIT_COSTS.IMAGE_FLUX;
-
-        // ★ GUARD ONLY — backend API handles actual DB deduction
-        // Calling deductCredits() here would cause DOUBLE DEDUCTION
-        if (!userState.isAdmin && !hasEnoughCredits(cost)) {
-            // hasEnoughCredits auto-opens pricing modal
-            throw new Error("INSUFFICIENT_CREDITS");
+        if (!userState.isAdmin && !hasEnoughCredits(imageCost)) {
+            throw Object.assign(new Error("INSUFFICIENT_CREDITS"), { code: "INSUFFICIENT_CREDITS" });
         }
 
-        setSceneStatus(prev => ({ ...prev, [scene.scene_number]: { status: 'image_gen', message: '🎨 Generating Image...' } }));
+        setSceneStatus(prev => ({ ...prev, [scene.scene_number]: { status: 'image_gen', message: '🎨 正在生成图片...' } }));
 
         try {
             const prompt = `${scene.visual_description}, ${scene.shot_type}`;
@@ -122,31 +117,20 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
             );
 
             setSceneImages(prev => ({ ...prev, [scene.scene_number]: url }));
-            setSceneStatus(prev => ({ ...prev, [scene.scene_number]: { status: 'ready', message: 'Image Ready' } }));
-            // Sync balance after each image generated
+            setSceneStatus(prev => ({ ...prev, [scene.scene_number]: { status: 'ready', message: '图片已就绪' } }));
             await refreshBalance();
             return url;
         } catch (e: any) {
-            setSceneStatus(prev => ({ ...prev, [scene.scene_number]: { status: 'failed', error: e.message, message: 'Image Gen Failed' } }));
+            setSceneStatus(prev => ({
+                ...prev,
+                [scene.scene_number]: { status: 'failed', error: e.message, message: '图片生成失败' }
+            }));
             throw e;
         }
     };
 
     const handleRenderImages = async () => {
-        if (!isAuthenticated) return alert("Please sign in to generate images.");
-
-        // ★ Batch Pre-check
-        // Calculate total cost for ALL remaining scenes
-        const remainingScenes = project.scenes.filter(s => !sceneImages[s.scene_number]);
-        const costPerImage = settings.imageModel === 'flux_schnell' ? CREDIT_COSTS.IMAGE_FLUX_SCHNELL : CREDIT_COSTS.IMAGE_FLUX;
-        const totalEstCost = remainingScenes.length * costPerImage;
-
-        if (!hasEnoughCredits(totalEstCost)) {
-            // hasEnoughCredits auto-opens pricing modal if insufficient
-            if (!userState.isAdmin) {
-                return;
-            }
-        }
+        if (!isAuthenticated) return alert("请先登录以生成图片。");
 
         setIsRenderingImages(true);
         let completed = 0;
@@ -163,82 +147,50 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
             try {
                 await executeImageGeneration(scene);
             } catch (e: any) {
-                if (e.message === 'INSUFFICIENT_CREDITS' || e.code === 'INSUFFICIENT_CREDITS') {
-                    console.warn("[CREDIT GUARD] Credit limit reached, stopping batch.");
-                    break; // hasEnoughCredits already opened paywall
+                if (e.code === 'INSUFFICIENT_CREDITS' || e.message === 'INSUFFICIENT_CREDITS') {
+                    openPricingModal();
+                    break; // ★ STOP batch on low credit
                 }
                 console.error(e);
             }
+
             completed++;
             setImageProgress({ completed, total });
         }
+
         setIsRenderingImages(false);
-        // ★ Sync true balance from DB after batch
         await refreshBalance();
     };
 
     const handleRenderVideos = async () => {
-        if (!isAuthenticated) return alert("Please sign in to generate videos.");
+        if (!isAuthenticated) return alert("请先登录以生成视频。");
 
-        // ★ Batch Pre-check
-        // We only check for video costs here. Images handled separately or inside loop?
-        // Logic: The loop checks for image and generates if missing.
-        // So we should estimate image + video cost.
-        const scenesToProcess = project.scenes.filter(s =>
-            !activeVideoJobs[s.scene_number] &&
-            sceneStatus[s.scene_number]?.status !== 'done'
-        );
-
-        let totalEstCost = 0;
-        const videoCost = MODEL_COSTS[settings.videoModel] || 28;
-        const imageCost = settings.imageModel === 'flux_schnell' ? CREDIT_COSTS.IMAGE_FLUX_SCHNELL : CREDIT_COSTS.IMAGE_FLUX;
-
-        scenesToProcess.forEach(s => {
-            let sceneCost = videoCost;
-            if (!sceneImages[s.scene_number]) {
-                sceneCost += imageCost;
-            }
-            totalEstCost += sceneCost;
-        });
-
-        if (!hasEnoughCredits(totalEstCost)) {
-            // hasEnoughCredits auto-opens pricing modal if insufficient
-            if (!userState.isAdmin) {
-                return;
-            }
-        }
+        const baseCost = MODEL_COSTS[settings.videoModel] || 28;
 
         for (const scene of project.scenes) {
             const sNum = scene.scene_number;
             if (activeVideoJobs[sNum] || sceneStatus[sNum]?.status === 'done') continue;
 
             let imgUrl = sceneImages[sNum];
+
+            // If no image yet, generate it first
             if (!imgUrl) {
                 try {
-                    // executeImageGeneration handles credit check via ref
                     imgUrl = await executeImageGeneration(scene);
                 } catch (e: any) {
-                    if (e.message === "Insufficient credits" || e.code === 'INSUFFICIENT_CREDITS') {
-                        break; // deductCredits already opened paywall
+                    if (e.code === 'INSUFFICIENT_CREDITS' || e.message === 'INSUFFICIENT_CREDITS') {
+                        openPricingModal();
+                        break; // ★ STOP batch on low credit
                     }
+                    console.error(e);
                     continue;
                 }
-            }
-
-            const baseCost = MODEL_COSTS[settings.videoModel] || 28;
-            const finalCost = baseCost;
-
-            // ★ GUARD ONLY — backend handles actual DB deduction via RPC
-            // Do NOT call deductCredits() here (causes double-deduction)
-            if (!userState.isAdmin && !hasEnoughCredits(finalCost)) {
-                // hasEnoughCredits auto-opens pricing modal
-                break;
             }
 
             try {
                 const res = await startVideoTask(
                     scene.shot_type || "cinematic motion",
-                    imgUrl,
+                    imgUrl!,
                     settings.videoModel,
                     settings.videoStyle,
                     settings.generationMode,
@@ -251,37 +203,34 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
 
                 setActiveVideoJobs(prev => ({ ...prev, [sNum]: { id: res.id, startTime: Date.now() } }));
                 setScenePredictionIds(prev => ({ ...prev, [sNum]: res.id }));
-                setSceneStatus(prev => ({ ...prev, [sNum]: { status: 'starting', message: '🚀 Sent to Replicate' } }));
+                setSceneStatus(prev => ({ ...prev, [sNum]: { status: 'starting', message: '🚀 已发送请求' } }));
             } catch (e: any) {
                 if (e.code === 'INSUFFICIENT_CREDITS' || e.message === 'INSUFFICIENT_CREDITS') {
                     openPricingModal();
-                    break;
+                    break; // ★ STOP batch on low credit
                 }
                 console.error(e);
                 setSceneStatus(prev => ({ ...prev, [sNum]: { status: 'failed', error: e.message, message: friendlyError(e.message) } }));
             }
         }
-        // ★ Sync true balance from DB after video batch
+
         await refreshBalance();
     };
 
     const handleGenerateSingleVideo = async (sceneNum: number) => {
-        if (!isAuthenticated) return alert("Please sign in to generate video.");
+        if (!isAuthenticated) return alert("请先登录以生成视频。");
 
         const scene = project.scenes.find(s => s.scene_number === sceneNum);
         const imgUrl = sceneImages[sceneNum];
         if (!scene || !imgUrl) return;
 
         const baseCost = MODEL_COSTS[settings.videoModel] || 28;
-        const finalCost = baseCost;
 
-        // ★ GUARD ONLY — backend handles actual DB deduction
-        if (!userState.isAdmin && !hasEnoughCredits(finalCost)) {
-            // hasEnoughCredits auto-opens pricing modal
+        if (!userState.isAdmin && !hasEnoughCredits(baseCost)) {
             return;
         }
 
-        setSceneStatus(prev => ({ ...prev, [sceneNum]: { status: 'queued', message: 'Starting...' } }));
+        setSceneStatus(prev => ({ ...prev, [sceneNum]: { status: 'queued', message: '准备中...' } }));
         try {
             const res = await startVideoTask(
                 scene.shot_type || "cinematic motion",
@@ -297,7 +246,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
             );
             setActiveVideoJobs(prev => ({ ...prev, [sceneNum]: { id: res.id, startTime: Date.now() } }));
             setScenePredictionIds(prev => ({ ...prev, [sceneNum]: res.id }));
-            setSceneStatus(prev => ({ ...prev, [sceneNum]: { status: 'starting', message: '🚀 Started' } }));
+            setSceneStatus(prev => ({ ...prev, [sceneNum]: { status: 'starting', message: '🚀 已开始渲染' } }));
         } catch (e: any) {
             if (e.code === 'INSUFFICIENT_CREDITS' || e.message === 'INSUFFICIENT_CREDITS') {
                 openPricingModal();
@@ -306,14 +255,11 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
             console.error(e);
             setSceneStatus(prev => ({ ...prev, [sceneNum]: { status: 'failed', error: e.message, message: friendlyError(e.message) } }));
         }
-        // ★ Sync balance after single video starts
         await refreshBalance();
     };
 
     return (
         <div className="space-y-12 animate-in fade-in slide-in-from-bottom-8 duration-700 relative pb-20">
-
-            {/* Sticky Header / Controls */}
             <div className="sticky top-4 z-40 space-y-4">
                 <div className="bg-slate-950/80 p-4 rounded-xl backdrop-blur border border-slate-800 shadow-2xl flex flex-col md:flex-row gap-4 items-center justify-between">
                     <div>
@@ -333,43 +279,39 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
                         <button
                             onClick={insufficientForImage ? openPricingModal : handleRenderImages}
                             disabled={isRenderingImages}
-                            title={insufficientForImage ? `Need ${imageCost} 💎 per image (have ${userState.balance})` : undefined}
                             className={`flex-1 md:flex-none px-6 py-3 rounded-lg font-bold transition-all flex items-center justify-center gap-2 text-sm
-                                ${isRenderingImages ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                ${isRenderingImages ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
                                     : insufficientForImage ? 'bg-red-900/40 border border-red-500/30 text-red-300 hover:bg-red-900/60'
                                         : 'bg-slate-800 hover:bg-sky-600 text-white hover:shadow-lg hover:shadow-sky-500/20'}
-                            `}
+              `}
                         >
                             {isRenderingImages ? <LoaderIcon className="w-4 h-4" /> : <PhotoIcon className="w-4 h-4" />}
-                            {insufficientForImage ? `Recharge to Render` : 'Render All Images'}
+                            {insufficientForImage ? `充值后渲染图片` : '一键生成全部图片'}
                         </button>
                         <button
                             onClick={insufficientForVideo ? openPricingModal : handleRenderVideos}
-                            title={insufficientForVideo ? `Need ${videoCostPerScene} 💎 per video (have ${userState.balance})` : undefined}
                             className={`flex-1 md:flex-none px-6 py-3 rounded-lg text-white font-bold transition-all shadow-lg flex items-center justify-center gap-2 text-sm
-                                ${insufficientForVideo
+                ${insufficientForVideo
                                     ? 'bg-red-900/40 border border-red-500/30 text-red-300 hover:bg-red-900/60 shadow-red-500/10'
                                     : 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-500/20'}
-                            `}
+              `}
                         >
                             <VideoCameraIcon className="w-4 h-4" />
-                            {insufficientForVideo ? `Recharge to Render` : 'Render All Videos'}
+                            {insufficientForVideo ? `充值后渲染视频` : '一键生成全部视频'}
                         </button>
                     </div>
                 </div>
             </div>
 
-            {/* Global Progress Indicator */}
             {isRenderingImages && (
-                <ProgressBar current={imageProgress.completed} total={imageProgress.total} label="Generating Source Frames..." />
+                <ProgressBar current={imageProgress.completed} total={imageProgress.total} label="正在渲染视频原画 (图片)..." />
             )}
 
-            {/* Video Batch Progress (if many jobs active) */}
             {!isRenderingImages && Object.keys(activeVideoJobs).length > 0 && (
                 <ProgressBar
                     current={project.scenes.length - Object.keys(activeVideoJobs).length}
                     total={project.scenes.length}
-                    label="Rendering Video Batch..."
+                    label="正在批量等待并渲染视频帧..."
                 />
             )}
 
@@ -384,7 +326,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
                             videoStyle={settings.videoStyle}
                             aspectRatio={settings.aspectRatio}
                             userCredits={userState.balance}
-                            onDeductCredits={async () => true /* no-op: backend handles deduction */}
+                            onDeductCredits={async () => true}
                             generationMode={settings.generationMode}
                             globalVideoQuality={settings.videoQuality}
                             globalVideoDuration={settings.videoDuration}
@@ -403,7 +345,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
                             predictionId={scenePredictionIds[scene.scene_number]}
                             errorDetails={sceneStatus[scene.scene_number]?.error}
                             characterAnchor={project.character_anchor}
-                            isAuthenticated={isAuthenticated} // Changed: Pass auth state
+                            isAuthenticated={isAuthenticated}
                         />
                     </div>
                 ))}

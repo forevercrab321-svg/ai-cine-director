@@ -39,6 +39,7 @@ const responseSchema = {
 
 // POST /api/gemini/generate - 生成故事板
 geminiRouter.post('/generate', async (req, res) => {
+    const jobRef = `gemini:${Date.now()}:${Math.random().toString(36).slice(2)}`;
     try {
         const { storyIdea, visualStyle, language, mode, identityAnchor } = req.body;
 
@@ -55,23 +56,21 @@ geminiRouter.post('/generate', async (req, res) => {
             { global: { headers: { Authorization: authHeader } } }
         );
 
-        // Deduct 1 credit for Storyboard
+        // Deduct 1 credit for Storyboard via ledger
         const COST = 1;
-        const { data: success, error: rpcError } = await supabaseUserClient.rpc('deduct_credits', {
-            amount_to_deduct: COST,
-            model_used: 'gemini-storyboard',
-            base_cost: COST,
-            multiplier: 1
+
+        const { data: reserved, error: reserveErr } = await supabaseUserClient.rpc('reserve_credits', {
+            amount: COST,
+            ref_type: 'gemini',
+            ref_id: jobRef
         });
 
-        if (rpcError) {
-            console.error('Gemini credit check error:', rpcError);
-            // Verify if error is just auth? Proceed with caution or block?
-            // Safest: Block.
+        if (reserveErr) {
+            console.error('Gemini credit reserve error:', reserveErr);
             return res.status(500).json({ error: 'Credit verification failed' });
         }
 
-        if (!success) {
+        if (!reserved) {
             return res.status(402).json({ error: "Insufficient credits", code: "INSUFFICIENT_CREDITS" });
         }
 
@@ -140,11 +139,32 @@ You are writing instructions for an AI production pipeline.
             video_motion_prompt: s.shot_type,
         }));
 
+        // Finalize the reserve (credits are consumed)
+        await supabaseUserClient.rpc('finalize_reserve', {
+            ref_type: 'gemini',
+            ref_id: jobRef
+        });
+
         res.json(project);
     } catch (error: any) {
         console.error('[Gemini] Error:', error);
 
-        // Friendly formatted error for the frontend
+        // Refund reserved credits on failure
+        try {
+            const supabaseRefund = createClient(
+                process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
+                process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+                { global: { headers: { Authorization: req.headers.authorization as string } } }
+            );
+            await supabaseRefund.rpc('refund_reserve', {
+                amount: 1,
+                ref_type: 'gemini',
+                ref_id: jobRef
+            });
+        } catch (refundErr) {
+            console.error('[Gemini] Refund failed:', refundErr);
+        }
+
         const isQuotaError = error.message?.includes('429') ||
             error.message?.includes('Resource exhausted') ||
             error.status === 429;
@@ -152,8 +172,6 @@ You are writing instructions for an AI production pipeline.
         res.status(isQuotaError ? 429 : 500).json({
             error: isQuotaError ? 'System is busy (Quota Exceeded). Please try again in a moment.' : (error.message || 'Gemini generation failed'),
             details: error.toString(),
-            // Only send stack in dev or if needed, but keeping it for now as per previous code
-            // stack: error.stack 
         });
     }
 });
