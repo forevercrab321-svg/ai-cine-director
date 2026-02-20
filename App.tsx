@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppProvider, useAppContext } from './context/AppContext';
 import { generateStoryboard, analyzeImageForAnchor } from './services/geminiService';
 import { saveStoryboard } from './services/storyboardService';
@@ -25,7 +25,8 @@ const MainLayout: React.FC = () => {
     enableGodMode,
     isPricingOpen,
     openPricingModal,
-    closePricingModal
+    closePricingModal,
+    hasEnoughCredits
   } = useAppContext();
 
   const [workflowStage, setWorkflowStage] = useState<'input' | 'scripting' | 'production'>('input');
@@ -38,8 +39,34 @@ const MainLayout: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   // const [isPricingOpen, setIsPricingOpen] = useState(false); // Moved to Context
 
+  // ★ Stripe Payment Success Callback
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('success') === 'true') {
+      // Clean URL to remove query params
+      window.history.replaceState({}, '', window.location.pathname);
+      // Credits are added by backend webhook (add_credits RPC).
+      // The profile will auto-refresh via Supabase auth listener.
+      // Show confirmation to user.
+      setTimeout(() => {
+        alert('✅ 支付成功！Credits 已添加到您的账户。/ Payment successful! Credits have been added.');
+      }, 500);
+    }
+    if (params.get('canceled') === 'true') {
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
   const handleGenerateScript = async () => {
     if (!storyIdea.trim()) return;
+
+    // ★ Credit Guard: Storyboard generation costs 1 credit (or adjust as needed)
+    const STORYBOARD_COST = 1;
+    if (!hasEnoughCredits(STORYBOARD_COST)) {
+      openPricingModal();
+      return;
+    }
+
     setLoading(true);
     setError(null);
     setProject(null);
@@ -112,7 +139,7 @@ const MainLayout: React.FC = () => {
 
       <PricingModal
         isOpen={isPricingOpen} onClose={closePricingModal}
-        onUpgrade={async (tier) => upgradeUser(tier)}
+        onUpgrade={() => { }}
       />
 
       <div className="max-w-5xl mx-auto px-6 pt-12">
