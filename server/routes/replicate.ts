@@ -31,20 +31,32 @@ const getToken = () => {
     return token;
 };
 
+// ★ Cost map — must match frontend MODEL_COSTS in types.ts
+const BACKEND_COST_MAP: Record<string, number> = {
+    'wan-video/wan-2.2-i2v-fast': 8,
+    'minimax/hailuo-02-fast': 18,
+    'bytedance/seedance-1-lite': 28,
+    'kwaivgi/kling-v2.5-turbo-pro': 53,
+    'minimax/video-01-live': 75,
+    'black-forest-labs/flux-1.1-pro': 6,
+    'black-forest-labs/flux-schnell': 1,
+};
+
 // POST /api/replicate/predict - Creating Prediction
 replicateRouter.post('/predict', async (req, res) => {
     try {
         const token = getToken();
-        // ★ 1. Auth & Credit Check
+
+        // 1. Auth Check
         const authHeader = req.headers.authorization; // "Bearer <user_token>"
         if (!authHeader) {
             return res.status(401).json({ error: "Missing Authorization header" });
         }
 
-        const supabaseAdmin = getSupabaseAdmin();
         const userToken = authHeader.replace('Bearer ', '');
 
-        // Validate User
+        // 2. Validate User via Admin client
+        const supabaseAdmin = getSupabaseAdmin();
         const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(userToken);
 
         if (authError || !user) {
@@ -57,54 +69,38 @@ replicateRouter.post('/predict', async (req, res) => {
             return res.status(400).json({ error: 'Missing version or input' });
         }
 
-        // ★ Determine Cost — aligned with frontend MODEL_COSTS (types.ts)
-        const BACKEND_COST_MAP: Record<string, number> = {
-            'wan-video/wan-2.2-i2v-fast': 8,
-            'minimax/hailuo-02-fast': 18,
-            'bytedance/seedance-1-lite': 28,
-            'kwaivgi/kling-v2.5-turbo-pro': 53,
-            'minimax/video-01-live': 75,
-            'black-forest-labs/flux-1.1-pro': 6,
-            'black-forest-labs/flux-schnell': 1,
-            'google/gemini-nano-banana': 5,
-        };
-        let estimatedCost = BACKEND_COST_MAP[version] || 20; // Safe default
+        // 3. Estimate Cost
+        let estimatedCost = BACKEND_COST_MAP[version] || 20;
 
-        // ★ 2. Deduct Credits (Atomic)
-        // RPC: deduct_credits(amount_to_deduct, model_used, base_cost, multiplier)
-        // Note: deduct_credits needs to be called as the USER.
-        // We need 'rpc' call. Since we are admin, we can set auth context?
-        // Actually, 'security definer' RPC uses `auth.uid()`. 
-        // We can use `supabaseAdmin.rpc(..., { global: { headers: { Authorization: ... } } })`?
-        // Easier: Use `supabaseClient` initialized with user token?
-        // Or pass user_id to a modified RPC?
-        // Current RPC `deduct_credits` uses `auth.uid()`.
-
-        // We can create a client FOR THIS USER
+        // 4. ★ Deduct Credits (Atomic) — use USER client so auth.uid() works in RPC
         const supabaseUserClient = createClient(
             process.env.VITE_SUPABASE_URL!,
             process.env.VITE_SUPABASE_ANON_KEY!,
             { global: { headers: { Authorization: authHeader } } }
         );
 
-        const { data: success, error: rpcError } = await supabaseUserClient.rpc('deduct_credits', {
+        const { data: deductSuccess, error: deductError } = await supabaseUserClient.rpc('deduct_credits', {
             amount_to_deduct: estimatedCost,
-            model_used: model || 'unknown',
+            model_used: model || version,
             base_cost: estimatedCost,
             multiplier: 1
         });
 
-        if (rpcError) {
-            console.error('Credit check error:', rpcError);
-            return res.status(500).json({ error: 'Credit verification failed' });
+        if (deductError) {
+            console.error('[Credit Deduct Error]', deductError);
+            return res.status(500).json({ error: 'Credit verification failed: ' + deductError.message });
         }
 
-        if (!success) {
-            return res.status(402).json({ error: "Insufficient credits", code: "INSUFFICIENT_CREDITS" });
+        // deduct_credits returns boolean: true = OK, false = insufficient
+        if (!deductSuccess) {
+            return res.status(402).json({
+                error: 'INSUFFICIENT_CREDITS',
+                code: 'INSUFFICIENT_CREDITS',
+                message: 'Insufficient credits to perform this action'
+            });
         }
 
-        // ★ 3. Proceed with Replicate Call
-        // 判断是 model 路径还是版本 hash
+        // 5. ★ Call Replicate API
         const isModelPath = version.includes('/') && !version.match(/^[a-f0-9]{64}$/);
         let targetUrl: string;
 
@@ -129,14 +125,14 @@ replicateRouter.post('/predict', async (req, res) => {
                 body: JSON.stringify(isModelPath ? { input } : { version, input }),
             });
 
-            // 429 速率限制 → 自动等待重试
+            // 429 Rate limit → wait and retry
             if (response.status === 429 && attempt < maxRetries) {
-                let retryAfter = 10; // 默认等 10 秒
+                let retryAfter = 10;
                 try {
                     const errData = JSON.parse(await response.text());
                     retryAfter = errData.retry_after || errData.detail?.match(/~(\d+)s/)?.[1] || 10;
                 } catch { }
-                const waitMs = (Number(retryAfter) + 2) * 1000; // 加 2 秒缓冲
+                const waitMs = (Number(retryAfter) + 2) * 1000;
                 console.log(`[Replicate] Rate limited (429). Waiting ${waitMs / 1000}s before retry...`);
                 await new Promise(r => setTimeout(r, waitMs));
                 continue;
@@ -145,6 +141,25 @@ replicateRouter.post('/predict', async (req, res) => {
             if (!response.ok) {
                 const errText = await response.text();
                 console.error(`[Replicate] Error ${response.status}: ${errText}`);
+
+                // Refund credits on Replicate API failure
+                try {
+                    const { data: profile } = await supabaseAdmin
+                        .from('profiles')
+                        .select('credits')
+                        .eq('id', user.id)
+                        .single();
+                    if (profile) {
+                        await supabaseAdmin
+                            .from('profiles')
+                            .update({ credits: Math.max(0, (profile.credits || 0) + estimatedCost) })
+                            .eq('id', user.id);
+                        console.log(`[Replicate] Refunded ${estimatedCost} credits to user ${user.id}`);
+                    }
+                } catch (refundErr) {
+                    console.error('[Replicate] Failed to refund credits:', refundErr);
+                }
+
                 return res.status(response.status).json({ error: errText });
             }
 
@@ -152,8 +167,8 @@ replicateRouter.post('/predict', async (req, res) => {
             return res.json(data);
         }
 
-        // 超过最大重试次数
-        return res.status(429).json({ error: 'Rate limit exceeded after retries. Please try again later or add credits to your Replicate account.' });
+        // Max retries exceeded
+        return res.status(429).json({ error: 'Rate limit exceeded after retries. Please try again later.' });
     } catch (error: any) {
         console.error('[Replicate] Error:', error.message);
         res.status(500).json({ error: error.message || 'Replicate prediction failed' });
@@ -161,7 +176,7 @@ replicateRouter.post('/predict', async (req, res) => {
 });
 
 
-// GET /api/replicate/status/:id - 查询任务状态
+// GET /api/replicate/status/:id - Query task status (no credit settlement needed, deduction was upfront)
 replicateRouter.get('/status/:id', async (req, res) => {
     try {
         const token = getToken();
