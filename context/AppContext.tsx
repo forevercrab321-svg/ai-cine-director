@@ -119,7 +119,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       if (data) {
         setProfile({ id: data.id, name: data.name, role: data.role });
-        const newBalance = data.credits ?? 0; // ★ NO CLAMP — show real DB value, negative means overcharged
+
+        // ★ AUTO-HEAL: Fix legacy negative balances from old Vercel deployments
+        let newBalance = data.credits ?? 0;
+        if (newBalance < 0) {
+          console.log(`[CREDIT] Auto-healing legacy negative balance (${newBalance} -> 0)`);
+          newBalance = 0;
+          // Fire and forget DB heal
+          supabase.from('profiles').update({ credits: 0 }).eq('id', userId).then();
+        }
 
         // Restore God Mode from LocalStorage if active
         const isGodMode = localStorage.getItem('ai_cine_god_mode') === 'true';
