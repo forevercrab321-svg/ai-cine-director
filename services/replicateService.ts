@@ -85,7 +85,8 @@ export const generateImage = async (
       input: {
         prompt: finalPrompt,
         aspect_ratio: aspectRatio,
-        output_format: "jpg"
+        output_format: "jpg",
+        seed: 142857
       }
     })
   });
@@ -126,20 +127,20 @@ function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string
 
   switch (modelType) {
     case 'wan_2_2_fast':
-      return { prompt: strictPrompt, image: imageUrl, prompt_optimizer: true };
+      return { prompt: strictPrompt, image: imageUrl, prompt_optimizer: true, seed: 142857 };
     case 'hailuo_02_fast':
-      return { prompt: strictPrompt, first_frame_image: imageUrl, duration: 6, resolution: "720p", prompt_optimizer: true };
+      return { prompt: strictPrompt, first_frame_image: imageUrl, duration: 6, resolution: "720p", prompt_optimizer: true, seed: 142857 };
     case 'seedance_lite':
-      return { prompt: strictPrompt, image: imageUrl, duration: 5, resolution: "720p" };
+      return { prompt: strictPrompt, image: imageUrl, duration: 5, resolution: "720p", seed: 142857 };
     case 'kling_2_5':
-      return { prompt: strictPrompt, image: imageUrl, duration: 5, cfg_scale: 0.8 };
+      return { prompt: strictPrompt, image: imageUrl, duration: 5, cfg_scale: 0.8, seed: 142857 };
     case 'hailuo_live':
-      return { prompt: strictPrompt, first_frame_image: imageUrl, prompt_optimizer: true };
+      return { prompt: strictPrompt, first_frame_image: imageUrl, prompt_optimizer: true, seed: 142857 };
     case 'google_gemini_nano_banana':
       // Assuming it works like Hailuo for now
-      return { prompt: strictPrompt, first_frame_image: imageUrl, prompt_optimizer: true };
+      return { prompt: strictPrompt, first_frame_image: imageUrl, prompt_optimizer: true, seed: 142857 };
     default:
-      return { prompt: strictPrompt, first_frame_image: imageUrl, prompt_optimizer: true };
+      return { prompt: strictPrompt, first_frame_image: imageUrl, prompt_optimizer: true, seed: 142857 };
   }
 }
 

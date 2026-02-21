@@ -376,8 +376,12 @@ app.post('/api/billing/webhook', async (req: any, res: any) => {
 
     if (event.type === 'checkout.session.completed') {
         const session = event.data.object as Stripe.Checkout.Session;
-        const userId = session.metadata?.user_id;
-        const credits = Number(session.metadata?.credits);
+
+        // Stripe Payment Links use client_reference_id, fallback to metadata for custom sessions
+        const userId = session.client_reference_id || session.metadata?.user_id;
+
+        // Payment Link doesn't carry custom metadata by default, grant 1000 credits 
+        const credits = Number(session.metadata?.credits) || 1000;
 
         if (userId && credits) {
             const supabase = getSupabaseAdmin();

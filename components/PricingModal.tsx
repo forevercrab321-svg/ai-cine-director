@@ -3,6 +3,7 @@ import { StoryboardProject, Scene, MODEL_COSTS, CREDIT_COSTS, MODEL_MULTIPLIERS,
 import { useAppContext } from '../context/AppContext';
 import { LoaderIcon, CheckIcon } from './IconComponents';
 import { supabase } from '../lib/supabaseClient';
+import { initiateCheckout } from '../services/stripeService';
 
 interface PricingModalProps {
   isOpen: boolean;
@@ -39,26 +40,12 @@ const PricingModal: React.FC<PricingModalProps> = ({ isOpen, onClose, onUpgrade 
         return;
       }
 
-      const res = await fetch('/api/billing/checkout', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`
-        },
-        body: JSON.stringify({ packageId: pack.id })
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Checkout failed");
-      }
-
-      const { url } = await res.json();
-      if (url) window.location.href = url;
+      // We are redirecting directly to the hardcoded Stripe Payment Link
+      initiateCheckout(session.user.id);
 
     } catch (e: any) {
       console.error(e);
-      alert(`支付失败：${e.message}`);
+      alert(`跳转支付失败：${e.message}`);
       setIsProcessing(false);
     }
   };
