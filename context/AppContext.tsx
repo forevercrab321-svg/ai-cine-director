@@ -53,7 +53,7 @@ interface AppContextType {
   hasEnoughCredits: (amount: number) => boolean;
 }
 
-const DEFAULT_CREDITS = 50;
+// ★ No free credits — users must purchase credits via Stripe
 
 const defaultSettings: AppSettings = {
   lang: 'en',

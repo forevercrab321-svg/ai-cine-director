@@ -3,7 +3,7 @@ create table public.profiles (
   id uuid references auth.users not null primary key,
   name text,
   role text,
-  credits integer default 50 check (credits >= 0), -- ★ 终极防线：在建表时直接锁死，积分永远不可能小于 0
+  credits integer default 0 check (credits >= 0), -- ★ No free credits! Users must purchase via Stripe. CHECK prevents negative balance.
   is_pro boolean default false,
   is_admin boolean default false,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
