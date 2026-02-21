@@ -236,21 +236,20 @@ app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
 **★ CRITICAL — CHARACTER CONSISTENCY RULES (MANDATORY):**
 The "character_anchor" field is the SINGLE SOURCE OF TRUTH for the protagonist's appearance.
 It MUST be an extremely detailed, frozen visual identity containing ALL of the following:
-- Exact ethnicity and age range (e.g., "East Asian male, early 20s")
-- Face shape, eye color, eye shape, eyebrow style
-- Hair: exact color, length, style (e.g., "jet black spiky hair, shoulder length")
-- Outfit: exact clothing with colors and materials (e.g., "red silk scarf, golden armor plates, dark leather boots")
-- Body type and posture
-- Art style lock (e.g., "3D donghua style" or "photorealistic" — MUST match the user's chosen visual style)
+- Exact ethnicity and age range
+- Face shape, eye/hair color, hair style
+- Outfit: exact clothing with colors and materials (e.g., "red ski suit")
+- Specific Equipment: (e.g., "snowboard", "skis", or "camera")
 
-${identityAnchor
-                ? `The character is HARD-LOCKED to: "${identityAnchor}". Copy this identity EXACTLY into character_anchor. Do NOT modify it.`
-                : `You MUST invent a highly specific, unique character_anchor. Be extremely detailed — face, hair, skin, outfit, accessories, art style. The more detail, the better.`}
+**★ CRITICAL RULE FOR VISUAL DESCRIPTION:**
+You MUST rigidly copy the character's exact clothing, colors, and specific equipment from the \`character_anchor\` into EVERY SINGLE \`visual_description\`. 
+NEVER change their equipment (e.g., do NOT switch a snowboard to skis). 
+If the anchor wears a 'red suit', you must explicitly write 'wearing a red suit' in the visual description of Scene 1, Scene 2, Scene 3, Scene 4, and Scene 5. 
+Diffusion models have no memory; you must feed them the exact visual traits in every prompt.
 
-**★ SCENE CONSISTENCY RULE:**
-EVERY scene's "visual_description" MUST begin with the EXACT character_anchor text, word for word, followed by the scene-specific action and environment. This ensures the same character appears in every frame. Do NOT paraphrase or abbreviate the anchor.
+EVERY scene's "visual_description" MUST begin with the EXACT character_anchor text, word for word, followed by the scene-specific action and environment. 
 
-**Technical Precision:** Describe camera movements (dolly, tracking, crane), lighting (golden hour, neon, overcast), and composition.
+**Technical Precision:** Describe camera movements, lighting, and composition.
 
 **Language Rule:**
 * **visual_description** & **shot_type**: ALWAYS in English.
