@@ -3,6 +3,7 @@
  * 所有请求通过后端 API Server 转发，不包含任何 API Key
  */
 import { StoryboardProject, Language, GenerationMode } from '../types';
+import { supabase } from '../lib/supabaseClient';
 
 const API_BASE = '/api/gemini';
 
@@ -17,9 +18,15 @@ export const generateStoryboard = async (
   identityAnchor?: string
 ): Promise<StoryboardProject> => {
   try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+
     const response = await fetch(`${API_BASE}/generate`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': token ? `Bearer ${token}` : ''
+      },
       body: JSON.stringify({
         storyIdea,
         visualStyle,
@@ -46,9 +53,15 @@ export const generateStoryboard = async (
  */
 export const analyzeImageForAnchor = async (base64Data: string): Promise<string> => {
   try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+
     const response = await fetch(`${API_BASE}/analyze`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': token ? `Bearer ${token}` : ''
+      },
       body: JSON.stringify({ base64Data }),
     });
 
