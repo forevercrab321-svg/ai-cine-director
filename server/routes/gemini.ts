@@ -151,6 +151,37 @@ EVERY scene's "visual_description" MUST begin with the EXACT character_anchor te
             video_motion_prompt: s.shot_type,
         }));
 
+        // Attach lightweight consistency metadata per scene so tests and UI can
+        // validate anchor prefix and keyword coverage. This is a heuristic: we
+        // extract token candidates from the anchor and count how many appear in
+        // each scene's description or motion prompt.
+        try {
+            const anchorText = (project.character_anchor || '').toLowerCase();
+            const stopwords = new Set(['a','an','the','with','and','wearing','holding','short','long','male','female','man','woman','young','old','in','of','his','her']);
+            const tokens = (anchorText.match(/\b[a-z0-9]{2,}\b/g) || []).filter(t => !stopwords.has(t));
+            const criticalKeywords = Array.from(new Set(tokens));
+
+            project.scenes = project.scenes.map((s: any) => {
+                const desc = (s.visual_description || '').toLowerCase();
+                const motion = (s.video_motion_prompt || '').toLowerCase();
+
+                const critical_present = criticalKeywords.filter(k => desc.includes(k) || motion.includes(k)).length;
+                const total_critical = criticalKeywords.length || 1;
+                const has_prefix = anchorText.length > 0 && desc.startsWith(anchorText.slice(0, Math.min(40, anchorText.length)));
+
+                return {
+                    ...s,
+                    _consistency_check: {
+                        has_anchor_prefix: !!has_prefix,
+                        critical_keywords_present: critical_present,
+                        total_critical_keywords: total_critical
+                    }
+                };
+            });
+        } catch (metaErr) {
+            console.warn('[Gemini] Consistency metadata generation failed:', metaErr);
+        }
+
         // Finalize the reserve (credits are consumed)
         await supabaseUserClient.rpc('finalize_reserve', {
             ref_type: 'gemini',

@@ -8,7 +8,11 @@
     "server": "tsx server/index.ts",
     "dev:all": "concurrently \"npm run server\" \"npm run dev\"",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:api": "tsx scripts/test-api.ts",
+    "test:api:watch": "nodemon --watch scripts/test-api.ts --exec npm run test:api",
+    "stress-test": "tsx scripts/stress-test.ts",
+    "stress-test:watch": "nodemon --watch scripts/stress-test.ts --exec npm run stress-test"
   },
   "dependencies": {
     "@google/genai": "^1.40.0",
