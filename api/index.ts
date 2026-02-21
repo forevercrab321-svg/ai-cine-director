@@ -50,7 +50,10 @@ const requireAuth = async (req: any, res: any, next: any) => {
     const supabase = getSupabaseAdmin();
     const { data: { user }, error } = await supabase.auth.getUser(token);
 
-    if (error || !user) return res.status(401).json({ error: 'Invalid token' });
+    if (error || !user) {
+        console.error('[Auth Error]', error);
+        return res.status(401).json({ error: `Invalid token: ${error?.message || 'No user found'}` });
+    }
     req.user = user;
     next();
 };
