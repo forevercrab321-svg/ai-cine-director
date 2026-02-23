@@ -6,6 +6,12 @@ import SceneCard from './SceneCard';
 import { LoaderIcon, PhotoIcon, VideoCameraIcon } from './IconComponents';
 import { t } from '../i18n';
 
+const DownloadIcon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+  </svg>
+);
+
 interface VideoGeneratorProps {
     project: StoryboardProject;
     onBackToScript: () => void;
@@ -241,6 +247,68 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
         }
     };
 
+    // 下载文件辅助函数
+    const downloadFile = async (url: string, filename: string) => {
+        try {
+            const response = await fetch(url);
+            const blob = await response.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = blobUrl;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(blobUrl);
+        } catch (error) {
+            console.error('Download failed:', error);
+            // Fallback: open in new tab
+            window.open(url, '_blank');
+        }
+    };
+
+    // 批量下载所有图片
+    const handleDownloadAllImages = async () => {
+        const imageEntries = Object.entries(sceneImages).filter(([_, url]) => url);
+        if (imageEntries.length === 0) {
+            alert('没有可下载的图片');
+            return;
+        }
+
+        for (const [sceneNum, url] of imageEntries) {
+            await downloadFile(url, `scene-${sceneNum}-image.jpg`);
+            await new Promise(resolve => setTimeout(resolve, 300)); // 避免过快下载
+        }
+    };
+
+    // 批量下载所有视频
+    const handleDownloadAllVideos = async () => {
+        const videoEntries = Object.entries(sceneVideoUrls).filter(([_, url]) => url);
+        if (videoEntries.length === 0) {
+            alert('没有可下载的视频');
+            return;
+        }
+
+        for (const [sceneNum, url] of videoEntries) {
+            await downloadFile(url, `scene-${sceneNum}-video.mp4`);
+            await new Promise(resolve => setTimeout(resolve, 500)); // 避免过快下载
+        }
+    };
+
+    // 下载所有内容（图片+视频）
+    const handleDownloadAll = async () => {
+        const hasImages = Object.keys(sceneImages).length > 0;
+        const hasVideos = Object.keys(sceneVideoUrls).length > 0;
+
+        if (!hasImages && !hasVideos) {
+            alert('没有可下载的内容');
+            return;
+        }
+
+        if (hasImages) await handleDownloadAllImages();
+        if (hasVideos) await handleDownloadAllVideos();
+    };
+
     const handleGenerateSingleVideo = async (sceneNum: number) => {
         if (!isAuthenticated) return alert("请先登录以生成视频。");
 
@@ -312,7 +380,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
                         </div>
                     </div>
 
-                    <div className="flex gap-3 w-full md:w-auto">
+                    <div className="flex gap-3 w-full md:w-auto flex-wrap">
                         <button
                             onClick={insufficientForImage ? openPricingModal : handleRenderImages}
                             disabled={isRenderingImages || isRenderingVideos}
@@ -339,6 +407,42 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
                             {isRenderingVideos ? <LoaderIcon className="w-4 h-4 animate-spin" /> : <VideoCameraIcon className="w-4 h-4" />}
                             {isRenderingVideos ? '视频请求列队中...' : insufficientForVideo ? `充值后渲染视频` : '一键生成全部视频'}
                         </button>
+
+                        {/* 下载按钮 */}
+                        {(Object.keys(sceneImages).length > 0 || Object.keys(sceneVideoUrls).length > 0) && (
+                            <div className="relative group">
+                                <button
+                                    className="px-4 py-3 rounded-lg bg-green-600 hover:bg-green-500 text-white font-bold transition-all shadow-lg shadow-green-500/20 flex items-center justify-center gap-2 text-sm"
+                                    onClick={handleDownloadAll}
+                                >
+                                    <DownloadIcon />
+                                    下载全部
+                                </button>
+                                {/* 下拉菜单 */}
+                                <div className="absolute top-full mt-2 right-0 bg-slate-800 border border-slate-700 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 min-w-[180px] z-50">
+                                    <div className="py-1">
+                                        {Object.keys(sceneImages).length > 0 && (
+                                            <button
+                                                onClick={handleDownloadAllImages}
+                                                className="w-full px-4 py-2 text-left text-sm text-slate-300 hover:bg-slate-700 hover:text-white flex items-center gap-2"
+                                            >
+                                                <PhotoIcon className="w-4 h-4" />
+                                                下载所有图片 ({Object.keys(sceneImages).length})
+                                            </button>
+                                        )}
+                                        {Object.keys(sceneVideoUrls).length > 0 && (
+                                            <button
+                                                onClick={handleDownloadAllVideos}
+                                                className="w-full px-4 py-2 text-left text-sm text-slate-300 hover:bg-slate-700 hover:text-white flex items-center gap-2"
+                                            >
+                                                <VideoCameraIcon className="w-4 h-4" />
+                                                下载所有视频 ({Object.keys(sceneVideoUrls).length})
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>

@@ -9,6 +9,7 @@ import PricingModal from './components/PricingModal';
 import VideoGenerator from './components/VideoGenerator';
 import ShotListView from './components/ShotListView';
 import AuthPage from './components/AuthPage';
+import ReferenceImageUploader from './components/ReferenceImageUploader';
 import { LoaderIcon } from './components/IconComponents';
 import { t } from './i18n';
 
@@ -37,6 +38,7 @@ const MainLayout: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [extractedAnchor, setExtractedAnchor] = useState<string>("");
+  const [referenceImagePreview, setReferenceImagePreview] = useState<string | null>(null);
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   // const [isPricingOpen, setIsPricingOpen] = useState(false); // Moved to Context
@@ -177,6 +179,17 @@ const MainLayout: React.FC = () => {
               className="w-full bg-slate-950 border border-slate-700 rounded-lg p-4 h-32 text-white mb-6 focus:ring-2 focus:ring-indigo-500 outline-none"
               placeholder={t(settings.lang, 'storyPlaceholder')}
             />
+
+            {/* 参考图片上传 */}
+            <div className="mb-6">
+              <ReferenceImageUploader
+                onAnchorGenerated={(anchor, preview) => {
+                  setExtractedAnchor(anchor);
+                  setReferenceImagePreview(preview);
+                }}
+                currentAnchor={extractedAnchor}
+              />
+            </div>
 
             <button
               onClick={handleGenerateScript}

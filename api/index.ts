@@ -666,6 +666,10 @@ EVERY scene's "visual_description" MUST begin with the EXACT character_anchor te
         const text = response.text;
         if (!text) throw new Error('No response from AI Director.');
         const project = JSON.parse(text);
+        
+        // ★ Generate unique project ID for batch operations
+        project.id = crypto.randomUUID();
+        
         project.scenes = project.scenes.map((s: any) => ({
             ...s,
             image_prompt: `${project.character_anchor}, ${s.visual_description}, ${s.shot_type}`,

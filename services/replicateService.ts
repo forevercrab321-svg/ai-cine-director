@@ -61,13 +61,14 @@ export const generateImage = async (
   //   const { useMockMode } = getConfig(); // Disabled for robust credit test
   //   if (useMockMode) return generateMockImage(prompt);
 
-  // ★ HARDCODED CONSISTENCY: Strict character lock
-  const CONSISTENCY_PREFIX = "[CRITICAL: Maintain exact same character identity across all frames. Same face, same hairstyle, same costume, same body proportions. Do NOT change or deviate from the character description below.]";
-  const CONSISTENCY_SUFFIX = "[IMPORTANT: The character must look IDENTICAL to the description above. Do not alter any facial features, hair color, outfit, or art style.]";
+  // ★ CHARACTER CONSISTENCY: Single scene with consistent character
+  const CONSISTENCY_PREFIX = "[CRITICAL: Single cinematic scene only. NOT a character sheet or reference sheet. Show ONE character in ONE specific action/pose. Maintain exact character identity: same face, same hairstyle, same costume, same body proportions.]";
+  const CONSISTENCY_SUFFIX = "[IMPORTANT: This is a SINGLE SCENE from a storyboard, NOT a character design sheet. Show the character in the described action/environment only. Cinematic composition, dynamic angle.]";
+  const ANTI_SHEET = "NOT multiple views, NOT character sheet, NOT reference poses, NOT turnaround.";
 
   const finalPrompt = characterAnchor
-    ? `${CONSISTENCY_PREFIX} ${characterAnchor}. ${prompt}. ${CONSISTENCY_SUFFIX}`
-    : prompt;
+    ? `${CONSISTENCY_PREFIX} Character: ${characterAnchor}. Scene: ${prompt}. ${ANTI_SHEET} ${CONSISTENCY_SUFFIX}`
+    : `${prompt}. Single cinematic shot, NOT a character sheet.`;
 
   // Logical Change: If modelType contains '/', treat it as a direct Replicate ID.
   const modelIdentifier = modelType.includes('/')
@@ -168,8 +169,10 @@ function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string
     case 'wan_2_2_fast':
       return { prompt: strictPrompt, image: imageUrl, prompt_optimizer: true, seed: 142857 };
     case 'hailuo_02_fast':
-      return { prompt: strictPrompt, first_frame_image: imageUrl, duration: 6, resolution: "720p", prompt_optimizer: true, seed: 142857 };
+      // Hailuo requires resolution: "512P" (uppercase P, only valid option)
+      return { prompt: strictPrompt, first_frame_image: imageUrl, duration: 6, resolution: "512P", prompt_optimizer: true, seed: 142857 };
     case 'seedance_lite':
+      // Seedance accepts "720p" (lowercase p)
       return { prompt: strictPrompt, image: imageUrl, duration: 5, resolution: "720p", seed: 142857 };
     case 'kling_2_5':
       return { prompt: strictPrompt, image: imageUrl, duration: 5, cfg_scale: 0.8, seed: 142857 };

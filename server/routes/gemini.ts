@@ -186,9 +186,17 @@ EVERY scene's "visual_description" MUST begin with the EXACT character_anchor te
         if (!text) throw new Error('No response from AI Director.');
 
         const project = JSON.parse(text);
+        
+        // ★ Generate unique project ID for batch operations
+        project.id = crypto.randomUUID();
+        
+        const anchor = project.character_anchor || '';
         project.scenes = project.scenes.map((s: any) => ({
             ...s,
-            image_prompt: `${project.character_anchor}, ${s.visual_description}, ${s.shot_type}`,
+            // ★ CRITICAL: Scene description FIRST, then character (avoids character sheet generation)
+            image_prompt: anchor 
+                ? `Cinematic ${s.shot_type}: ${s.visual_description}. Character: ${anchor}. Single scene only.`
+                : `${s.visual_description}, ${s.shot_type}`,
             video_motion_prompt: s.shot_type,
         }));
 

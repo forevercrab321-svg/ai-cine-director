@@ -616,7 +616,7 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                             return (
                                 <div
                                     key={item.id}
-                                    className={`rounded-xl border overflow-hidden transition-all ${
+                                    className={`rounded-xl border overflow-hidden transition-all group/thumb ${
                                         item.status === 'succeeded' ? 'border-green-500/30' :
                                         item.status === 'failed' ? 'border-red-500/30' :
                                         item.status === 'running' ? 'border-indigo-500/50 ring-1 ring-indigo-500/20' :
@@ -625,11 +625,38 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                                 >
                                     <div className="aspect-video relative">
                                         {item.status === 'succeeded' && item.image_url ? (
-                                            <img
-                                                src={item.image_url}
-                                                alt={`Shot ${item.shot_number}`}
-                                                className="w-full h-full object-cover"
-                                            />
+                                            <>
+                                                <img
+                                                    src={item.image_url}
+                                                    alt={`Shot ${item.shot_number}`}
+                                                    className="w-full h-full object-cover"
+                                                />
+                                                {/* 下载按钮 - 悬停时显示 */}
+                                                <button
+                                                    onClick={async () => {
+                                                        try {
+                                                            const response = await fetch(item.image_url!);
+                                                            const blob = await response.blob();
+                                                            const url = URL.createObjectURL(blob);
+                                                            const a = document.createElement('a');
+                                                            a.href = url;
+                                                            a.download = `scene-${item.scene_number}-shot-${item.shot_number}.jpg`;
+                                                            document.body.appendChild(a);
+                                                            a.click();
+                                                            document.body.removeChild(a);
+                                                            URL.revokeObjectURL(url);
+                                                        } catch {
+                                                            window.open(item.image_url, '_blank');
+                                                        }
+                                                    }}
+                                                    className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center opacity-0 group-hover/thumb:opacity-100 transition-opacity"
+                                                    title="下载图片"
+                                                >
+                                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6 text-white">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                                                    </svg>
+                                                </button>
+                                            </>
                                         ) : (
                                             <div className={`w-full h-full flex items-center justify-center ${statusInfo.bg}`}>
                                                 {item.status === 'running' ? (
