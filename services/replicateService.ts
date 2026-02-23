@@ -38,6 +38,16 @@ const REPLICATE_MODEL_MAP = REPLICATE_MODEL_PATHS;
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
+const isNsfwError = (text: string) => /nsfw|safety|moderation|content policy/i.test(text || '');
+
+const sanitizePromptForSafety = (prompt: string) => {
+  // Reduce false positives for myth/action scenes while preserving visual intent
+  return prompt
+    .replace(/\b(kill|killing|blood|bloody|gore|gory|brutal|weapon|sword|spear|fight|battle|war)\b/gi, 'cinematic')
+    .replace(/大战|战斗|厮杀|杀戮|血腥|武器|长矛|刀剑/g, '史诗对峙')
+    .concat(' Family-friendly cinematic scene, no gore, no violence, no explicit content.');
+};
+
 /**
  * Generate Image
  */
@@ -66,19 +76,23 @@ export const generateImage = async (
 
   const headers = await getAuthHeaders();
 
-  const response = await fetch(`${API_BASE}/predict`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      version: modelIdentifier,
-      input: {
-        prompt: finalPrompt,
-        aspect_ratio: aspectRatio,
-        output_format: "jpg",
-        seed: 142857
-      }
-    })
-  });
+  const sendRequest = async (promptText: string) => {
+    return await fetch(`${API_BASE}/predict`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        version: modelIdentifier,
+        input: {
+          prompt: promptText,
+          aspect_ratio: aspectRatio,
+          output_format: "jpg",
+          seed: 142857
+        }
+      })
+    });
+  };
+
+  let response = await sendRequest(finalPrompt);
 
   if (response.status === 402) {
     const data = await response.json();
@@ -91,7 +105,18 @@ export const generateImage = async (
 
   if (!response.ok) {
     const errText = await response.text();
-    throw new Error(errText || `HTTP ${response.status}`);
+
+    // Auto-retry once with safer wording when moderation falsely blocks myth/action prompts
+    if (isNsfwError(errText)) {
+      const safePrompt = sanitizePromptForSafety(finalPrompt);
+      response = await sendRequest(safePrompt);
+      if (!response.ok) {
+        const retryErrText = await response.text();
+        throw new Error(retryErrText || errText || `HTTP ${response.status}`);
+      }
+    } else {
+      throw new Error(errText || `HTTP ${response.status}`);
+    }
   }
 
   let prediction = await response.json();
