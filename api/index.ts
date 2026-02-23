@@ -246,6 +246,8 @@ app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
     try {
         const { storyIdea, visualStyle, language, identityAnchor } = req.body;
         const authHeader = `Bearer ${req.accessToken}`;
+        const userEmail = req.user?.email;
+        const skipCreditCheck = isAdminUser(userEmail);
 
         const supabaseUser = createClient(
             process.env.VITE_SUPABASE_URL!,
@@ -255,12 +257,16 @@ app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
 
         // Reserve 1 credit
         const COST = 1;
-        const { data: reserved, error: reserveErr } = await supabaseUser.rpc('reserve_credits', {
-            amount: COST, ref_type: 'gemini', ref_id: jobRef
-        });
+        if (!skipCreditCheck) {
+            const { data: reserved, error: reserveErr } = await supabaseUser.rpc('reserve_credits', {
+                amount: COST, ref_type: 'gemini', ref_id: jobRef
+            });
 
-        if (reserveErr) return res.status(500).json({ error: 'Credit verification failed' });
-        if (!reserved) return res.status(402).json({ error: 'INSUFFICIENT_CREDITS', code: 'INSUFFICIENT_CREDITS' });
+            if (reserveErr) return res.status(500).json({ error: 'Credit verification failed' });
+            if (!reserved) return res.status(402).json({ error: 'INSUFFICIENT_CREDITS', code: 'INSUFFICIENT_CREDITS' });
+        } else {
+            console.log(`[ADMIN BYPASS] Skipping gemini credit reserve for admin: ${userEmail}`);
+        }
         if (!storyIdea) return res.status(400).json({ error: 'Missing storyIdea' });
 
         const ai = getGeminiAI();
@@ -319,14 +325,16 @@ EVERY scene's "visual_description" MUST begin with the EXACT character_anchor te
             video_motion_prompt: s.shot_type,
         }));
 
-        await supabaseUser.rpc('finalize_reserve', { ref_type: 'gemini', ref_id: jobRef });
+        if (!skipCreditCheck) {
+            await supabaseUser.rpc('finalize_reserve', { ref_type: 'gemini', ref_id: jobRef });
+        }
         res.json(project);
     } catch (error: any) {
         console.error('[Gemini] Error:', error);
         try {
             const supabaseRefund = createClient(
                 process.env.VITE_SUPABASE_URL!, process.env.VITE_SUPABASE_ANON_KEY!,
-                { global: { headers: { Authorization: req.headers.authorization } } }
+                { global: { headers: { Authorization: `Bearer ${req.accessToken}` } } }
             );
             await supabaseRefund.rpc('refund_reserve', { amount: 1, ref_type: 'gemini', ref_id: jobRef });
         } catch (_) { /* best effort */ }
