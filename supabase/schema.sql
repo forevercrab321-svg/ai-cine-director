@@ -3,7 +3,7 @@ create table public.profiles (
   id uuid references auth.users not null primary key,
   name text,
   role text,
-  credits integer default 0 check (credits >= 0), -- ★ No free credits! Users must purchase via Stripe. CHECK prevents negative balance.
+  credits integer default 50 check (credits >= 0), -- ★ Initial 50 credits for new users. CHECK prevents negative balance.
   is_pro boolean default false,
   is_admin boolean default false,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
@@ -94,8 +94,8 @@ create policy "Users can delete scenes from their storyboards."
 create or replace function public.handle_new_user()
 returns trigger as $$
 begin
-  insert into public.profiles (id, name, role)
-  values (new.id, new.raw_user_meta_data->>'name', new.raw_user_meta_data->>'role');
+  insert into public.profiles (id, name, role, credits)
+  values (new.id, new.raw_user_meta_data->>'name', new.raw_user_meta_data->>'role', 50);
   return new;
 end;
 $$ language plpgsql security definer;

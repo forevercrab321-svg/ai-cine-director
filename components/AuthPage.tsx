@@ -63,22 +63,6 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
     const isRateLimit = error?.status === 429 || error?.message?.includes('Too Many');
     if (isRateLimit) throw error;
 
-    const isEmailProviderIssue = error?.message?.includes('magic link') || error?.message?.includes('SMTP');
-    if (isEmailProviderIssue) {
-      const resp = await fetch('/api/auth/generate-link', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, redirectTo: origin })
-      });
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data?.error || 'Failed to generate magic link');
-      if (data?.actionLink) {
-        window.location.href = data.actionLink;
-        return;
-      }
-      throw new Error('Failed to generate magic link');
-    }
-
     const ensureResp = await fetch('/api/auth/ensure-user', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
