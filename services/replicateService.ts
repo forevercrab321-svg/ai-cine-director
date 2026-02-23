@@ -112,7 +112,32 @@ export const generateImage = async (
       response = await sendRequest(safePrompt);
       if (!response.ok) {
         const retryErrText = await response.text();
-        throw new Error(retryErrText || errText || `HTTP ${response.status}`);
+
+        // Last fallback: try a stricter-safe model once
+        if (modelIdentifier !== REPLICATE_MODEL_MAP['flux_schnell']) {
+          const fallbackResponse = await fetch(`${API_BASE}/predict`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              version: REPLICATE_MODEL_MAP['flux_schnell'],
+              input: {
+                prompt: safePrompt,
+                aspect_ratio: aspectRatio,
+                output_format: "jpg",
+                seed: 142857
+              }
+            })
+          });
+
+          if (fallbackResponse.ok) {
+            response = fallbackResponse;
+          } else {
+            const fallbackErrText = await fallbackResponse.text();
+            throw new Error(fallbackErrText || retryErrText || errText || `HTTP ${fallbackResponse.status}`);
+          }
+        } else {
+          throw new Error(retryErrText || errText || `HTTP ${response.status}`);
+        }
       }
     } else {
       throw new Error(errText || `HTTP ${response.status}`);
