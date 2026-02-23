@@ -59,6 +59,11 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
 
     if (!error) return;
 
+    if (String(error?.message || '').toLowerCase().includes('already registered')) {
+      // Supabase may return this even if OTP email is sent; continue to verification step
+      return;
+    }
+
     // If signups are disabled or user doesn't exist, pre-create via server and retry once
     const isRateLimit = error?.status === 429 || error?.message?.includes('Too Many');
     if (isRateLimit) throw error;

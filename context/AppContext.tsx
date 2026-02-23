@@ -126,6 +126,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         .single();
 
       if (error) {
+        const noRow = error?.code === 'PGRST116';
+        if (noRow) {
+          const { error: createErr } = await supabase
+            .from('profiles')
+            .insert({ id: userId, name: userEmail || 'Director', role: 'Director', credits: 50 });
+          if (!createErr) {
+            return fetchProfile(userId, userEmail);
+          }
+        }
         console.error('Error fetching profile:', error);
         return;
       }
@@ -140,6 +149,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           newBalance = 0;
           // Fire and forget DB heal
           supabase.from('profiles').update({ credits: 0 }).eq('id', userId).then();
+        }
+
+        // ★ AUTO-GRANT: If brand-new user still has 0 credits, grant initial 50
+        if (!data.is_admin && newBalance === 0 && data.created_at) {
+          const createdAt = new Date(data.created_at).getTime();
+          const isNew = Date.now() - createdAt < 10 * 60 * 1000; // 10 minutes
+          if (isNew) {
+            const { error: grantErr } = await supabase
+              .from('profiles')
+              .update({ credits: 50 })
+              .eq('id', userId);
+            if (!grantErr) {
+              newBalance = 50;
+            }
+          }
         }
 
         // ★ AUTO-DETECT DEVELOPER: Check if email is in developer registry
