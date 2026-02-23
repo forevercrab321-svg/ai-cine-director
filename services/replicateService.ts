@@ -161,25 +161,35 @@ export const generateImage = async (
   throw new Error(prediction.error || 'Generation failed');
 };
 
-function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string): Record<string, any> {
+interface VideoOptions {
+  duration?: number;  // 4, 6, 8 秒
+  aspectRatio?: string;  // "16:9" | "9:16"
+}
+
+function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string, options: VideoOptions = {}): Record<string, any> {
   const STRICT_CONSISTENCY = "Strict visual consistency with the input image. Do NOT change the character's face, hair, skin tone, costume, or art style. The character must remain IDENTICAL across all frames. Maintain exact same proportions and appearance. Smooth natural motion only.";
   const strictPrompt = `${STRICT_CONSISTENCY} ${prompt}`;
+  const duration = options.duration || 6;
+  const aspectRatio = options.aspectRatio || '16:9';
 
   switch (modelType) {
     case 'wan_2_2_fast':
+      // Wan 2.2: 使用 image 字段
       return { prompt: strictPrompt, image: imageUrl, prompt_optimizer: true, seed: 142857 };
     case 'hailuo_02_fast':
-      // Hailuo requires resolution: "512P" (uppercase P, only valid option)
-      return { prompt: strictPrompt, first_frame_image: imageUrl, duration: 6, resolution: "512P", prompt_optimizer: true, seed: 142857 };
+      // Hailuo: resolution 必须是 "512P"，支持 aspect_ratio
+      return { prompt: strictPrompt, first_frame_image: imageUrl, duration, resolution: "512P", aspect_ratio: aspectRatio, prompt_optimizer: true, seed: 142857 };
     case 'seedance_lite':
-      // Seedance accepts "720p" (lowercase p)
-      return { prompt: strictPrompt, image: imageUrl, duration: 5, resolution: "720p", seed: 142857 };
+      // Seedance: resolution 是 "720p"（小写）
+      return { prompt: strictPrompt, image: imageUrl, duration, resolution: "720p", seed: 142857 };
     case 'kling_2_5':
-      return { prompt: strictPrompt, image: imageUrl, duration: 5, cfg_scale: 0.8, seed: 142857 };
+      // Kling 2.5: 支持 duration 和 cfg_scale
+      return { prompt: strictPrompt, image: imageUrl, duration, cfg_scale: 0.8, seed: 142857 };
     case 'hailuo_live':
+      // Hailuo Live: 用于 Live2D 风格动画
       return { prompt: strictPrompt, first_frame_image: imageUrl, prompt_optimizer: true, seed: 142857 };
     case 'google_gemini_nano_banana':
-      // Assuming it works like Hailuo for now
+      // 实验性模型
       return { prompt: strictPrompt, first_frame_image: imageUrl, prompt_optimizer: true, seed: 142857 };
     default:
       return { prompt: strictPrompt, first_frame_image: imageUrl, prompt_optimizer: true, seed: 142857 };
@@ -196,7 +206,8 @@ export const startVideoTask = async (
   duration: VideoDuration,
   fps: VideoFps,
   resolution: VideoResolution,
-  characterAnchor?: string
+  characterAnchor?: string,
+  aspectRatio?: string
 ): Promise<ReplicateResponse> => {
   const finalPrompt = characterAnchor ? `${characterAnchor}, ${prompt}` : prompt;
 
@@ -208,12 +219,18 @@ export const startVideoTask = async (
 
   const headers = await getAuthHeaders();
 
+  // 使用传入的 duration 和 aspectRatio 参数
+  const videoOptions: VideoOptions = {
+    duration: duration,
+    aspectRatio: aspectRatio || '16:9',
+  };
+
   const response = await fetch(`${API_BASE}/predict`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
       version: modelIdentifier,
-      input: buildVideoInput(modelType, finalPrompt, startImageUrl)
+      input: buildVideoInput(modelType, finalPrompt, startImageUrl, videoOptions)
     })
   });
 

@@ -373,18 +373,21 @@ app.post('/api/auth/send-otp', async (req: any, res: any) => {
     }
 });
 
-// --- Cost ---
+// --- Cost --- (同步自 types.ts MODEL_COSTS)
 const estimateCost = (model: string): number => {
     const COSTS: Record<string, number> = {
+        // 视频模型
         'wan-video/wan-2.2-i2v-fast': 8,
         'minimax/hailuo-02-fast': 18,
         'bytedance/seedance-1-lite': 28,
         'kwaivgi/kling-v2.5-turbo-pro': 53,
         'minimax/video-01-live': 75,
+        'google/gemini-nano-banana': 5,
+        // 图片模型
         'black-forest-labs/flux-1.1-pro': 6,
         'black-forest-labs/flux-schnell': 1,
     };
-    return COSTS[model] || 20;
+    return COSTS[model] || 28;  // 默认值与 types.ts MODEL_COSTS.DEFAULT 保持一致
 };
 
 // --- Admin Check ---

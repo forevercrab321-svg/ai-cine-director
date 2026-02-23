@@ -212,14 +212,19 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
     }, []);
 
     // ── Build ShotForBatch from shot ──
-    const toShotForBatch = useCallback((s: Shot): ShotForBatch => ({
-        shot_id: s.shot_id,
-        shot_number: s.shot_number,
-        scene_number: parseInt(s.scene_id) || 0,
-        image_prompt: s.image_prompt,
-        seed_hint: s.seed_hint,
-        reference_policy: s.reference_policy,
-    }), []);
+    // 注意: scene_id 是 UUID，使用 allShots 中的索引或传入的 scene_number
+    const toShotForBatch = useCallback((s: Shot, idx: number): ShotForBatch => {
+        // 尝试从 scene_id 中提取数字（如果是数字字符串），否则用索引+1
+        const sceneNum = /^\d+$/.test(s.scene_id) ? parseInt(s.scene_id, 10) : (idx + 1);
+        return {
+            shot_id: s.shot_id,
+            shot_number: s.shot_number,
+            scene_number: sceneNum,
+            image_prompt: s.image_prompt,
+            seed_hint: s.seed_hint,
+            reference_policy: s.reference_policy,
+        };
+    }, []);
 
     // ── Start initial batch ──
     const handleStart = async () => {
