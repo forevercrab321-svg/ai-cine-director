@@ -72,15 +72,33 @@ const estimateCost = (model: string): number => {
     return COSTS[model] || 20;
 };
 
+// --- Admin Check ---
+const ADMIN_EMAILS = [
+    'forevercrab321@gmail.com',
+    'monsterlee@gmail.com',
+];
+
+const isAdminUser = (email: string | undefined): boolean => {
+    if (!email) return false;
+    return ADMIN_EMAILS.includes(email.toLowerCase());
+};
+
 // --- Routes ---
 
 // Replicate Predict with Reserve / Finalize / Refund
 app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
     const { version, input } = req.body;
     const authHeader = req.headers.authorization;
+    const userEmail = req.user?.email;
 
     const estimatedCost = estimateCost(version);
     const jobRef = `replicate:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+
+    // ★ ADMIN BYPASS: Skip credit check for admin users
+    const skipCreditCheck = isAdminUser(userEmail);
+    if (skipCreditCheck) {
+        console.log(`[ADMIN BYPASS] Skipping credit reserve for admin: ${userEmail} (cost would be ${estimatedCost})`);
+    }
 
     // User-context client for RPC
     const supabaseUser = createClient(
@@ -89,24 +107,28 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
         { global: { headers: { Authorization: authHeader } } }
     );
 
-    // 1) Reserve credits
-    const { data: reserved, error: reserveErr } = await supabaseUser.rpc('reserve_credits', {
-        amount: estimatedCost,
-        ref_type: 'replicate',
-        ref_id: jobRef
-    });
-
-    if (reserveErr) {
-        console.error('[Reserve Error]', reserveErr);
-        return res.status(500).json({ error: 'Reserve failed' });
-    }
-
-    if (!reserved) {
-        return res.status(402).json({
-            error: 'INSUFFICIENT_CREDITS',
-            code: 'INSUFFICIENT_CREDITS',
-            message: 'Insufficient credits'
+    // 1) Reserve credits (skip for admin)
+    let reserved = true;
+    if (!skipCreditCheck) {
+        const { data, error: reserveErr } = await supabaseUser.rpc('reserve_credits', {
+            amount: estimatedCost,
+            ref_type: 'replicate',
+            ref_id: jobRef
         });
+        reserved = data;
+
+        if (reserveErr) {
+            console.error('[Reserve Error]', reserveErr);
+            return res.status(500).json({ error: 'Reserve failed' });
+        }
+
+        if (!reserved) {
+            return res.status(402).json({
+                error: 'INSUFFICIENT_CREDITS',
+                code: 'INSUFFICIENT_CREDITS',
+                message: 'Insufficient credits'
+            });
+        }
     }
 
     // 2) Call Replicate
@@ -129,33 +151,39 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
 
         if (!response.ok) {
             const errText = await response.text();
-            // 3a) Refund reserve
-            await supabaseUser.rpc('refund_reserve', {
-                amount: estimatedCost,
-                ref_type: 'replicate',
-                ref_id: jobRef
-            });
+            // 3a) Refund reserve (skip for admin)
+            if (!skipCreditCheck) {
+                await supabaseUser.rpc('refund_reserve', {
+                    amount: estimatedCost,
+                    ref_type: 'replicate',
+                    ref_id: jobRef
+                });
+            }
             return res.status(response.status).json({ error: errText });
         }
 
         const prediction = await response.json() as ReplicateResponse;
 
-        // 3b) Finalize reserve (burn reserved credits)
-        await supabaseUser.rpc('finalize_reserve', {
-            ref_type: 'replicate',
-            ref_id: jobRef
-        });
+        // 3b) Finalize reserve (skip for admin)
+        if (!skipCreditCheck) {
+            await supabaseUser.rpc('finalize_reserve', {
+                ref_type: 'replicate',
+                ref_id: jobRef
+            });
+        }
 
         res.json(prediction);
 
     } catch (err: any) {
         console.error('[Replicate Error]', err);
-        // Safety refund on unexpected error
-        await supabaseUser.rpc('refund_reserve', {
-            amount: estimatedCost,
-            ref_type: 'replicate',
-            ref_id: jobRef
-        });
+        // Safety refund on unexpected error (skip for admin)
+        if (!skipCreditCheck) {
+            await supabaseUser.rpc('refund_reserve', {
+                amount: estimatedCost,
+                ref_type: 'replicate',
+                ref_id: jobRef
+            });
+        }
         res.status(500).json({ error: err.message || 'Replicate failed' });
     }
 });
