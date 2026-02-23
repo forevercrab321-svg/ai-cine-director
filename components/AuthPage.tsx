@@ -47,46 +47,27 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
     callback();
   };
 
+  const isAlreadyRegisteredError = (errorLike: any): boolean => {
+    const msg = String(errorLike?.message || errorLike || '').toLowerCase();
+    return msg.includes('already registered')
+      || msg.includes('has already been registered')
+      || msg.includes('user already registered')
+      || msg.includes('already exists');
+  };
+
   const sendOtpWithFallback = async () => {
+    // Use backend Resend API to send email (bypasses Supabase SMTP entirely)
     const origin = typeof window !== 'undefined' ? window.location.origin : undefined;
-    const { error } = await supabase.auth.signInWithOtp({
-      email: email,
-      options: {
-        shouldCreateUser: false,
-        emailRedirectTo: origin,
-      }
-    });
-
-    if (!error) return;
-
-    if (String(error?.message || '').toLowerCase().includes('already registered')) {
-      // Supabase may return this even if OTP email is sent; continue to verification step
-      return;
-    }
-
-    // If signups are disabled or user doesn't exist, pre-create via server and retry once
-    const isRateLimit = error?.status === 429 || error?.message?.includes('Too Many');
-    if (isRateLimit) throw error;
-
-    const ensureResp = await fetch('/api/auth/ensure-user', {
+    const resp = await fetch('/api/auth/send-otp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email })
+      body: JSON.stringify({ email, redirectTo: origin }),
     });
-    if (!ensureResp.ok) {
-      const data = await ensureResp.json();
-      throw new Error(data?.error || 'Failed to ensure user');
+
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      throw new Error(data?.error || 'Failed to send verification email');
     }
-
-    const { error: retryError } = await supabase.auth.signInWithOtp({
-      email: email,
-      options: {
-        shouldCreateUser: false,
-        emailRedirectTo: origin,
-      }
-    });
-
-    if (retryError) throw retryError;
   };
 
   const handleEmailSubmit = (e: React.FormEvent) => {
@@ -226,12 +207,13 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
                     `}
                   required
                 />
-                {validationError && (
-                  <p className="absolute -bottom-6 left-2 text-[10px] text-red-400 font-bold tracking-wide animate-in slide-in-from-top-1 flex items-center gap-1">
-                    <span className="w-1 h-1 bg-red-400 rounded-full inline-block" /> {validationError}
-                  </p>
-                )}
               </div>
+              {validationError && (
+                <p className="text-[11px] text-red-400 font-bold tracking-wide animate-in slide-in-from-top-1 flex items-start gap-1 leading-4 break-words px-2">
+                  <span className="w-1 h-1 bg-red-400 rounded-full inline-block mt-1.5 shrink-0" />
+                  <span>{validationError}</span>
+                </p>
+              )}
               <button
                 type="submit"
                 disabled={isLoading}

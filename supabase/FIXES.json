@@ -1,0 +1,96 @@
+{
+  "title": "Supabase 修复脚本集合",
+  "description": "包含所有需要在 Supabase SQL Editor 中运行的 SQL 脚本",
+  "project_url": "https://app.supabase.com/project/gtxgkdsayswonlewqfzj/sql",
+  "scripts": [
+    {
+      "name": "1-create-rls-policies-profiles",
+      "description": "为 profiles 表创建 RLS 策略",
+      "order": 1,
+      "sql": "DROP POLICY IF EXISTS \"Public profiles are viewable by everyone.\" ON public.profiles;\nDROP POLICY IF EXISTS \"Users can insert their own profile.\" ON public.profiles;\nDROP POLICY IF EXISTS \"Users can update own profile.\" ON public.profiles;\n\nCREATE POLICY \"Users can view their own profile\"\n  ON profiles FOR SELECT\n  USING (auth.uid() = id);\n\nCREATE POLICY \"Users can insert their own profile\"\n  ON profiles FOR INSERT\n  WITH CHECK (auth.uid() = id);\n\nCREATE POLICY \"Users can update own profile\"\n  ON profiles FOR UPDATE\n  USING (auth.uid() = id);\n\nCREATE POLICY \"Service role can access all profiles\"\n  ON profiles USING (auth.role() = 'service_role');"
+    },
+    {
+      "name": "2-create-trigger-profiles",
+      "description": "创建 Trigger: 新用户注册时自动创建 Profile",
+      "order": 2,
+      "sql": "CREATE OR REPLACE FUNCTION public.handle_new_user()\nRETURNS TRIGGER\nLANGUAGE PLPGSQL\nSECURITY DEFINER\nAS $$\nBEGIN\n  INSERT INTO public.profiles (id, name, credits)\n  VALUES (\n    new.id,\n    COALESCE(new.raw_user_meta_data->>'name', new.email),\n    50\n  );\n  RETURN new;\nEND;\n$$;\n\nDROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;\n\nCREATE TRIGGER on_auth_user_created\n  AFTER INSERT ON auth.users\n  FOR EACH ROW\n  EXECUTE FUNCTION public.handle_new_user();"
+    },
+    {
+      "name": "3-create-rls-policies-storyboards",
+      "description": "为 storyboards 表创建 RLS 策略",
+      "order": 3,
+      "sql": "DROP POLICY IF EXISTS \"Users can view their own storyboards.\" ON public.storyboards;\nDROP POLICY IF EXISTS \"Users can insert their own storyboards.\" ON public.storyboards;\nDROP POLICY IF EXISTS \"Users can update their own storyboards.\" ON public.storyboards;\nDROP POLICY IF EXISTS \"Users can delete their own storyboards.\" ON public.storyboards;\n\nCREATE POLICY \"Users can view own storyboards\"\n  ON storyboards FOR SELECT\n  USING (auth.uid() = user_id);\n\nCREATE POLICY \"Users can insert storyboards\"\n  ON storyboards FOR INSERT\n  WITH CHECK (auth.uid() = user_id);\n\nCREATE POLICY \"Users can update own storyboards\"\n  ON storyboards FOR UPDATE\n  USING (auth.uid() = user_id);\n\nCREATE POLICY \"Users can delete own storyboards\"\n  ON storyboards FOR DELETE\n  USING (auth.uid() = user_id);"
+    },
+    {
+      "name": "4-create-rls-policies-scenes",
+      "description": "为 scenes 表创建 RLS 策略",
+      "order": 4,
+      "sql": "DROP POLICY IF EXISTS \"Users can view scenes from their storyboards.\" ON public.scenes;\nDROP POLICY IF EXISTS \"Users can insert scenes to their storyboards.\" ON public.scenes;\nDROP POLICY IF EXISTS \"Users can update scenes from their storyboards.\" ON public.scenes;\nDROP POLICY IF EXISTS \"Users can delete scenes from their storyboards.\" ON public.scenes;\n\nCREATE POLICY \"Users can view own scenes\"\n  ON scenes FOR SELECT\n  USING (\n    EXISTS (\n      SELECT 1 FROM public.storyboards \n      WHERE storyboards.id = scenes.storyboard_id \n      AND storyboards.user_id = auth.uid()\n    )\n  );\n\nCREATE POLICY \"Users can insert scenes\"\n  ON scenes FOR INSERT\n  WITH CHECK (\n    EXISTS (\n      SELECT 1 FROM public.storyboards \n      WHERE storyboards.id = storyboard_id \n      AND storyboards.user_id = auth.uid()\n    )\n  );\n\nCREATE POLICY \"Users can update own scenes\"\n  ON scenes FOR UPDATE\n  USING (\n    EXISTS (\n      SELECT 1 FROM public.storyboards \n      WHERE storyboards.id = scenes.storyboard_id \n      AND storyboards.user_id = auth.uid()\n    )\n  );\n\nCREATE POLICY \"Users can delete own scenes\"\n  ON scenes FOR DELETE\n  USING (\n    EXISTS (\n      SELECT 1 FROM public.storyboards \n      WHERE storyboards.id = scenes.storyboard_id \n      AND storyboards.user_id = auth.uid()\n    )\n  );"
+    },
+    {
+      "name": "5-create-missing-profiles",
+      "description": "为现有用户创建缺失的 Profile（如果有的话）",
+      "order": 5,
+      "sql": "-- 为所有没有 profile 的用户创建 profile\nINSERT INTO public.profiles (id, name, credits)\nSELECT \n  u.id,\n  COALESCE(u.raw_user_meta_data->>'name', u.email),\n  50\nFROM auth.users u\nWHERE u.id NOT IN (SELECT id FROM public.profiles)\nON CONFLICT (id) DO NOTHING;\n\n-- 验证\nSELECT COUNT(*) as total_profiles FROM public.profiles;"
+    },
+    {
+      "name": "6-verify-policies",
+      "description": "验证所有 RLS 策略已创建",
+      "order": 6,
+      "sql": "SELECT schemaname, tablename, policyname \nFROM pg_policies \nWHERE schemaname = 'public' \nORDER BY tablename, policyname;"
+    },
+    {
+      "name": "7-verify-triggers",
+      "description": "验证 Trigger 已创建",
+      "order": 7,
+      "sql": "SELECT trigger_schema, trigger_name, event_manipulation, event_object_table\nFROM information_schema.triggers\nWHERE trigger_schema = 'public'\nORDER BY trigger_name;"
+    }
+  ],
+  "instructions": {
+    "zh_CN": {
+      "title": "Supabase 修复指南",
+      "steps": [
+        "打开: https://app.supabase.com/project/gtxgkdsayswonlewqfzj/sql",
+        "对于每个脚本（按顺序）:",
+        "  1. 创建新 Query",
+        "  2. 复制脚本的 SQL 内容",
+        "  3. 点击 'Run' 或 'Ctrl+Enter'",
+        "  4. 确认执行成功（无错误）",
+        "  5. 关闭 Query，继续下一个",
+        "完成所有脚本后，运行验证脚本 (6 和 7)"
+      ]
+    },
+    "en": {
+      "title": "Supabase Fix Guide",
+      "steps": [
+        "Open: https://app.supabase.com/project/gtxgkdsayswonlewqfzj/sql",
+        "For each script (in order):",
+        "  1. Create new Query",
+        "  2. Copy SQL content from script",
+        "  3. Click 'Run' or 'Ctrl+Enter'",
+        "  4. Confirm successful execution (no errors)",
+        "  5. Close Query, continue to next",
+        "After all scripts, run verification scripts (6 and 7)"
+      ]
+    }
+  },
+  "verification": {
+    "after_fix": [
+      {
+        "test": "Register a new user",
+        "expected": "User gets 50 credits automatically",
+        "where": "http://localhost:3000"
+      },
+      {
+        "test": "Run diagnostic script",
+        "expected": "All checks should be ✅",
+        "where": "bash scripts/diagnose-supabase-complete.sh"
+      },
+      {
+        "test": "Check RLS protection",
+        "expected": "Users can only see their own data",
+        "where": "Browser console or API tests"
+      }
+    ]
+  }
+}

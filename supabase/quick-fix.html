@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Supabase 快速修复</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+    
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      overflow: hidden;
+    }
+    
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 40px;
+      text-align: center;
+    }
+    
+    .header h1 {
+      font-size: 2.5em;
+      margin-bottom: 10px;
+    }
+    
+    .header p {
+      font-size: 1.1em;
+      opacity: 0.9;
+    }
+    
+    .content {
+      padding: 40px;
+    }
+    
+    .step {
+      margin-bottom: 40px;
+      padding: 25px;
+      background: #f8f9fa;
+      border-left: 4px solid #667eea;
+      border-radius: 8px;
+    }
+    
+    .step h2 {
+      color: #667eea;
+      margin-bottom: 15px;
+      font-size: 1.5em;
+    }
+    
+    .sql-box {
+      background: #1e1e1e;
+      color: #d4d4d4;
+      padding: 20px;
+      border-radius: 8px;
+      font-family: 'Courier New', monospace;
+      font-size: 0.95em;
+      line-height: 1.5;
+      overflow-x: auto;
+      margin: 15px 0;
+      position: relative;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+    
+    .copy-btn {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: #667eea;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.9em;
+      transition: background 0.3s;
+      z-index: 10;
+    }
+    
+    .copy-btn:hover {
+      background: #764ba2;
+    }
+    
+    .copy-btn.copied {
+      background: #4caf50;
+    }
+    
+    .instructions {
+      background: #e3f2fd;
+      border-left: 4px solid #2196f3;
+      padding: 15px;
+      border-radius: 4px;
+      margin: 15px 0;
+      line-height: 1.8;
+    }
+    
+    .success {
+      background: #e8f5e9;
+      border-left: 4px solid #4caf50;
+      padding: 15px;
+      border-radius: 4px;
+      margin: 15px 0;
+      color: #2e7d32;
+    }
+    
+    .warning {
+      background: #fff3e0;
+      border-left: 4px solid #ff9800;
+      padding: 15px;
+      border-radius: 4px;
+      margin: 15px 0;
+      color: #e65100;
+    }
+    
+    .link {
+      color: #667eea;
+      text-decoration: none;
+      font-weight: 500;
+    }
+    
+    .link:hover {
+      text-decoration: underline;
+    }
+    
+    .checklist {
+      list-style: none;
+      margin: 15px 0;
+    }
+    
+    .checklist li {
+      padding: 8px 0;
+      padding-left: 30px;
+      position: relative;
+    }
+    
+    .checklist li:before {
+      content: "☐";
+      position: absolute;
+      left: 0;
+      color: #667eea;
+      font-weight: bold;
+    }
+    
+    .footer {
+      background: #f8f9fa;
+      padding: 20px;
+      text-align: center;
+      color: #666;
+      border-top: 1px solid #e0e0e0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🚀 Supabase 快速修复</h1>
+      <p>修复 RLS 策略和 Trigger，让应用完全正常工作（5分钟）</p>
+    </div>
+    
+    <div class="content">
+      <!-- 诊断结果 -->
+      <div class="step">
+        <h2>📊 诊断结果</h2>
+        <div class="success">
+          <strong>✅ 已经完成:</strong>
+          <ul style="margin-left: 20px; margin-top: 10px;">
+            <li>环境变量已配置</li>
+            <li>Supabase API 连接正常</li>
+            <li>数据库表已创建 (profiles, storyboards, scenes)</li>
+          </ul>
+        </div>
+        <div class="warning">
+          <strong>⚠️ 需要修复:</strong>
+          <ul style="margin-left: 20px; margin-top: 10px;">
+            <li>RLS 策略未配置（所有用户可能看到彼此的数据）</li>
+            <li>Trigger 未创建（新用户注册后没有自动 profile）</li>
+          </ul>
+        </div>
+      </div>
+      
+      <!-- Step 1 -->
+      <div class="step">
+        <h2>Step 1️⃣: 打开 Supabase SQL Editor</h2>
+        <div class="instructions">
+          <p>访问以下链接：</p>
+          <p><a href="https://app.supabase.com/project/gtxgkdsayswonlewqfzj/sql" target="_blank" class="link">
+            https://app.supabase.com/project/gtxgkdsayswonlewqfzj/sql
+          </a></p>
+          <p style="margin-top: 10px;">在左侧 "SQL" 菜单中，点击 "New Query" 创建新查询</p>
+        </div>
+      </div>
+      
+      <!-- Step 2 -->
+      <div class="step">
+        <h2>Step 2️⃣: 复制并运行 SQL 脚本</h2>
+        <div class="instructions">
+          <p>点击下面的 "复制" 按钮，将所有 SQL 代码复制到 Supabase SQL Editor，然后点击 "Run" 运行。</p>
+        </div>
+        
+        <div class="sql-box" id="sqlCode">-- ====================================================================
+-- 1. 创建 Profiles RLS 策略
+-- ====================================================================
+
+DROP POLICY IF EXISTS "Public profiles are viewable by everyone." ON public.profiles;
+DROP POLICY IF EXISTS "Users can insert their own profile." ON public.profiles;
+DROP POLICY IF EXISTS "Users can update own profile." ON public.profiles;
+
+CREATE POLICY "Users can view their own profile"
+  ON profiles FOR SELECT USING (auth.uid() = id);
+
+CREATE POLICY "Users can insert their own profile"
+  ON profiles FOR INSERT WITH CHECK (auth.uid() = id);
+
+CREATE POLICY "Users can update own profile"
+  ON profiles FOR UPDATE USING (auth.uid() = id);
+
+CREATE POLICY "Service role can access all profiles"
+  ON profiles USING (auth.role() = 'service_role');
+
+-- ====================================================================
+-- 2. 创建 Trigger（新用户自动创建 Profile）
+-- ====================================================================
+
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER
+LANGUAGE PLPGSQL
+SECURITY DEFINER
+AS $$
+BEGIN
+  INSERT INTO public.profiles (id, name, credits)
+  VALUES (new.id, COALESCE(new.raw_user_meta_data->>'name', new.email), 50);
+  RETURN new;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users FOR EACH ROW
+  EXECUTE FUNCTION public.handle_new_user();
+
+-- ====================================================================
+-- 3. Storyboards RLS 策略
+-- ====================================================================
+
+DROP POLICY IF EXISTS "Users can view their own storyboards." ON public.storyboards;
+DROP POLICY IF EXISTS "Users can insert their own storyboards." ON public.storyboards;
+DROP POLICY IF EXISTS "Users can update their own storyboards." ON public.storyboards;
+DROP POLICY IF EXISTS "Users can delete their own storyboards." ON public.storyboards;
+
+CREATE POLICY "Users can view own storyboards" ON storyboards
+  FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "Users can insert storyboards" ON storyboards
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can update own storyboards" ON storyboards
+  FOR UPDATE USING (auth.uid() = user_id);
+CREATE POLICY "Users can delete own storyboards" ON storyboards
+  FOR DELETE USING (auth.uid() = user_id);
+
+-- ====================================================================
+-- 4. Scenes RLS 策略
+-- ====================================================================
+
+DROP POLICY IF EXISTS "Users can view scenes from their storyboards." ON public.scenes;
+DROP POLICY IF EXISTS "Users can insert scenes to their storyboards." ON public.scenes;
+DROP POLICY IF EXISTS "Users can update scenes from their storyboards." ON public.scenes;
+DROP POLICY IF EXISTS "Users can delete scenes from their storyboards." ON public.scenes;
+
+CREATE POLICY "Users can view own scenes" ON scenes
+  FOR SELECT USING (
+    EXISTS (SELECT 1 FROM public.storyboards 
+    WHERE storyboards.id = scenes.storyboard_id AND storyboards.user_id = auth.uid())
+  );
+CREATE POLICY "Users can insert scenes" ON scenes
+  FOR INSERT WITH CHECK (
+    EXISTS (SELECT 1 FROM public.storyboards 
+    WHERE storyboards.id = storyboard_id AND storyboards.user_id = auth.uid())
+  );
+CREATE POLICY "Users can update own scenes" ON scenes
+  FOR UPDATE USING (
+    EXISTS (SELECT 1 FROM public.storyboards 
+    WHERE storyboards.id = scenes.storyboard_id AND storyboards.user_id = auth.uid())
+  );
+CREATE POLICY "Users can delete own scenes" ON scenes
+  FOR DELETE USING (
+    EXISTS (SELECT 1 FROM public.storyboards 
+    WHERE storyboards.id = scenes.storyboard_id AND storyboards.user_id = auth.uid())
+  );
+
+-- ====================================================================
+-- 5. 为现有用户创建缺失的 Profiles
+-- ====================================================================
+
+INSERT INTO public.profiles (id, name, credits)
+SELECT u.id, COALESCE(u.raw_user_meta_data->>'name', u.email), 50
+FROM auth.users u
+WHERE u.id NOT IN (SELECT id FROM public.profiles)
+ON CONFLICT (id) DO NOTHING;
+
+-- ====================================================================
+-- 验证
+-- ====================================================================
+
+SELECT COUNT(*) as profiles_count FROM public.profiles;
+SELECT COUNT(*) as policies_count FROM pg_policies WHERE schemaname = 'public';
+        </div>
+        <button class="copy-btn" onclick="copySql()">📋 复制所有 SQL</button>
+        
+        <div class="success">
+          <strong>✅ 运行步骤:</strong>
+          <ol style="margin-left: 20px; margin-top: 10px;">
+            <li>点击上面的 "复制所有 SQL" 按钮</li>
+            <li>粘贴到 Supabase SQL Editor</li>
+            <li>点击 "Run" 或按 Ctrl+Enter 运行</li>
+            <li>等待执行完成（应该没有错误）</li>
+            <li>关闭此查询</li>
+          </ol>
+        </div>
+      </div>
+      
+      <!-- Step 3 -->
+      <div class="step">
+        <h2>Step 3️⃣: 验证修复</h2>
+        <div class="instructions">
+          <p>打开终端，运行诊断脚本验证所有修复已成功：</p>
+        </div>
+        <div class="sql-box">bash /Users/monsterlee/Desktop/ai-cine-director/scripts/diagnose-supabase-complete.sh</div>
+        <div class="success">
+          <strong>✅ 预期输出:</strong>
+          <p style="margin-top: 10px;">应该看到所有项目都是 ✅ 通过</p>
+        </div>
+      </div>
+      
+      <!-- Step 4 -->
+      <div class="step">
+        <h2>Step 4️⃣: 启动应用</h2>
+        <div class="instructions">
+          <p>打开终端，运行以下命令启动应用：</p>
+        </div>
+        <div class="sql-box">cd /Users/monsterlee/Desktop/ai-cine-director
+npm run dev:all</div>
+        <div class="success">
+          <p>应该看到：</p>
+          <ul style="margin-left: 20px; margin-top: 10px;">
+            <li>✅ 后端服务运行在 http://localhost:3002</li>
+            <li>✅ 前端应用运行在 http://localhost:3000</li>
+          </ul>
+        </div>
+      </div>
+      
+      <!-- Step 5 -->
+      <div class="step">
+        <h2>Step 5️⃣: 测试应用</h2>
+        <div class="instructions">
+          <p>打开浏览器访问 <a href="http://localhost:3000" target="_blank" class="link">http://localhost:3000</a></p>
+          <ol style="margin-left: 20px; margin-top: 10px;">
+            <li>点击 "Sign Up" 创建新用户</li>
+            <li>使用一个新的邮箱地址（例如: testuser123@example.com）</li>
+            <li>输入密码并提交</li>
+            <li>登录成功后，应该看到 <strong>50 积分</strong> ✅</li>
+          </ol>
+        </div>
+      </div>
+      
+      <!-- 完成清单 -->
+      <div class="step">
+        <h2>✅ 完成检查清单</h2>
+        <ul class="checklist">
+          <li>SQL 脚本在 Supabase 中成功运行（无错误）</li>
+          <li>诊断脚本显示所有 ✅ 通过</li>
+          <li>应用启动成功（npm run dev:all）</li>
+          <li>能够注册新用户</li>
+          <li>新用户自动获得 50 积分</li>
+          <li>用户只能看到自己的数据（RLS 保护）</li>
+        </ul>
+      </div>
+      
+      <!-- 故障排除 -->
+      <div class="step">
+        <h2>🔧 故障排除</h2>
+        <div class="warning">
+          <strong>问题: "duplicate key value violates unique constraint"</strong>
+          <p style="margin-top: 8px;">这是正常的，表示某个策略或 trigger 已存在。继续运行其他 SQL。</p>
+        </div>
+        <div class="warning">
+          <strong>问题: "Policy already exists"</strong>
+          <p style="margin-top: 8px;">正常。DROP POLICY 会先删除旧的策略。</p>
+        </div>
+        <div class="warning">
+          <strong>问题: 新用户注册后还是没有 profile</strong>
+          <p style="margin-top: 8px;">可能 trigger 没有创建成功。检查是否有错误消息，重新运行 trigger 创建部分的 SQL。</p>
+        </div>
+      </div>
+      
+      <!-- 关于邮件配置 -->
+      <div class="step">
+        <h2>📧 关于 Supabase 邮件配置</h2>
+        <div class="success">
+          <strong>✅ 当前状态:</strong>
+          <ul style="margin-left: 20px; margin-top: 10px;">
+            <li>Supabase 使用默认邮件服务（已启用）</li>
+            <li>不需要配置自定义 SMTP</li>
+            <li>"Enable custom SMTP" 是可选的</li>
+          </ul>
+        </div>
+        <div class="instructions">
+          <p style="margin-top: 15px;"><strong>如果你看到 "Enable custom SMTP" 警告：</strong></p>
+          <p style="margin-top: 8px;">这只是提示，不是必须的。除非你想使用自己的邮件服务器，否则保持默认设置即可。</p>
+        </div>
+      </div>
+    </div>
+    
+    <div class="footer">
+      <p>AI Cine Director - Supabase 快速修复指南</p>
+      <p style="margin-top: 8px; font-size: 0.9em;">生成于 2024-02-23 | 预计完成时间: 5 分钟</p>
+    </div>
+  </div>
+  
+  <script>
+    function copySql() {
+      const sqlCode = document.getElementById('sqlCode').textContent;
+      navigator.clipboard.writeText(sqlCode).then(() => {
+        const btn = event.target;
+        const originalText = btn.textContent;
+        btn.textContent = '✅ 已复制！';
+        btn.classList.add('copied');
+        setTimeout(() => {
+          btn.textContent = originalText;
+          btn.classList.remove('copied');
+        }, 2000);
+      }).catch(err => {
+        alert('复制失败，请手动复制');
+      });
+    }
+  </script>
+</body>
+</html>

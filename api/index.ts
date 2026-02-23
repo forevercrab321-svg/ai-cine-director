@@ -63,6 +63,37 @@ const requireAuth = async (req: any, res: any, next: any) => {
     next();
 };
 
+const isUserAlreadyExistsError = (errorLike: any): boolean => {
+    const msg = String(errorLike?.message || errorLike || '').toLowerCase();
+    return msg.includes('already registered')
+        || msg.includes('has already been registered')
+        || msg.includes('user already registered')
+        || msg.includes('already exists');
+};
+
+const findUserIdByEmail = async (supabaseAdmin: any, email: string): Promise<string | undefined> => {
+    const target = email.toLowerCase();
+    const perPage = 1000;
+
+    for (let page = 1; page <= 10; page += 1) {
+        const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage });
+        if (error) {
+            console.error('[Auth Ensure User] listUsers failed:', error);
+            return undefined;
+        }
+
+        const users = (data as any)?.users as Array<{ id: string; email?: string }> | undefined;
+        if (!users?.length) return undefined;
+
+        const match = users.find((u) => (u.email || '').toLowerCase() === target);
+        if (match?.id) return match.id;
+
+        if (users.length < perPage) return undefined;
+    }
+
+    return undefined;
+};
+
 // --- Auth helper (supports projects with signups disabled) ---
 app.post('/api/auth/ensure-user', async (req: any, res: any) => {
     try {
@@ -71,30 +102,27 @@ app.post('/api/auth/ensure-user', async (req: any, res: any) => {
 
         const supabaseAdmin = getSupabaseAdmin();
 
-        // Try to pre-create user (idempotent for existing users)
-        const { data: createdUser, error } = await supabaseAdmin.auth.admin.createUser({
-            email,
-            email_confirm: true
-        });
+        // 1) First try lookup (for already-registered users)
+        let userId = await findUserIdByEmail(supabaseAdmin, email);
 
-        if (error && !String(error.message || '').includes('already registered')) {
-            console.error('[Auth Ensure User] Failed:', error);
-            return res.status(500).json({ error: error.message || 'Failed to ensure user' });
-        }
-
-        let userId = createdUser?.user?.id;
+        // 2) If not found, create user (idempotent fallback)
         if (!userId) {
-            const { data: existing } = await supabaseAdmin.auth.admin.listUsers({
-                page: 1,
-                perPage: 1000
+            const { data: createdUser, error } = await supabaseAdmin.auth.admin.createUser({
+                email,
+                email_confirm: true
             });
-            const users = (existing as any)?.users as Array<{ id: string; email?: string }> | undefined;
-            const match = users?.find(u => (u.email || '').toLowerCase() === email);
-            userId = match?.id;
+
+            if (error && !isUserAlreadyExistsError(error)) {
+                console.error('[Auth Ensure User] Failed:', error);
+                return res.status(500).json({ error: error.message || 'Failed to ensure user' });
+            }
+
+            userId = createdUser?.user?.id || await findUserIdByEmail(supabaseAdmin, email);
         }
 
         if (userId) {
-            await supabaseAdmin
+            // Keep this best-effort: some deployed DBs may not have role column yet.
+            const { error: upsertErr } = await supabaseAdmin
                 .from('profiles')
                 .upsert({
                     id: userId,
@@ -102,6 +130,20 @@ app.post('/api/auth/ensure-user', async (req: any, res: any) => {
                     role: 'Director',
                     credits: 50,
                 }, { onConflict: 'id' });
+
+            if (upsertErr) {
+                const { error: fallbackUpsertErr } = await supabaseAdmin
+                    .from('profiles')
+                    .upsert({
+                        id: userId,
+                        name: email,
+                        credits: 50,
+                    }, { onConflict: 'id' });
+
+                if (fallbackUpsertErr) {
+                    console.error('[Auth Ensure User] Profile upsert failed:', fallbackUpsertErr);
+                }
+            }
         }
 
         return res.json({ ok: true });
@@ -133,6 +175,102 @@ app.post('/api/auth/generate-link', async (req: any, res: any) => {
     } catch (err: any) {
         console.error('[Auth Generate Link] Exception:', err);
         return res.status(500).json({ error: err.message || 'Failed to generate magic link' });
+    }
+});
+
+// POST /api/auth/send-otp — generate magic-link via Admin API + send email via Resend HTTP API
+app.post('/api/auth/send-otp', async (req: any, res: any) => {
+    try {
+        const email = String(req.body?.email || '').trim().toLowerCase();
+        if (!email) return res.status(400).json({ error: 'Missing email' });
+
+        const resendKey = process.env.RESEND_API_KEY;
+        if (!resendKey) return res.status(500).json({ error: 'RESEND_API_KEY not configured' });
+
+        const supabaseAdmin = getSupabaseAdmin();
+
+        // 1) Ensure user exists
+        let userId = await findUserIdByEmail(supabaseAdmin, email);
+        if (!userId) {
+            const { data: createdUser, error } = await supabaseAdmin.auth.admin.createUser({
+                email,
+                email_confirm: true,
+            });
+            if (error && !isUserAlreadyExistsError(error)) {
+                console.error('[Send OTP] Create user failed:', error);
+                return res.status(500).json({ error: error.message });
+            }
+            userId = createdUser?.user?.id || await findUserIdByEmail(supabaseAdmin, email);
+        }
+
+        // 2) Generate magic link (Admin API — does NOT send email)
+        const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+            type: 'magiclink',
+            email,
+        });
+
+        if (linkError || !linkData) {
+            console.error('[Send OTP] generateLink failed:', linkError);
+            return res.status(500).json({ error: linkError?.message || 'Failed to generate link' });
+        }
+
+        const actionLink = linkData.properties?.action_link || '';
+        const emailOtp = (linkData as any).properties?.email_otp
+            || linkData.properties?.verification_token
+            || '';
+
+        console.log('[Send OTP] Generated for:', email, '| has token:', !!emailOtp, '| has link:', !!actionLink);
+
+        // 3) Send email via Resend HTTP API
+        const emailHtml = `
+            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
+                <div style="text-align: center; margin-bottom: 32px;">
+                    <h1 style="font-size: 24px; font-weight: 800; color: #111; margin: 0;">🎬 CINE-DIRECTOR AI</h1>
+                    <p style="color: #666; font-size: 12px; letter-spacing: 2px; margin-top: 4px;">VISIONARY PRODUCTION SUITE</p>
+                </div>
+                <div style="background: #f8f9fa; border-radius: 16px; padding: 32px; text-align: center;">
+                    <h2 style="font-size: 20px; color: #111; margin: 0 0 12px;">Your Login Code</h2>
+                    ${emailOtp ? `<div style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #4f46e5; background: white; border-radius: 12px; padding: 16px; margin: 16px 0; font-family: monospace;">${emailOtp}</div>` : ''}
+                    <p style="color: #666; font-size: 14px; margin: 16px 0 0;">Or click the button below:</p>
+                    <a href="${actionLink}" style="display: inline-block; background: #4f46e5; color: white; text-decoration: none; padding: 14px 32px; border-radius: 999px; font-weight: 700; font-size: 14px; margin-top: 16px;">Log In to Studio</a>
+                </div>
+                <p style="color: #999; font-size: 11px; text-align: center; margin-top: 24px;">This link expires in 10 minutes. If you didn't request this, ignore this email.</p>
+            </div>
+        `;
+
+        const resendResp = await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${resendKey}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                from: 'AI Cine Director <noreply@aidirector.business>',
+                to: email,
+                subject: 'Your Login Code — CINE-DIRECTOR AI',
+                html: emailHtml,
+            }),
+        });
+
+        if (!resendResp.ok) {
+            const errBody = await resendResp.text();
+            console.error('[Send OTP] Resend error:', resendResp.status, errBody);
+            return res.status(500).json({ error: `Email delivery failed: ${errBody}` });
+        }
+
+        console.log('[Send OTP] Email sent via Resend to:', email);
+
+        // Ensure profile
+        if (userId) {
+            await supabaseAdmin.from('profiles').upsert({
+                id: userId, name: email, role: 'Director', credits: 50,
+            }, { onConflict: 'id' });
+        }
+
+        return res.json({ ok: true, message: 'Verification email sent' });
+    } catch (err: any) {
+        console.error('[Send OTP] Exception:', err);
+        return res.status(500).json({ error: err.message || 'Failed to send OTP' });
     }
 });
 
