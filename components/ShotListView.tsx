@@ -311,7 +311,7 @@ const SceneSection: React.FC<{
                             onImagesChange={(imgs) => onImagesChange(shot.shot_id, imgs)}
                             characterAnchor={project.character_anchor}
                             visualStyle={project.visual_style}
-                            projectId={project.id}
+                            projectId={effectiveProjectId}
                         />
                     ))}
                 </div>
@@ -350,6 +350,10 @@ const SceneSection: React.FC<{
 // ═══════════════════════════════════════════════════════════════
 const ShotListView: React.FC<ShotListViewProps> = ({ project, onBack }) => {
     const { settings, isAuthenticated, openPricingModal, hasEnoughCredits, refreshBalance } = useAppContext();
+
+    // ★ Generate a stable project ID if missing (for legacy projects)
+    const [fallbackProjectId] = useState(() => crypto.randomUUID());
+    const effectiveProjectId = project.id || fallbackProjectId;
 
     // State: shots indexed by scene_number
     const [shotsByScene, setShotsByScene] = useState<Record<number, Shot[]>>({});
@@ -546,7 +550,7 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, onBack }) => {
                     allShots={(Object.entries(shotsByScene) as [string, Shot[]][]).flatMap(([sceneNum, shots]) =>
                         shots.map(s => ({ ...s, scene_id: String(sceneNum) }))
                     )}
-                    projectId={project.id}
+                    projectId={effectiveProjectId}
                     characterAnchor={project.character_anchor}
                     visualStyle={project.visual_style}
                     imagesByShot={imagesByShot}
@@ -559,7 +563,7 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, onBack }) => {
                                 const newImage: ShotImage = {
                                     id: r.image_id,
                                     shot_id: r.shot_id,
-                                    project_id: project.id,
+                                    project_id: effectiveProjectId,
                                     url: r.image_url,
                                     is_primary: existing.length === 0, // First image becomes primary
                                     status: 'succeeded',
