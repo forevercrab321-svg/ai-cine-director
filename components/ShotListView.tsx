@@ -234,7 +234,8 @@ const SceneSection: React.FC<{
     project: StoryboardProject;
     imagesByShot: Record<string, ShotImage[]>;
     onImagesChange: (shotId: string, images: ShotImage[]) => void;
-}> = ({ scene, sceneIndex, shots, isGenerating, onGenerateShots, onUpdateShot, onRewriteShot, project, imagesByShot, onImagesChange }) => {
+    effectiveProjectId: string;  // ★ 添加 projectId prop
+}> = ({ scene, sceneIndex, shots, isGenerating, onGenerateShots, onUpdateShot, onRewriteShot, project, imagesByShot, onImagesChange, effectiveProjectId }) => {
     const [expandedShots, setExpandedShots] = useState<Set<string>>(new Set());
     const [editingShot, setEditingShot] = useState<Shot | null>(null);
 
@@ -607,6 +608,7 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, onBack }) => {
                         project={project}
                         imagesByShot={imagesByShot}
                         onImagesChange={handleImagesChange}
+                        effectiveProjectId={effectiveProjectId}
                     />
                 ))}
             </div>

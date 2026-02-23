@@ -49,6 +49,46 @@ export const generateStoryboard = async (
 };
 
 /**
+ * 压缩 base64 图片以避免 413 错误（Vercel 限制 4.5MB）
+ */
+const compressBase64Image = (base64Data: string, maxSizeKB: number = 500): Promise<string> => {
+  return new Promise((resolve) => {
+    // 如果已经很小，直接返回
+    const sizeKB = (base64Data.length * 3) / 4 / 1024;
+    if (sizeKB <= maxSizeKB) {
+      resolve(base64Data);
+      return;
+    }
+
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      let { width, height } = img;
+      
+      // 按比例缩小到合理尺寸
+      const maxDim = 800;
+      if (width > maxDim || height > maxDim) {
+        const ratio = Math.min(maxDim / width, maxDim / height);
+        width = Math.round(width * ratio);
+        height = Math.round(height * ratio);
+      }
+      
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx?.drawImage(img, 0, 0, width, height);
+      
+      // 使用较低质量的 JPEG
+      const compressed = canvas.toDataURL('image/jpeg', 0.7);
+      console.log(`[RefImage] Compressed from ${Math.round(sizeKB)}KB to ${Math.round((compressed.length * 3) / 4 / 1024)}KB`);
+      resolve(compressed);
+    };
+    img.onerror = () => resolve(base64Data);  // 失败时返回原图
+    img.src = base64Data;
+  });
+};
+
+/**
  * 分析角色锚点 - 通过后端代理调用 Gemini Vision
  */
 export const analyzeImageForAnchor = async (base64Data: string): Promise<string> => {
@@ -56,13 +96,17 @@ export const analyzeImageForAnchor = async (base64Data: string): Promise<string>
     const { data: { session } } = await supabase.auth.getSession();
     const token = session?.access_token;
 
+    // ★ 压缩图片避免 413 错误
+    console.log('[RefImage] Analyzing image with Gemini Vision...');
+    const compressedData = await compressBase64Image(base64Data, 400);
+
     const response = await fetch(`${API_BASE}/analyze`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': token ? `Bearer ${token}` : ''
       },
-      body: JSON.stringify({ base64Data }),
+      body: JSON.stringify({ base64Data: compressedData }),
     });
 
     if (!response.ok) {
