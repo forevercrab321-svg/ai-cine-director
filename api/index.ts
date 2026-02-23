@@ -5,6 +5,12 @@ import { GoogleGenAI, Type } from '@google/genai';
 import fetch from 'node-fetch';
 import { createClient } from '@supabase/supabase-js';
 import Stripe from 'stripe';
+import {
+    REPLICATE_MODEL_PATHS,
+    IMAGE_MODEL_COSTS,
+    STYLE_PRESETS,
+} from '../types';
+import type { BatchJob, BatchJobItem, BatchItemStatus } from '../types';
 
 // --- Types ---
 interface ReplicateResponse {
@@ -628,6 +634,764 @@ app.post('/api/gemini/analyze', async (req: any, res: any) => {
         console.error('[Gemini Analyze] Error:', error.message);
         res.json({ anchor: 'A cinematic character' });
     }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ★ SHOT SYSTEM + SHOT IMAGES + BATCH IMAGE GENERATION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// --- Shared helpers for Shot / Image / Batch routes ---
+
+const getUserClient = (authHeader: string) => createClient(
+    (process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim(),
+    (process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '').trim(),
+    { global: { headers: { Authorization: authHeader } } }
+);
+
+async function checkIsAdmin(supabaseUser: any): Promise<boolean> {
+    try {
+        const { data: { user } } = await supabaseUser.auth.getUser();
+        if (!user) return false;
+        if (user.email && ADMIN_EMAILS.includes(user.email.toLowerCase())) return true;
+        const { data: profile } = await supabaseUser.from('profiles').select('is_admin').eq('id', user.id).single();
+        return profile?.is_admin === true;
+    } catch { return false; }
+}
+
+const REPLICATE_API_BASE = 'https://api.replicate.com/v1';
+
+async function callReplicateImage(params: {
+    prompt: string; model: string; aspectRatio: string; seed: number | null;
+}): Promise<{ url: string; predictionId: string }> {
+    const token = getReplicateToken();
+    const modelPath = params.model;
+    const isModelPath = modelPath.includes('/') && !modelPath.match(/^[a-f0-9]{64}$/);
+    const targetUrl = isModelPath
+        ? `${REPLICATE_API_BASE}/models/${modelPath}/predictions`
+        : `${REPLICATE_API_BASE}/predictions`;
+
+    const input: Record<string, any> = {
+        prompt: params.prompt, aspect_ratio: params.aspectRatio, output_format: 'jpg',
+    };
+    if (params.seed != null) input.seed = params.seed;
+    const body = isModelPath ? { input } : { version: modelPath, input };
+
+    const response = await fetch(targetUrl, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Prefer: 'wait' },
+        body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Replicate error ${response.status}: ${errText}`);
+    }
+
+    let prediction: any = await response.json();
+    while (['starting', 'processing'].includes(prediction.status)) {
+        await new Promise(r => setTimeout(r, 3000));
+        const pollRes = await fetch(`${REPLICATE_API_BASE}/predictions/${prediction.id}`, {
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        });
+        prediction = await pollRes.json();
+    }
+    if (prediction.status !== 'succeeded') throw new Error(prediction.error || 'Image generation failed');
+    const output = prediction.output;
+    return { url: Array.isArray(output) ? output[0] : output, predictionId: prediction.id };
+}
+
+function buildFinalPrompt(params: {
+    basePrompt: string; deltaInstruction?: string; characterAnchor?: string; style?: string; referencePolicy?: string;
+}): string {
+    const parts: string[] = [];
+    if (params.characterAnchor && params.referencePolicy !== 'none') {
+        parts.push(`[CRITICAL: Maintain exact same character identity. Same face, hairstyle, costume, body proportions.] ${params.characterAnchor}.`);
+    }
+    parts.push(params.basePrompt);
+    if (params.deltaInstruction) parts.push(`[EDIT INSTRUCTION: ${params.deltaInstruction}]`);
+    if (params.style && params.style !== 'none') {
+        const preset = STYLE_PRESETS.find(s => s.id === params.style);
+        if (preset) parts.push(preset.promptModifier);
+    }
+    if (params.characterAnchor && params.referencePolicy !== 'none') {
+        parts.push('[IMPORTANT: Character must look IDENTICAL to description above.]');
+    }
+    return parts.join(' ');
+}
+
+// --- In-memory BatchQueue (same as server/batchQueue.ts) ---
+
+interface BatchJobState {
+    job: BatchJob; items: BatchJobItem[]; cancelRequested: boolean; workerPromise?: Promise<void>;
+}
+type TaskExecutor = (item: BatchJobItem, job: BatchJob) => Promise<{ image_id: string; image_url: string }>;
+const batchJobs = new Map<string, BatchJobState>();
+
+function createBatchJob(p: {
+    jobId: string; projectId: string; userId: string;
+    items: Array<{ shotId: string; shotNumber: number; sceneNumber: number }>;
+    concurrency: number; executor: TaskExecutor;
+}): BatchJob {
+    const now = new Date().toISOString();
+    const job: BatchJob = {
+        id: p.jobId, project_id: p.projectId, user_id: p.userId, type: 'gen_images',
+        total: p.items.length, done: 0, succeeded: 0, failed: 0, status: 'pending',
+        created_at: now, updated_at: now, concurrency: p.concurrency,
+    };
+    const batchItems: BatchJobItem[] = p.items.map(item => ({
+        id: crypto.randomUUID(), job_id: p.jobId, shot_id: item.shotId,
+        shot_number: item.shotNumber, scene_number: item.sceneNumber, status: 'queued' as BatchItemStatus,
+    }));
+    const state: BatchJobState = { job, items: batchItems, cancelRequested: false };
+    batchJobs.set(p.jobId, state);
+    state.workerPromise = runBatchWorker(state, p.executor);
+    return job;
+}
+
+function getBatchJobStatus(jobId: string): { job: BatchJob; items: BatchJobItem[] } | null {
+    const s = batchJobs.get(jobId);
+    return s ? { job: { ...s.job }, items: s.items.map(i => ({ ...i })) } : null;
+}
+
+function cancelBatchJob(jobId: string): boolean {
+    const s = batchJobs.get(jobId);
+    if (!s || s.job.status === 'completed' || s.job.status === 'cancelled') return false;
+    s.cancelRequested = true;
+    return true;
+}
+
+function retryFailedBatchItems(jobId: string, executor: TaskExecutor): boolean {
+    const s = batchJobs.get(jobId);
+    if (!s || s.job.status === 'running') return false;
+    let hasRetries = false;
+    for (const item of s.items) {
+        if (item.status === 'failed') {
+            item.status = 'queued'; item.error = undefined;
+            item.started_at = undefined; item.completed_at = undefined;
+            item.image_id = undefined; item.image_url = undefined;
+            hasRetries = true;
+        }
+    }
+    if (!hasRetries) return false;
+    s.job.failed = 0;
+    s.job.done = s.items.filter(i => i.status === 'succeeded').length;
+    s.job.status = 'pending';
+    s.cancelRequested = false;
+    s.job.updated_at = new Date().toISOString();
+    s.workerPromise = runBatchWorker(s, executor);
+    return true;
+}
+
+async function runBatchWorker(state: BatchJobState, executor: TaskExecutor): Promise<void> {
+    state.job.status = 'running';
+    state.job.updated_at = new Date().toISOString();
+    const queue = state.items.filter(i => i.status === 'queued');
+    let qi = 0;
+    const runNext = async (): Promise<void> => {
+        while (qi < queue.length) {
+            if (state.cancelRequested) return;
+            const item = queue[qi++];
+            if (!item || item.status !== 'queued') continue;
+            if (state.cancelRequested) { item.status = 'cancelled'; continue; }
+            item.status = 'running'; item.started_at = new Date().toISOString();
+            state.job.updated_at = new Date().toISOString();
+            try {
+                const r = await executor(item, state.job);
+                item.status = 'succeeded'; item.image_id = r.image_id; item.image_url = r.image_url;
+                item.completed_at = new Date().toISOString(); state.job.succeeded += 1;
+            } catch (err: any) {
+                item.status = 'failed'; item.error = err.message || 'Unknown error';
+                item.completed_at = new Date().toISOString(); state.job.failed += 1;
+                console.error(`[BatchQueue] Item ${item.id} (shot ${item.shot_id}) failed:`, err.message);
+            }
+            state.job.done += 1; state.job.updated_at = new Date().toISOString();
+        }
+    };
+    const workers: Promise<void>[] = [];
+    for (let i = 0; i < state.job.concurrency; i++) workers.push(runNext());
+    await Promise.all(workers);
+    if (state.cancelRequested) {
+        for (const item of state.items) { if (item.status === 'queued') item.status = 'cancelled'; }
+        state.job.status = 'cancelled';
+    } else if (state.job.failed > 0 && state.job.succeeded === 0) {
+        state.job.status = 'failed';
+    } else {
+        state.job.status = 'completed';
+    }
+    state.job.updated_at = new Date().toISOString();
+}
+
+// ───────────────────────────────────────────────────────────────
+// POST /api/shots/generate — Break scene into detailed shots via Gemini
+// ───────────────────────────────────────────────────────────────
+
+const shotResponseSchema = {
+    type: Type.OBJECT,
+    properties: {
+        scene_title: { type: Type.STRING },
+        shots: {
+            type: Type.ARRAY,
+            items: {
+                type: Type.OBJECT,
+                properties: {
+                    shot_number: { type: Type.INTEGER }, duration_sec: { type: Type.NUMBER },
+                    location_type: { type: Type.STRING }, location: { type: Type.STRING },
+                    time_of_day: { type: Type.STRING }, characters: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    action: { type: Type.STRING }, dialogue: { type: Type.STRING },
+                    camera: { type: Type.STRING }, lens: { type: Type.STRING },
+                    movement: { type: Type.STRING }, composition: { type: Type.STRING },
+                    lighting: { type: Type.STRING }, art_direction: { type: Type.STRING },
+                    mood: { type: Type.STRING }, sfx_vfx: { type: Type.STRING },
+                    audio_notes: { type: Type.STRING }, continuity_notes: { type: Type.STRING },
+                    image_prompt: { type: Type.STRING }, negative_prompt: { type: Type.STRING },
+                },
+                required: [
+                    'shot_number', 'duration_sec', 'location_type', 'location',
+                    'time_of_day', 'characters', 'action', 'dialogue',
+                    'camera', 'lens', 'movement', 'composition',
+                    'lighting', 'art_direction', 'mood', 'sfx_vfx',
+                    'audio_notes', 'continuity_notes', 'image_prompt', 'negative_prompt'
+                ],
+            },
+        },
+    },
+    required: ['scene_title', 'shots'],
+};
+
+app.post('/api/shots/generate', async (req: any, res: any) => {
+    try {
+        const {
+            scene_number, visual_description, audio_description, shot_type,
+            visual_style, character_anchor, language, num_shots
+        } = req.body;
+
+        const authHeader = req.headers.authorization;
+        if (!authHeader) return res.status(401).json({ error: 'Missing Authorization header' });
+        if (!visual_description) return res.status(400).json({ error: 'Missing visual_description' });
+
+        const supabaseUser = getUserClient(authHeader);
+        const isAdmin = await checkIsAdmin(supabaseUser);
+        const COST = 1;
+        const jobRef = `shots:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+
+        if (!isAdmin) {
+            const { data: reserved, error: reserveErr } = await supabaseUser.rpc('reserve_credits', {
+                amount: COST, ref_type: 'shots', ref_id: jobRef
+            });
+            if (reserveErr) return res.status(500).json({ error: 'Credit verification failed' });
+            if (!reserved) return res.status(402).json({ error: 'Insufficient credits', code: 'INSUFFICIENT_CREDITS' });
+        }
+
+        const ai = getGeminiAI();
+        const targetShots = num_shots || 5;
+
+        const systemInstruction = `
+**Role:** You are an expert Director of Photography (DP) and 1st Assistant Director.
+**Task:** Break the following SCENE into exactly ${targetShots} detailed, production-ready SHOTS.
+
+**Scene ${scene_number || 1}:**
+Visual: ${visual_description}
+Audio: ${audio_description || 'N/A'}
+Shot Direction: ${shot_type || 'N/A'}
+Visual Style: ${visual_style || 'Cinematic Realism'}
+${character_anchor ? `Character Anchor (MUST appear in every shot's image_prompt): ${character_anchor}` : ''}
+
+**RULES:**
+1. Each shot must be a distinct camera setup / angle / moment.
+2. "camera" must be one of: wide, medium, close, ecu, over-shoulder, pov, aerial, two-shot
+3. "movement" must be one of: static, push-in, pull-out, pan-left, pan-right, tilt-up, tilt-down, dolly, tracking, crane, handheld, steadicam, whip-pan, zoom
+4. "time_of_day" must be one of: dawn, morning, noon, afternoon, golden-hour, dusk, night, blue-hour
+5. "location_type" must be one of: INT, EXT, INT/EXT
+6. "image_prompt" must be a COMPLETE, self-contained prompt for image generation including the character anchor and all visual details.
+7. "negative_prompt" should list what to avoid (bad quality, deformed hands, etc.)
+8. "duration_sec" should be realistic (2-8 seconds per shot).
+9. "lighting" should describe key/fill/back lights, color temperature.
+10. "continuity_notes" should note what must match between adjacent shots.
+11. Language: image_prompt, negative_prompt, and technical fields ALWAYS in English. dialogue and audio_notes in ${language === 'zh' ? 'Chinese (Simplified)' : 'English'}.
+
+**Output:** JSON strictly following the provided schema. Return exactly ${targetShots} shots.
+`;
+
+        let response;
+        try {
+            response = await ai.models.generateContent({
+                model: 'gemini-2.0-flash',
+                contents: `Break Scene ${scene_number || 1} into ${targetShots} shots. Scene description: ${visual_description}`,
+                config: { systemInstruction, responseMimeType: 'application/json', responseSchema: shotResponseSchema, temperature: 0.6 },
+            });
+        } catch (initialError: any) {
+            if (initialError.message?.includes('429') || initialError.status === 429) {
+                response = await ai.models.generateContent({
+                    model: 'gemini-1.5-flash',
+                    contents: `Break Scene ${scene_number || 1} into ${targetShots} shots. Scene description: ${visual_description}`,
+                    config: { systemInstruction, responseMimeType: 'application/json', responseSchema: shotResponseSchema, temperature: 0.6 },
+                });
+            } else throw initialError;
+        }
+
+        const text = response.text;
+        if (!text) throw new Error('No response from AI');
+        const result = JSON.parse(text);
+
+        const enrichedShots = (result.shots || []).map((s: any, idx: number) => ({
+            shot_id: crypto.randomUUID(),
+            scene_id: '', scene_title: result.scene_title || `Scene ${scene_number || 1}`,
+            shot_number: s.shot_number || idx + 1, duration_sec: s.duration_sec || 3,
+            location_type: s.location_type || 'INT', location: s.location || '',
+            time_of_day: s.time_of_day || 'day', characters: s.characters || [],
+            action: s.action || '', dialogue: s.dialogue || '',
+            camera: s.camera || 'medium', lens: s.lens || '50mm',
+            movement: s.movement || 'static', composition: s.composition || '',
+            lighting: s.lighting || '', art_direction: s.art_direction || '',
+            mood: s.mood || '', sfx_vfx: s.sfx_vfx || '',
+            audio_notes: s.audio_notes || '', continuity_notes: s.continuity_notes || '',
+            image_prompt: s.image_prompt || '', negative_prompt: s.negative_prompt || '',
+            seed_hint: null, reference_policy: 'anchor' as const,
+            status: 'draft' as const, locked_fields: [], version: 1,
+            updated_at: new Date().toISOString(),
+        }));
+
+        if (!isAdmin) {
+            await supabaseUser.rpc('finalize_reserve', { ref_type: 'shots', ref_id: jobRef });
+        }
+
+        res.json({ scene_title: result.scene_title || `Scene ${scene_number || 1}`, shots: enrichedShots });
+    } catch (error: any) {
+        console.error('[Shots Generate] Error:', error);
+        res.status(500).json({ error: error.message || 'Shot generation failed' });
+    }
+});
+
+// ───────────────────────────────────────────────────────────────
+// POST /api/shots/:shotId/rewrite — AI-rewrite specific fields
+// ───────────────────────────────────────────────────────────────
+app.post('/api/shots/:shotId/rewrite', async (req: any, res: any) => {
+    try {
+        const { shotId } = req.params;
+        const { fields_to_rewrite, user_instruction, locked_fields, current_shot, project_context, language } = req.body;
+
+        const authHeader = req.headers.authorization;
+        if (!authHeader) return res.status(401).json({ error: 'Missing Authorization header' });
+        if (!fields_to_rewrite?.length) return res.status(400).json({ error: 'No fields specified for rewrite' });
+
+        const supabaseUser = getUserClient(authHeader);
+        const isAdmin = await checkIsAdmin(supabaseUser);
+        const COST = 1;
+        const jobRef = `rewrite:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+
+        if (!isAdmin) {
+            const { data: reserved, error: reserveErr } = await supabaseUser.rpc('reserve_credits', {
+                amount: COST, ref_type: 'rewrite', ref_id: jobRef
+            });
+            if (reserveErr) return res.status(500).json({ error: 'Credit verification failed' });
+            if (!reserved) return res.status(402).json({ error: 'Insufficient credits', code: 'INSUFFICIENT_CREDITS' });
+        }
+
+        const ai = getGeminiAI();
+        const shotJson = JSON.stringify(current_shot, null, 2);
+        const fieldsStr = fields_to_rewrite.join(', ');
+        const lockedStr = (locked_fields || []).join(', ');
+
+        const systemInstruction = `
+**Role:** Expert DP / Script Supervisor.
+**Task:** Rewrite ONLY the following fields of this shot: [${fieldsStr}]
+${lockedStr ? `**LOCKED fields (DO NOT MODIFY):** [${lockedStr}]` : ''}
+${user_instruction ? `**Director's instruction:** "${user_instruction}"` : ''}
+
+**Current shot state:**
+\`\`\`json
+${shotJson}
+\`\`\`
+
+**Project context:**
+- Visual Style: ${project_context?.visual_style || 'Cinematic'}
+- Character Anchor: ${project_context?.character_anchor || 'N/A'}
+- Scene: ${project_context?.scene_title || 'N/A'}
+
+**RULES:**
+1. Return a JSON object with ONLY the rewritten fields.
+2. Do NOT include any fields that are locked or not in the rewrite list.
+3. Keep the same format/type as the original field values.
+4. If rewriting image_prompt, include the character anchor.
+5. Be creative but stay consistent with the visual style and scene context.
+6. Language: technical fields in English, dialogue in ${language === 'zh' ? 'Chinese' : 'English'}.
+
+**Output:** A flat JSON object with only the rewritten field keys and new values.
+`;
+
+        let response;
+        try {
+            response = await ai.models.generateContent({
+                model: 'gemini-2.0-flash',
+                contents: `Rewrite fields [${fieldsStr}] for shot ${shotId}. ${user_instruction || ''}`,
+                config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.7 },
+            });
+        } catch (initialError: any) {
+            if (initialError.message?.includes('429') || initialError.status === 429) {
+                response = await ai.models.generateContent({
+                    model: 'gemini-1.5-flash',
+                    contents: `Rewrite fields [${fieldsStr}] for shot ${shotId}. ${user_instruction || ''}`,
+                    config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.7 },
+                });
+            } else throw initialError;
+        }
+
+        const text = response.text;
+        if (!text) throw new Error('No response from AI');
+        const rewrittenFields = JSON.parse(text);
+        for (const locked of (locked_fields || [])) delete rewrittenFields[locked];
+        for (const key of Object.keys(rewrittenFields)) {
+            if (!fields_to_rewrite.includes(key)) delete rewrittenFields[key];
+        }
+
+        if (!isAdmin) {
+            await supabaseUser.rpc('finalize_reserve', { ref_type: 'rewrite', ref_id: jobRef });
+        }
+
+        res.json({ shot_id: shotId, rewritten_fields: rewrittenFields, change_source: 'ai-rewrite', changed_fields: Object.keys(rewrittenFields) });
+    } catch (error: any) {
+        console.error('[Shot Rewrite] Error:', error);
+        res.status(500).json({ error: error.message || 'Shot rewrite failed' });
+    }
+});
+
+// ───────────────────────────────────────────────────────────────
+// POST /api/shot-images/:shotId/generate — Generate image for a shot
+// ───────────────────────────────────────────────────────────────
+app.post('/api/shot-images/:shotId/generate', async (req: any, res: any) => {
+    const startTime = Date.now();
+    try {
+        const { shotId } = req.params;
+        const { prompt, negative_prompt, delta_instruction, model, aspect_ratio, style, seed, character_anchor, reference_policy, project_id } = req.body;
+
+        const authHeader = req.headers.authorization;
+        if (!authHeader) return res.status(401).json({ error: 'Missing Authorization header' });
+
+        const supabaseUser = getUserClient(authHeader);
+        const isAdmin = await checkIsAdmin(supabaseUser);
+        const imageModel = model || 'flux';
+        const replicatePath = (REPLICATE_MODEL_PATHS as any)[imageModel] || REPLICATE_MODEL_PATHS['flux'];
+        const cost = (IMAGE_MODEL_COSTS as any)[imageModel] ?? 6;
+
+        const jobRef = `shot-img:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+        if (!isAdmin) {
+            const { data: reserved, error: reserveErr } = await supabaseUser.rpc('reserve_credits', {
+                amount: cost, ref_type: 'shot-image', ref_id: jobRef,
+            });
+            if (reserveErr) return res.status(500).json({ error: 'Credit verification failed' });
+            if (!reserved) return res.status(402).json({ error: 'Insufficient credits', code: 'INSUFFICIENT_CREDITS' });
+        }
+
+        const finalPrompt = buildFinalPrompt({
+            basePrompt: prompt || '', deltaInstruction: delta_instruction,
+            characterAnchor: character_anchor, style: style || 'none', referencePolicy: reference_policy || 'anchor',
+        });
+
+        let result: { url: string; predictionId: string };
+        try {
+            result = await callReplicateImage({ prompt: finalPrompt, model: replicatePath, aspectRatio: aspect_ratio || '16:9', seed: seed ?? 142857 });
+        } catch (genErr: any) {
+            if (!isAdmin) { try { await supabaseUser.rpc('refund_reserve', { amount: cost, ref_type: 'shot-image', ref_id: jobRef }); } catch (_) {} }
+            throw genErr;
+        }
+
+        if (!isAdmin) { await supabaseUser.rpc('finalize_reserve', { ref_type: 'shot-image', ref_id: jobRef }); }
+
+        const now = new Date().toISOString();
+        const imageId = crypto.randomUUID();
+        res.json({
+            image: { id: imageId, shot_id: shotId, project_id: project_id || null, url: result.url, is_primary: false, status: 'succeeded', label: null, created_at: now },
+            generation: {
+                id: crypto.randomUUID(), image_id: imageId, shot_id: shotId, project_id: project_id || null,
+                prompt: prompt || '', negative_prompt: negative_prompt || '', delta_instruction: delta_instruction || null,
+                model: imageModel, aspect_ratio: aspect_ratio || '16:9', style: style || 'none', seed: seed ?? 142857,
+                anchor_refs: character_anchor ? [character_anchor] : [], reference_policy: reference_policy || 'anchor',
+                edit_mode: null, status: 'succeeded', output_url: result.url, replicate_prediction_id: result.predictionId,
+                created_at: now, completed_at: new Date().toISOString(), duration_ms: Date.now() - startTime,
+            },
+        });
+    } catch (error: any) {
+        console.error('[ShotImage Generate] Error:', error.message);
+        res.status(500).json({ error: error.message || 'Image generation failed' });
+    }
+});
+
+// ───────────────────────────────────────────────────────────────
+// POST /api/shot-images/:imageId/edit — Edit existing shot image
+// ───────────────────────────────────────────────────────────────
+app.post('/api/shot-images/:imageId/edit', async (req: any, res: any) => {
+    const startTime = Date.now();
+    try {
+        const { imageId } = req.params;
+        const { edit_mode, delta_instruction, original_prompt, negative_prompt, reference_image_url, locked_attributes, model, aspect_ratio, style, seed, character_anchor, reference_policy, shot_id, project_id } = req.body;
+
+        const authHeader = req.headers.authorization;
+        if (!authHeader) return res.status(401).json({ error: 'Missing Authorization header' });
+        if (!edit_mode) return res.status(400).json({ error: 'Missing edit_mode' });
+
+        const supabaseUser = getUserClient(authHeader);
+        const isAdmin = await checkIsAdmin(supabaseUser);
+        const imageModel = model || 'flux';
+        const replicatePath = (REPLICATE_MODEL_PATHS as any)[imageModel] || REPLICATE_MODEL_PATHS['flux'];
+        const cost = (IMAGE_MODEL_COSTS as any)[imageModel] ?? 6;
+
+        const jobRef = `shot-img-edit:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+        if (!isAdmin) {
+            const { data: reserved, error: reserveErr } = await supabaseUser.rpc('reserve_credits', {
+                amount: cost, ref_type: 'shot-image-edit', ref_id: jobRef,
+            });
+            if (reserveErr) return res.status(500).json({ error: 'Credit verification failed' });
+            if (!reserved) return res.status(402).json({ error: 'Insufficient credits', code: 'INSUFFICIENT_CREDITS' });
+        }
+
+        let basePrompt = original_prompt || '';
+        if (edit_mode === 'attribute_edit') {
+            const lockedStr = (locked_attributes || []).join(', ');
+            basePrompt = lockedStr ? `${basePrompt}. [KEEP UNCHANGED: ${lockedStr}]. [CHANGE: ${delta_instruction || ''}]` : `${basePrompt}. [EDIT: ${delta_instruction || ''}]`;
+        } else if (edit_mode === 'reference_edit') {
+            basePrompt = `Based on reference image, ${delta_instruction || 'maintain composition and subject'}. ${basePrompt}`;
+        }
+
+        const finalPrompt = buildFinalPrompt({
+            basePrompt, characterAnchor: character_anchor, style: style || 'none', referencePolicy: reference_policy || 'anchor',
+        });
+        const editSeed = edit_mode === 'reroll' ? Math.floor(Math.random() * 999999) : (seed ?? 142857);
+
+        let result: { url: string; predictionId: string };
+        try {
+            result = await callReplicateImage({ prompt: finalPrompt, model: replicatePath, aspectRatio: aspect_ratio || '16:9', seed: editSeed });
+        } catch (genErr: any) {
+            if (!isAdmin) { try { await supabaseUser.rpc('refund_reserve', { amount: cost, ref_type: 'shot-image-edit', ref_id: jobRef }); } catch (_) {} }
+            throw genErr;
+        }
+
+        if (!isAdmin) { await supabaseUser.rpc('finalize_reserve', { ref_type: 'shot-image-edit', ref_id: jobRef }); }
+
+        const now = new Date().toISOString();
+        const newImageId = crypto.randomUUID();
+        res.json({
+            image: { id: newImageId, shot_id: shot_id || '', project_id: project_id || null, url: result.url, is_primary: false, status: 'succeeded', label: `Edit (${edit_mode})`, created_at: now },
+            generation: {
+                id: crypto.randomUUID(), image_id: newImageId, shot_id: shot_id || '', project_id: project_id || null,
+                prompt: basePrompt, negative_prompt: negative_prompt || '', delta_instruction: delta_instruction || null,
+                model: imageModel, aspect_ratio: aspect_ratio || '16:9', style: style || 'none', seed: editSeed,
+                anchor_refs: character_anchor ? [character_anchor] : [], reference_image_url: reference_image_url || null,
+                reference_policy: reference_policy || 'anchor', edit_mode, status: 'succeeded',
+                output_url: result.url, replicate_prediction_id: result.predictionId,
+                created_at: now, completed_at: new Date().toISOString(), duration_ms: Date.now() - startTime,
+                parent_image_id: imageId,
+            },
+        });
+    } catch (error: any) {
+        console.error('[ShotImage Edit] Error:', error.message);
+        res.status(500).json({ error: error.message || 'Image edit failed' });
+    }
+});
+
+// ───────────────────────────────────────────────────────────────
+// POST /api/batch/gen-images — Start batch image generation
+// ───────────────────────────────────────────────────────────────
+app.post('/api/batch/gen-images', async (req: any, res: any) => {
+    try {
+        const { project_id, shots, count = 9, model = 'flux', aspect_ratio = '16:9', style = 'none', character_anchor = '', concurrency = 2 } = req.body;
+        if (!project_id) return res.status(400).json({ error: 'Missing project_id' });
+        if (!shots?.length) return res.status(400).json({ error: 'Missing or empty shots array' });
+
+        const authHeader = req.headers.authorization;
+        if (!authHeader) return res.status(401).json({ error: 'Missing Authorization header' });
+
+        const supabaseUser = getUserClient(authHeader);
+        const isAdmin = await checkIsAdmin(supabaseUser);
+
+        const sortedShots = [...shots].sort((a: any, b: any) => (a.scene_number - b.scene_number) || (a.shot_number - b.shot_number)).slice(0, count);
+        const replicatePath = (REPLICATE_MODEL_PATHS as any)[model] || REPLICATE_MODEL_PATHS['flux'];
+        const costPerImage = (IMAGE_MODEL_COSTS as any)[model] ?? 6;
+        const totalCost = costPerImage * sortedShots.length;
+
+        const batchRef = `batch-img:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+        if (!isAdmin) {
+            const { data: reserved, error: reserveErr } = await supabaseUser.rpc('reserve_credits', { amount: totalCost, ref_type: 'batch-image', ref_id: batchRef });
+            if (reserveErr) return res.status(500).json({ error: 'Credit verification failed' });
+            if (!reserved) return res.status(402).json({ error: 'Insufficient credits', code: 'INSUFFICIENT_CREDITS', needed: totalCost });
+        }
+
+        const jobId = crypto.randomUUID();
+        const executor: TaskExecutor = async (item) => {
+            const shotData = sortedShots.find((s: any) => s.shot_id === item.shot_id);
+            if (!shotData) throw new Error('Shot data not found');
+            const finalPrompt = buildFinalPrompt({ basePrompt: shotData.image_prompt || '', characterAnchor: character_anchor, style, referencePolicy: shotData.reference_policy || 'anchor' });
+            const result = await callReplicateImage({ prompt: finalPrompt, model: replicatePath, aspectRatio: aspect_ratio, seed: shotData.seed_hint ?? null });
+            return { image_id: crypto.randomUUID(), image_url: result.url };
+        };
+
+        const job = createBatchJob({
+            jobId, projectId: project_id, userId: '', concurrency: Math.min(concurrency, 3), executor,
+            items: sortedShots.map((s: any) => ({ shotId: s.shot_id, shotNumber: s.shot_number, sceneNumber: s.scene_number })),
+        });
+
+        // Async credit finalization
+        if (!isAdmin) {
+            (async () => {
+                for (let a = 0; a < 600; a++) {
+                    await new Promise(r => setTimeout(r, 3000));
+                    const st = getBatchJobStatus(jobId);
+                    if (!st) break;
+                    if (['completed', 'failed', 'cancelled'].includes(st.job.status)) {
+                        const notOk = st.job.total - st.job.succeeded;
+                        if (notOk > 0) { try { await supabaseUser.rpc('refund_reserve', { amount: notOk * costPerImage, ref_type: 'batch-image-partial', ref_id: batchRef }); } catch(e) {} }
+                        try { await supabaseUser.rpc('finalize_reserve', { ref_type: 'batch-image', ref_id: batchRef }); } catch(e) {}
+                        break;
+                    }
+                }
+            })().catch(e => console.error('[Batch] Credit finalization error:', e));
+        }
+
+        res.json({ job_id: jobId, status: job.status, total: job.total, cost_per_image: costPerImage, total_cost: totalCost });
+    } catch (error: any) {
+        console.error('[Batch GenImages] Error:', error.message);
+        res.status(500).json({ error: error.message || 'Failed to start batch job' });
+    }
+});
+
+// ───────────────────────────────────────────────────────────────
+// POST /api/batch/gen-images/continue — Continue generating next batch
+// ───────────────────────────────────────────────────────────────
+app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
+    try {
+        const { project_id, shots, shots_with_images = [], count = 9, strategy = 'strict', model = 'flux', aspect_ratio = '16:9', style = 'none', character_anchor = '', concurrency = 2 } = req.body;
+        if (!project_id) return res.status(400).json({ error: 'Missing project_id' });
+        if (!shots?.length) return res.status(400).json({ error: 'Missing or empty shots array' });
+
+        const authHeader = req.headers.authorization;
+        if (!authHeader) return res.status(401).json({ error: 'Missing Authorization header' });
+
+        const supabaseUser = getUserClient(authHeader);
+        const isAdmin = await checkIsAdmin(supabaseUser);
+
+        const sortedAll = [...shots].sort((a: any, b: any) => (a.scene_number - b.scene_number) || (a.shot_number - b.shot_number));
+        const hasImageSet = new Set(shots_with_images as string[]);
+
+        let nextBatch: typeof sortedAll;
+        if (strategy === 'strict') {
+            const firstMissingIdx = sortedAll.findIndex((s: any) => !hasImageSet.has(s.shot_id));
+            if (firstMissingIdx < 0) return res.json({ job_id: null, all_done: true, message: '所有镜头已有图片', remaining_count: 0 });
+            nextBatch = [];
+            for (let i = firstMissingIdx; i < sortedAll.length && nextBatch.length < count; i++) {
+                if (!hasImageSet.has(sortedAll[i].shot_id)) nextBatch.push(sortedAll[i]);
+            }
+        } else {
+            let lastSuccessIdx = -1;
+            for (let i = sortedAll.length - 1; i >= 0; i--) {
+                if (hasImageSet.has(sortedAll[i].shot_id)) { lastSuccessIdx = i; break; }
+            }
+            nextBatch = [];
+            for (let i = lastSuccessIdx + 1; i < sortedAll.length && nextBatch.length < count; i++) {
+                if (!hasImageSet.has(sortedAll[i].shot_id)) nextBatch.push(sortedAll[i]);
+            }
+        }
+
+        if (nextBatch.length === 0) return res.json({ job_id: null, all_done: true, message: '所有镜头已有图片', remaining_count: 0 });
+
+        const totalMissing = sortedAll.filter((s: any) => !hasImageSet.has(s.shot_id)).length;
+        const remainingAfter = totalMissing - nextBatch.length;
+        const replicatePath = (REPLICATE_MODEL_PATHS as any)[model] || REPLICATE_MODEL_PATHS['flux'];
+        const costPerImage = (IMAGE_MODEL_COSTS as any)[model] ?? 6;
+        const totalCost = costPerImage * nextBatch.length;
+
+        const batchRef = `batch-continue:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+        if (!isAdmin) {
+            const { data: reserved, error: reserveErr } = await supabaseUser.rpc('reserve_credits', { amount: totalCost, ref_type: 'batch-image-continue', ref_id: batchRef });
+            if (reserveErr) return res.status(500).json({ error: 'Credit verification failed' });
+            if (!reserved) return res.status(402).json({ error: 'Insufficient credits', code: 'INSUFFICIENT_CREDITS', needed: totalCost });
+        }
+
+        const jobId = crypto.randomUUID();
+        const executor: TaskExecutor = async (item) => {
+            const shotData = nextBatch.find((s: any) => s.shot_id === item.shot_id);
+            if (!shotData) throw new Error('Shot data not found');
+            const finalPrompt = buildFinalPrompt({ basePrompt: shotData.image_prompt || '', characterAnchor: character_anchor, style, referencePolicy: shotData.reference_policy || 'anchor' });
+            const result = await callReplicateImage({ prompt: finalPrompt, model: replicatePath, aspectRatio: aspect_ratio, seed: shotData.seed_hint ?? null });
+            return { image_id: crypto.randomUUID(), image_url: result.url };
+        };
+
+        const job = createBatchJob({
+            jobId, projectId: project_id, userId: '', concurrency: Math.min(concurrency, 3), executor,
+            items: nextBatch.map((s: any) => ({ shotId: s.shot_id, shotNumber: s.shot_number, sceneNumber: s.scene_number })),
+        });
+
+        const jobState = getBatchJobStatus(jobId);
+        if (jobState) {
+            const raw = batchJobs.get(jobId);
+            if (raw) {
+                raw.job.type = 'gen_images_continue'; raw.job.strategy = strategy;
+                raw.job.range_start_scene = nextBatch[0].scene_number; raw.job.range_start_shot = nextBatch[0].shot_number;
+                raw.job.range_end_scene = nextBatch[nextBatch.length - 1].scene_number; raw.job.range_end_shot = nextBatch[nextBatch.length - 1].shot_number;
+                raw.job.remaining_count = remainingAfter; raw.job.all_done = remainingAfter === 0;
+            }
+        }
+
+        if (!isAdmin) {
+            (async () => {
+                for (let a = 0; a < 600; a++) {
+                    await new Promise(r => setTimeout(r, 3000));
+                    const st = getBatchJobStatus(jobId);
+                    if (!st) break;
+                    if (['completed', 'failed', 'cancelled'].includes(st.job.status)) {
+                        const notOk = st.job.total - st.job.succeeded;
+                        if (notOk > 0) { try { await supabaseUser.rpc('refund_reserve', { amount: notOk * costPerImage, ref_type: 'batch-continue-partial', ref_id: batchRef }); } catch(e) {} }
+                        try { await supabaseUser.rpc('finalize_reserve', { ref_type: 'batch-image-continue', ref_id: batchRef }); } catch(e) {}
+                        break;
+                    }
+                }
+            })().catch(e => console.error('[Batch Continue] Credit error:', e));
+        }
+
+        const rangeLabel = `S${nextBatch[0].scene_number}.${nextBatch[0].shot_number} → S${nextBatch[nextBatch.length - 1].scene_number}.${nextBatch[nextBatch.length - 1].shot_number}`;
+        res.json({ job_id: jobId, status: job.status, total: job.total, cost_per_image: costPerImage, total_cost: totalCost, range_label: rangeLabel, remaining_count: remainingAfter, all_done: remainingAfter === 0, strategy });
+    } catch (error: any) {
+        console.error('[Batch Continue] Error:', error.message);
+        res.status(500).json({ error: error.message || 'Failed to start continue batch job' });
+    }
+});
+
+// ───────────────────────────────────────────────────────────────
+// GET /api/batch/:jobId — Get batch job status
+// ───────────────────────────────────────────────────────────────
+app.get('/api/batch/:jobId', async (req: any, res: any) => {
+    try {
+        const status = getBatchJobStatus(req.params.jobId);
+        if (!status) return res.status(404).json({ error: 'Job not found' });
+        res.json(status);
+    } catch (error: any) { res.status(500).json({ error: error.message }); }
+});
+
+// ───────────────────────────────────────────────────────────────
+// POST /api/batch/:jobId/cancel — Cancel a running batch job
+// ───────────────────────────────────────────────────────────────
+app.post('/api/batch/:jobId/cancel', async (req: any, res: any) => {
+    try {
+        const ok = cancelBatchJob(req.params.jobId);
+        if (!ok) return res.status(400).json({ error: 'Job cannot be cancelled' });
+        res.json({ ok: true, message: 'Cancellation requested' });
+    } catch (error: any) { res.status(500).json({ error: error.message }); }
+});
+
+// ───────────────────────────────────────────────────────────────
+// POST /api/batch/:jobId/retry — Retry failed items
+// ───────────────────────────────────────────────────────────────
+app.post('/api/batch/:jobId/retry', async (req: any, res: any) => {
+    try {
+        const { model = 'flux', aspect_ratio = '16:9', style = 'none', character_anchor = '', shots = [] } = req.body;
+        const replicatePath = (REPLICATE_MODEL_PATHS as any)[model] || REPLICATE_MODEL_PATHS['flux'];
+        const executor: TaskExecutor = async (item) => {
+            const shotData = shots.find((s: any) => s.shot_id === item.shot_id);
+            const finalPrompt = buildFinalPrompt({ basePrompt: shotData?.image_prompt || '', characterAnchor: character_anchor, style, referencePolicy: shotData?.reference_policy || 'anchor' });
+            const result = await callReplicateImage({ prompt: finalPrompt, model: replicatePath, aspectRatio: aspect_ratio, seed: shotData?.seed_hint ?? null });
+            return { image_id: crypto.randomUUID(), image_url: result.url };
+        };
+        const ok = retryFailedBatchItems(req.params.jobId, executor);
+        if (!ok) return res.status(400).json({ error: 'No failed items to retry or job is still running' });
+        res.json({ ok: true, message: 'Retry started' });
+    } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
 // Billing checkout
