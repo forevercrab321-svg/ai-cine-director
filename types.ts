@@ -1,4 +1,202 @@
 
+// ═══════════════════════════════════════════════════════════════
+// Shot System — Enhanced shot-level types for production-ready storyboards
+// ═══════════════════════════════════════════════════════════════
+
+export type ShotStatus = 'draft' | 'generated' | 'locked';
+export type CameraType = 'wide' | 'medium' | 'close' | 'ecu' | 'over-shoulder' | 'pov' | 'aerial' | 'two-shot';
+export type CameraMovement = 'static' | 'push-in' | 'pull-out' | 'pan-left' | 'pan-right' | 'tilt-up' | 'tilt-down' | 'dolly' | 'tracking' | 'crane' | 'handheld' | 'steadicam' | 'whip-pan' | 'zoom';
+export type TimeOfDay = 'dawn' | 'morning' | 'noon' | 'afternoon' | 'golden-hour' | 'dusk' | 'night' | 'blue-hour';
+export type LocationType = 'INT' | 'EXT' | 'INT/EXT';
+
+/** Full shot specification for a single cinematic shot */
+export interface Shot {
+  shot_id: string;               // Stable UUID — never changes
+  scene_id: string;              // Parent scene UUID
+  scene_title: string;           // Human-readable scene name
+  shot_number: number;           // Ordinal within scene (1-based)
+  duration_sec: number;          // Estimated duration in seconds
+
+  // Location & Time
+  location_type: LocationType;
+  location: string;              // e.g. "Rooftop garden, Tokyo"
+  time_of_day: TimeOfDay;
+
+  // Characters & Action
+  characters: string[];          // Names of characters in shot
+  action: string;                // What happens in this shot
+  dialogue: string;              // Dialogue line (can be empty)
+
+  // Camera
+  camera: CameraType;
+  lens: string;                  // e.g. "35mm anamorphic", "85mm f/1.4"
+  movement: CameraMovement;
+  composition: string;           // Rule of thirds, leading lines, etc.
+
+  // Visual
+  lighting: string;              // Key light, fill, practical, color temp
+  art_direction: string;         // Set dressing, props, wardrobe notes
+  mood: string;                  // Emotional keywords
+  sfx_vfx: string;              // Special effects notes
+  audio_notes: string;           // Sound design, music cues
+  continuity_notes: string;      // Continuity with adjacent shots
+
+  // Image Generation
+  image_prompt: string;          // Full prompt for image generation
+  negative_prompt: string;       // Negative prompt (optional)
+  seed_hint: number | null;      // Seed for consistency (optional)
+  reference_policy: 'none' | 'anchor' | 'first-frame' | 'previous-frame';
+
+  // State
+  status: ShotStatus;
+  locked_fields: string[];       // Field names that AI must not modify
+  version: number;               // Optimistic lock version counter
+  updated_at: string;            // ISO timestamp
+
+  // Generated assets (populated after generation)
+  image_url?: string;
+  video_url?: string;
+
+  // Shot-level images (in-memory, not persisted in Shot row)
+  images?: ShotImage[];
+  primary_image_id?: string;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Shot Image System — Images linked 1:N to shots
+// ═══════════════════════════════════════════════════════════════
+
+export type ImageStatus = 'pending' | 'generating' | 'succeeded' | 'failed';
+export type ImageEditMode = 'reroll' | 'reference_edit' | 'attribute_edit';
+
+/** A generated image belonging to a shot */
+export interface ShotImage {
+  id: string;                    // UUID
+  shot_id: string;               // Parent shot
+  project_id?: string;           // Parent project (for fast queries)
+  url: string;                   // CDN / Replicate output URL
+  thumbnail_url?: string;        // Optional thumbnail
+  is_primary: boolean;           // Only one per shot
+  status: ImageStatus;
+  label?: string;                // User-friendly label (e.g. "Take 3")
+  created_at: string;            // ISO timestamp
+
+  // Generation parameters (audit trail)
+  generation?: ImageGeneration;
+}
+
+/** Full record of a single image generation attempt */
+export interface ImageGeneration {
+  id: string;                    // UUID
+  image_id?: string;             // Resulting image (null if failed)
+  shot_id: string;
+  project_id?: string;
+
+  // Prompt
+  prompt: string;                // Full prompt sent to model
+  negative_prompt: string;
+  delta_instruction?: string;    // User's edit instruction (for edits)
+
+  // Model config
+  model: ImageModel | string;    // e.g. 'flux', 'flux_schnell'
+  aspect_ratio: AspectRatio;
+  style: VideoStyle;
+  seed: number | null;
+
+  // Consistency
+  anchor_refs: string[];         // Character anchor text(s)
+  reference_image_url?: string;  // Base image for reference edits
+  reference_policy: 'none' | 'anchor' | 'first-frame' | 'previous-frame';
+  edit_mode?: ImageEditMode;     // null for fresh gen, else edit type
+
+  // Result
+  status: ImageStatus;
+  output_url?: string;
+  error?: string;
+  replicate_prediction_id?: string;
+
+  // Timing
+  created_at: string;
+  completed_at?: string;
+  duration_ms?: number;
+}
+
+/** Request to generate an image for a shot */
+export interface ShotImageGenerateRequest {
+  shot_id: string;
+  prompt?: string;               // Override shot.image_prompt
+  negative_prompt?: string;
+  delta_instruction?: string;    // Append instruction
+  model?: ImageModel;
+  aspect_ratio?: AspectRatio;
+  style?: VideoStyle;
+  seed?: number | null;
+  character_anchor?: string;
+  reference_policy?: 'none' | 'anchor' | 'first-frame' | 'previous-frame';
+}
+
+/** Request to edit an existing image */
+export interface ShotImageEditRequest {
+  image_id: string;
+  edit_mode: ImageEditMode;
+  delta_instruction: string;     // "Change lighting to golden hour"
+  reference_image_url?: string;  // For reference_edit mode
+  locked_attributes?: string[];  // e.g. ['character', 'composition']
+  model?: ImageModel;
+  seed?: number | null;
+}
+
+/** A single revision record for a shot */
+export interface ShotRevision {
+  revision_id: string;
+  shot_id: string;
+  version: number;
+  snapshot: Partial<Shot>;       // Full shot state at this revision
+  change_source: 'user' | 'ai-rewrite';
+  change_description: string;
+  changed_fields: string[];
+  created_at: string;
+}
+
+/** Enhanced Scene that contains shots */
+export interface EnhancedScene {
+  scene_id: string;
+  scene_number: number;
+  scene_title: string;
+  location: string;
+  time_of_day: TimeOfDay;
+  synopsis: string;              // Brief scene description
+  shots: Shot[];
+}
+
+/** Enhanced project with scenes containing shots */
+export interface EnhancedProject {
+  id?: string;
+  project_title: string;
+  visual_style: string;
+  character_anchor: string;
+  identity_strength?: number;
+  scenes: EnhancedScene[];
+}
+
+/** Request to AI-rewrite specific fields of a shot */
+export interface ShotRewriteRequest {
+  shot_id: string;
+  fields_to_rewrite: string[];   // Which fields to regenerate
+  user_instruction: string;      // "Make it more dramatic", etc.
+  locked_fields: string[];       // Fields AI must NOT touch
+  current_shot: Partial<Shot>;   // Current shot state for context
+  project_context: {
+    visual_style: string;
+    character_anchor: string;
+    scene_title: string;
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Legacy types (kept for backward compatibility)
+// ═══════════════════════════════════════════════════════════════
+
 export interface Scene {
   id?: string; // Database ID
   scene_number: number;
@@ -285,3 +483,51 @@ export const STRIPE_PRICES = {
 };
 
 export const STRIPE_PUBLISHABLE_KEY = 'pk_test_mock_key';
+
+// ═══════════════════════════════════════════════════════════════
+// Batch Job System — Queued batch image generation
+// ═══════════════════════════════════════════════════════════════
+
+export type BatchJobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type BatchItemStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+export type ContinueStrategy = 'strict' | 'skip_failed';
+
+/** A batch job (e.g. "generate images for first 9 shots") */
+export interface BatchJob {
+  id: string;                    // UUID
+  project_id: string;
+  user_id?: string;
+  type: 'gen_images' | 'gen_images_continue';  // Extensible for future batch types
+  total: number;                 // Total items
+  done: number;                  // Completed (succeeded + failed)
+  succeeded: number;
+  failed: number;
+  status: BatchJobStatus;
+  created_at: string;
+  updated_at: string;
+  concurrency: number;           // Max concurrent tasks (e.g. 2)
+
+  // Continue-generation range tracking
+  range_start_scene?: number;    // First scene in this batch
+  range_start_shot?: number;     // First shot number in this batch
+  range_end_scene?: number;      // Last scene in this batch
+  range_end_shot?: number;       // Last shot number in this batch
+  strategy?: ContinueStrategy;   // Strategy used for this batch
+  all_done?: boolean;            // True when all project shots have images
+  remaining_count?: number;      // How many shots still need images after this batch
+}
+
+/** A single item within a batch job */
+export interface BatchJobItem {
+  id: string;                    // UUID
+  job_id: string;
+  shot_id: string;
+  shot_number: number;           // For display ordering
+  scene_number: number;
+  status: BatchItemStatus;
+  image_id?: string;             // Resulting image ID (on success)
+  image_url?: string;            // Resulting image URL (on success)
+  error?: string;                // Error message (on failure)
+  started_at?: string;
+  completed_at?: string;
+}

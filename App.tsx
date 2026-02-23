@@ -7,6 +7,7 @@ import Header from './components/Header';
 import SettingsModal from './components/SettingsModal';
 import PricingModal from './components/PricingModal';
 import VideoGenerator from './components/VideoGenerator';
+import ShotListView from './components/ShotListView';
 import AuthPage from './components/AuthPage';
 import { LoaderIcon } from './components/IconComponents';
 import { t } from './i18n';
@@ -30,7 +31,7 @@ const MainLayout: React.FC = () => {
     hasEnoughCredits
   } = useAppContext();
 
-  const [workflowStage, setWorkflowStage] = useState<'input' | 'scripting' | 'production'>('input');
+  const [workflowStage, setWorkflowStage] = useState<'input' | 'scripting' | 'shots' | 'production'>('input');
   const [storyIdea, setStoryIdea] = useState('A cyberpunk cat delivering pizza in Neo-Tokyo');
   const [project, setProject] = useState<StoryboardProject | null>(null);
   const [loading, setLoading] = useState(false);
@@ -195,6 +196,9 @@ const MainLayout: React.FC = () => {
               <h2 className="text-2xl font-bold text-white">{t(settings.lang, 'writersRoom')}</h2>
               <div className="flex gap-3">
                 <button onClick={() => setWorkflowStage('input')} className="text-slate-400 hover:text-white px-4 py-2 text-sm">{t(settings.lang, 'backToConcept')}</button>
+                <button onClick={() => setWorkflowStage('shots')} className="px-6 py-2 bg-amber-600 hover:bg-amber-500 rounded-lg text-white font-bold shadow-lg shadow-amber-500/20">
+                  🎬 拆分镜头 &rarr;
+                </button>
                 <button onClick={handleGoToProduction} className="px-6 py-2 bg-green-600 hover:bg-green-500 rounded-lg text-white font-bold shadow-lg shadow-green-500/20">
                   进入制片环节 &rarr;
                 </button>
@@ -233,6 +237,13 @@ const MainLayout: React.FC = () => {
               </div>
             ))}
           </div>
+        )}
+
+        {workflowStage === 'shots' && project && (
+          <ShotListView
+            project={project}
+            onBack={() => setWorkflowStage('scripting')}
+          />
         )}
 
         {workflowStage === 'production' && project && (

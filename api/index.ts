@@ -216,7 +216,7 @@ app.post('/api/auth/send-otp', async (req: any, res: any) => {
 
         const actionLink = linkData.properties?.action_link || '';
         const emailOtp = (linkData as any).properties?.email_otp
-            || linkData.properties?.verification_token
+            || (linkData.properties as any)?.verification_token
             || '';
 
         console.log('[Send OTP] Generated for:', email, '| has token:', !!emailOtp, '| has link:', !!actionLink);
@@ -238,27 +238,45 @@ app.post('/api/auth/send-otp', async (req: any, res: any) => {
             </div>
         `;
 
-        const resendResp = await fetch('https://api.resend.com/emails', {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${resendKey}`,
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                from: 'AI Cine Director <noreply@aidirector.business>',
-                to: email,
-                subject: 'Your Login Code — CINE-DIRECTOR AI',
-                html: emailHtml,
-            }),
-        });
+        // Try custom domain first, fallback to onboarding@resend.dev
+        const senders = [
+            'AI Cine Director <noreply@aidirector.business>',
+            'AI Cine Director <onboarding@resend.dev>',
+        ];
+        let resendData: any = null;
+        let lastErr = '';
 
-        if (!resendResp.ok) {
-            const errBody = await resendResp.text();
-            console.error('[Send OTP] Resend error:', resendResp.status, errBody);
-            return res.status(500).json({ error: `Email delivery failed: ${errBody}` });
+        for (const fromAddr of senders) {
+            const resendResp = await fetch('https://api.resend.com/emails', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${resendKey}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    from: fromAddr,
+                    to: email,
+                    subject: 'Your Login Code — CINE-DIRECTOR AI',
+                    html: emailHtml,
+                }),
+            });
+
+            if (resendResp.ok) {
+                resendData = await resendResp.json();
+                console.log('[Send OTP] Email sent via Resend:', resendData, '| from:', fromAddr);
+                break;
+            }
+
+            lastErr = await resendResp.text();
+            console.warn(`[Send OTP] Resend failed with sender "${fromAddr}":`, resendResp.status, lastErr);
+            if (resendResp.status === 403) continue;
+            break;
         }
 
-        console.log('[Send OTP] Email sent via Resend to:', email);
+        if (!resendData) {
+            console.error('[Send OTP] All Resend senders failed. Last error:', lastErr);
+            return res.status(500).json({ error: '验证邮件发送失败，请稍后重试' });
+        }
 
         // Ensure profile
         if (userId) {

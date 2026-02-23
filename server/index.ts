@@ -8,6 +8,9 @@ import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
 import { geminiRouter } from './routes/gemini';
 import { replicateRouter } from './routes/replicate';
+import { shotsRouter } from './routes/shots';
+import { shotImagesRouter } from './routes/shotImages';
+import { batchRouter } from './routes/batch';
 
 // 加载 .env.local
 dotenv.config({ path: '.env.local' });
@@ -106,7 +109,7 @@ app.post('/api/auth/send-otp', async (req: any, res: any) => {
 
         const otp = linkData.properties?.hashed_token
             ? undefined
-            : linkData.properties?.verification_token;
+            : (linkData.properties as any)?.verification_token;
 
         // Extract OTP from action_link query param as fallback
         const actionLink = linkData.properties?.action_link || '';
@@ -138,28 +141,47 @@ app.post('/api/auth/send-otp', async (req: any, res: any) => {
             </div>
         `;
 
-        const resendResp = await fetch('https://api.resend.com/emails', {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${resendKey}`,
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                from: 'AI Cine Director <noreply@aidirector.business>',
-                to: email,
-                subject: 'Your Login Code — CINE-DIRECTOR AI',
-                html: emailHtml,
-            }),
-        });
+        // Try custom domain first, fallback to onboarding@resend.dev
+        const senders = [
+            'AI Cine Director <noreply@aidirector.business>',
+            'AI Cine Director <onboarding@resend.dev>',
+        ];
+        let resendData: any = null;
+        let lastErr = '';
 
-        if (!resendResp.ok) {
-            const errBody = await resendResp.text();
-            console.error('[Send OTP] Resend API error:', resendResp.status, errBody);
-            return res.status(500).json({ error: 'Failed to send email via Resend' });
+        for (const fromAddr of senders) {
+            const resendResp = await fetch('https://api.resend.com/emails', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${resendKey}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    from: fromAddr,
+                    to: email,
+                    subject: 'Your Login Code — CINE-DIRECTOR AI',
+                    html: emailHtml,
+                }),
+            });
+
+            if (resendResp.ok) {
+                resendData = await resendResp.json();
+                console.log('[Send OTP] Email sent via Resend:', resendData, '| from:', fromAddr);
+                break;
+            }
+
+            lastErr = await resendResp.text();
+            console.warn(`[Send OTP] Resend failed with sender "${fromAddr}":`, resendResp.status, lastErr);
+            // If 403 domain-not-verified, try fallback sender
+            if (resendResp.status === 403) continue;
+            // Other errors — don't retry
+            break;
         }
 
-        const resendData = await resendResp.json();
-        console.log('[Send OTP] Email sent via Resend:', resendData);
+        if (!resendData) {
+            console.error('[Send OTP] All Resend senders failed. Last error:', lastErr);
+            return res.status(500).json({ error: '验证邮件发送失败，请稍后重试' });
+        }
 
         // Ensure profile exists
         if (userId) {
@@ -275,6 +297,9 @@ app.post('/api/auth/test-email', async (req: any, res: any) => {
 // 路由
 app.use('/api/gemini', geminiRouter);
 app.use('/api/replicate', replicateRouter);
+app.use('/api/shots', shotsRouter);
+app.use('/api/shot-images', shotImagesRouter);
+app.use('/api/batch', batchRouter);
 
 // 健康检查
 app.get('/api/health', (_req, res) => {
