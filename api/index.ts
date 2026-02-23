@@ -5,12 +5,87 @@ import { GoogleGenAI, Type } from '@google/genai';
 import fetch from 'node-fetch';
 import { createClient } from '@supabase/supabase-js';
 import Stripe from 'stripe';
-import {
-    REPLICATE_MODEL_PATHS,
-    IMAGE_MODEL_COSTS,
-    STYLE_PRESETS,
-} from '../types';
-import type { BatchJob, BatchJobItem, BatchItemStatus } from '../types';
+
+// ═══════════════════════════════════════════════════════════════
+// INLINED TYPES FROM types.ts (Vercel cannot resolve ../types)
+// ═══════════════════════════════════════════════════════════════
+
+type VideoModel = 'wan_2_2_fast' | 'hailuo_02_fast' | 'seedance_lite' | 'kling_2_5' | 'hailuo_live' | 'google_gemini_nano_banana';
+type ImageModel = 'flux' | 'flux_schnell' | 'nano_banana';
+type BatchJobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+type BatchItemStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+
+interface BatchJob {
+  id: string;
+  project_id: string;
+  user_id?: string;
+  type: 'gen_images' | 'gen_images_continue';
+  total: number;
+  done: number;
+  succeeded: number;
+  failed: number;
+  status: BatchJobStatus;
+  created_at: string;
+  updated_at: string;
+  concurrency: number;
+  range_start_scene?: number;
+  range_start_shot?: number;
+  range_end_scene?: number;
+  range_end_shot?: number;
+  strategy?: 'strict' | 'skip_failed';
+  all_done?: boolean;
+  remaining_count?: number;
+}
+
+interface BatchJobItem {
+  id: string;
+  job_id: string;
+  shot_id: string;
+  shot_number: number;
+  scene_number: number;
+  status: BatchItemStatus;
+  image_id?: string;
+  image_url?: string;
+  error?: string;
+  started_at?: string;
+  completed_at?: string;
+}
+
+const REPLICATE_MODEL_PATHS: Record<VideoModel | ImageModel, string> = {
+  wan_2_2_fast: "wan-video/wan-2.2-i2v-fast",
+  hailuo_02_fast: "minimax/hailuo-02-fast",
+  seedance_lite: "bytedance/seedance-1-lite",
+  kling_2_5: "kwaivgi/kling-v2.5-turbo-pro",
+  hailuo_live: "minimax/video-01-live",
+  google_gemini_nano_banana: "google/gemini-nano-banana",
+  flux: "black-forest-labs/flux-1.1-pro",
+  flux_schnell: "black-forest-labs/flux-schnell",
+  nano_banana: "google/gemini-nano-banana"
+};
+
+const IMAGE_MODEL_COSTS: Record<ImageModel, number> = {
+  flux: 6,
+  flux_schnell: 1,
+  nano_banana: 2
+};
+
+interface StylePreset {
+  id: string;
+  label: string;
+  category: string;
+  promptModifier: string;
+}
+
+const STYLE_PRESETS: StylePreset[] = [
+  { id: 'chinese_3d', label: 'Chinese 3D Anime (国漫)', category: '🇨🇳 Chinese Aesthetics', promptModifier: ', 3D donghua style, Light Chaser Animation aesthetic, White Snake inspired, oriental fantasy, highly detailed 3D render, blind box texture, 8k, ethereal lighting, martial arts vibe, consistent character features' },
+  { id: 'chinese_ink', label: 'Chinese Ink Wash (水墨)', category: '🇨🇳 Chinese Aesthetics', promptModifier: ', traditional Chinese ink wash painting, shuimo style, watercolor texture, flowing ink, negative space, oriental landscape, artistic, Shanghai Animation Film Studio style, masterpiece' },
+  { id: 'pop_mart', label: 'Pop Mart 3D (盲盒)', category: '🇨🇳 Chinese Aesthetics', promptModifier: ', Pop Mart style, blind box toy, C4D render, clay material, cute proportions, studio lighting, clean background, 3D character design, plastic texture' },
+  { id: 'realism', label: 'Hyper Realism (4K ARRI)', category: '🎥 Cinema & Realism', promptModifier: ', photorealistic, shot on ARRI Alexa, 35mm lens, cinematic lighting, depth of field, hyper-realistic, live action footage, raytracing, 8k, raw photo' },
+  { id: 'blockbuster_3d', label: 'Hollywood Blockbuster', category: '🎥 Cinema & Realism', promptModifier: ', hollywood blockbuster style, Unreal Engine 5 render, IMAX quality, cinematic composition, dramatic lighting, highly detailed VFX, transformers style, sci-fi masterpiece' },
+  { id: 'cyberpunk', label: 'Cinematic Cyberpunk', category: '🎥 Cinema & Realism', promptModifier: ', futuristic sci-fi masterpiece, neon lights, high tech, cybernetic atmosphere, blade runner style, night city, volumetric fog, cinematic' },
+  { id: 'ghibli', label: 'Studio Ghibli (吉卜力)', category: '🎨 Art & Anime', promptModifier: ', Studio Ghibli style, Hayao Miyazaki, hand drawn anime, cel shading, vibrant colors, picturesque scenery, 2D animation, cinematic' },
+  { id: 'shinkai', label: 'Makoto Shinkai (新海诚)', category: '🎨 Art & Anime', promptModifier: ', Makoto Shinkai style, Your Name style, vibrant vivid colors, highly detailed background art, lens flare, emotional lighting, anime masterpiece, 8k wallpaper' }
+];
 
 // --- Types ---
 interface ReplicateResponse {
