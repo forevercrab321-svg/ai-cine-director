@@ -78,11 +78,13 @@ app.post('/api/auth/ensure-user', async (req: any, res: any) => {
         });
 
         if (error && !String(error.message || '').includes('already registered')) {
+            console.error('[Auth Ensure User] Failed:', error);
             return res.status(500).json({ error: error.message || 'Failed to ensure user' });
         }
 
         return res.json({ ok: true });
     } catch (err: any) {
+        console.error('[Auth Ensure User] Exception:', err);
         return res.status(500).json({ error: err.message || 'Failed to ensure user' });
     }
 });
@@ -101,11 +103,13 @@ app.post('/api/auth/generate-link', async (req: any, res: any) => {
         });
 
         if (error || !data?.properties?.action_link) {
+            if (error) console.error('[Auth Generate Link] Failed:', error);
             return res.status(500).json({ error: error?.message || 'Failed to generate magic link' });
         }
 
         return res.json({ actionLink: data.properties.action_link });
     } catch (err: any) {
+        console.error('[Auth Generate Link] Exception:', err);
         return res.status(500).json({ error: err.message || 'Failed to generate magic link' });
     }
 });
@@ -545,7 +549,19 @@ app.post('/api/billing/webhook', async (req: any, res: any) => {
 
 // Health
 app.get('/api/health', (_req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString(), build: 'ledger-v2-profiles-reserve' });
+    const supabaseUrl = (process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim();
+    const supabaseService = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+    const supabaseAnon = (process.env.VITE_SUPABASE_ANON_KEY || '').trim();
+    res.json({
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        build: 'ledger-v2-profiles-reserve',
+        config: {
+            hasSupabaseUrl: !!supabaseUrl,
+            hasSupabaseAnon: !!supabaseAnon,
+            hasSupabaseServiceRole: !!supabaseService,
+        }
+    });
 });
 
 export default app;
