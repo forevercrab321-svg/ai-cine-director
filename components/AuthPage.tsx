@@ -3,6 +3,7 @@ import { SparklesIcon, LoaderIcon } from './IconComponents';
 import { Language } from '../types';
 import { t } from '../i18n';
 import { supabase } from '../lib/supabaseClient';
+import { isDeveloperEmail } from '../context/AppContext';
 
 interface AuthPageProps {
   lang: Language;
@@ -17,6 +18,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
   // Contact State
   const [email, setEmail] = useState('');
   const [validationError, setValidationError] = useState('');
+  const [isDeveloper, setIsDeveloper] = useState(false);
 
   // OTP State
   const [otp, setOtp] = useState('');
@@ -53,6 +55,13 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
     if (!isEmail) {
       setValidationError(t(lang, 'invalidContact') + " (请输入有效邮箱)");
       return;
+    }
+
+    // ★ AUTO-DETECT DEVELOPER
+    const devStatus = isDeveloperEmail(email);
+    setIsDeveloper(devStatus);
+    if (devStatus) {
+      console.log(`[AUTH] Developer email detected: ${email}`);
     }
 
     handleAction(async () => {
@@ -144,7 +153,16 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
           <h1 className="text-3xl font-extrabold text-white tracking-tighter mb-1">CINE-DIRECTOR AI</h1>
           <p className="text-slate-500 text-[10px] tracking-[0.3em] uppercase font-bold">Visionary Production Suite</p>
 
-          {/* Dev Bypass Button - Only for Local Dev */}
+          {/* ★ DEVELOPER MODE INDICATOR */}
+          {isDeveloper && step === 'email' && (
+            <div className="mt-6 px-3 py-1.5 bg-emerald-500/20 border border-emerald-500/50 rounded-full animate-pulse">
+              <span className="text-[10px] font-bold text-emerald-400 tracking-widest uppercase flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
+                开发者模式
+              </span>
+            </div>
+          )}
+
           {/* Dev Bypass Removed for Strict Auth */}
         </div>
 
@@ -193,6 +211,15 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
         {/* OTP 验证步骤 */}
         {step === 'otp' && (
           <div className="w-full space-y-6 animate-in slide-in-from-right-8 fade-in duration-300">
+            {/* ★ DEVELOPER MODE INDICATOR */}
+            {isDeveloper && (
+              <div className="px-4 py-2.5 bg-emerald-500/15 border border-emerald-500/50 rounded-2xl">
+                <p className="text-[11px] font-bold text-emerald-400 tracking-widest uppercase flex items-center gap-2">
+                  <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
+                  开发者账户 - 完整权限
+                </p>
+              </div>
+            )}
             <form onSubmit={handleVerifyOtp} className="space-y-4">
               <div>
                 <p className="text-xs text-slate-500 mb-4 text-center flex items-center justify-center gap-2">

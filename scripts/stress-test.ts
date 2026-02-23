@@ -4,9 +4,9 @@ dotenv.config({ path: '.env.local' });
 import fetch from 'node-fetch';
 import { setTimeout as delay } from 'timers/promises';
 
-const SUPABASE_URL = process.env.SUPABASE_URL!;
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY!;
-const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE!;
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL!;
+const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY!;
+const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE!;
 const API_BASE = 'http://localhost:3002';
 
 async function createTestUser() {
@@ -112,10 +112,10 @@ console.log('Starting lightweight stress test (6 requests total)');
   }).then(r => ({ status: r.status })).catch(e => ({ error: e.message })));
 
   const seqResults = await Promise.all(calls);
-  console.log('Sequential call results:', seqResults.map(s => s.status || s.error));
+  console.log('Sequential call results:', seqResults.map(s => 'status' in s ? s.status : s.error));
 
   const concResults = await Promise.all(concurrent);
-  console.log('Concurrent call results:', concResults.map(s => s.status || s.error));
+  console.log('Concurrent call results:', concResults.map(s => 'status' in s ? s.status : s.error));
 
   const balanceRes = await retryFetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}`, {
     headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}` }

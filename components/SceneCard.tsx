@@ -125,9 +125,9 @@ const SceneCard: React.FC<SceneCardProps> = ({
   const videoCost = videoBaseCost;
   const imgCost = imageModel === 'flux_schnell' ? CREDIT_COSTS.IMAGE_FLUX_SCHNELL : CREDIT_COSTS.IMAGE_FLUX;
 
-  // ★ Credit guard for individual buttons
-  const canAffordImage = userState.isAdmin || hasEnoughCredits(imgCost);
-  const canAffordVideo = userState.isAdmin || hasEnoughCredits(videoCost);
+  // ★ Credit guard for individual buttons (pure check, no side effects during render)
+  const canAffordImage = userState.isAdmin || userState.balance >= imgCost;
+  const canAffordVideo = userState.isAdmin || userState.balance >= videoCost;
 
   const handleGenerateImage = async () => {
     if (!isAuthenticated) {

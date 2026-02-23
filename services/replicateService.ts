@@ -2,7 +2,7 @@
  * Replicate Service - Client Proxy
  * Forwards requests to backend /api/replicate which handles Auth & Credits
  */
-import { VideoStyle, ImageModel, AspectRatio, GenerationMode, VideoQuality, VideoDuration, VideoFps, VideoResolution, VideoModel } from '../types';
+import { VideoStyle, ImageModel, AspectRatio, GenerationMode, VideoQuality, VideoDuration, VideoFps, VideoResolution, VideoModel, REPLICATE_MODEL_PATHS } from '../types';
 import { supabase } from '../lib/supabaseClient';
 
 export interface ReplicateResponse {
@@ -33,19 +33,8 @@ const getConfig = () => {
   return { useMockMode: parsed.useMockMode ?? false };
 };
 
-const REPLICATE_MODEL_MAP: Record<string, string> = {
-  // Image models
-  flux: "black-forest-labs/flux-1.1-pro",
-  flux_schnell: "black-forest-labs/flux-schnell",
-  nano_banana: "google/gemini-nano-banana", // Placeholder ID for Image Model
-  // Video models
-  wan_2_2_fast: "wan-video/wan-2.2-i2v-fast",
-  hailuo_02_fast: "minimax/hailuo-02-fast",
-  seedance_lite: "bytedance/seedance-1-lite",
-  kling_2_5: "kwaivgi/kling-v2.5-turbo-pro",
-  hailuo_live: "minimax/video-01-live",
-  google_gemini_nano_banana: "google/gemini-nano-banana", // Placeholder ID - user can update or system handles
-};
+// 使用types.ts中的统一模型路径映射
+const REPLICATE_MODEL_MAP = REPLICATE_MODEL_PATHS;
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 

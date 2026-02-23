@@ -4,10 +4,14 @@
  */
 import { Router } from 'express';
 import { createClient } from '@supabase/supabase-js';
+import { getCostForReplicatePath } from '../../types';
 
 export const replicateRouter = Router();
 
 const REPLICATE_API_BASE = 'https://api.replicate.com/v1';
+
+// ★ DEVELOPER EMAILS - admin bypass list (must match AppContext.tsx)
+const DEVELOPER_EMAILS = new Set(['forevercrab321@gmail.com']);
 
 const getToken = () => {
     const token = process.env.REPLICATE_API_TOKEN;
@@ -15,15 +19,31 @@ const getToken = () => {
     return token;
 };
 
-const BACKEND_COST_MAP: Record<string, number> = {
-    'wan-video/wan-2.2-i2v-fast': 8,
-    'minimax/hailuo-02-fast': 18,
-    'bytedance/seedance-1-lite': 28,
-    'kwaivgi/kling-v2.5-turbo-pro': 53,
-    'minimax/video-01-live': 75,
-    'black-forest-labs/flux-1.1-pro': 6,
-    'black-forest-labs/flux-schnell': 1,
-};
+// ★ Helper: check if user is admin (by email or db flag)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function checkIsAdmin(supabaseUser: any): Promise<boolean> {
+    try {
+        const { data: { user } } = await supabaseUser.auth.getUser();
+        if (!user) return false;
+
+        // Check developer email list first (fast path)
+        if (user.email && DEVELOPER_EMAILS.has(user.email.toLowerCase())) {
+            console.log(`[ADMIN CHECK] Developer email detected: ${user.email}`);
+            return true;
+        }
+
+        // Fallback: check DB is_admin flag
+        const { data: profile } = await supabaseUser
+            .from('profiles')
+            .select('is_admin')
+            .eq('id', user.id)
+            .single();
+
+        return profile != null && profile.is_admin === true;
+    } catch {
+        return false;
+    }
+}
 
 // POST /api/replicate/predict
 replicateRouter.post('/predict', async (req, res) => {
@@ -37,7 +57,7 @@ replicateRouter.post('/predict', async (req, res) => {
         return res.status(400).json({ error: 'Missing version or input' });
     }
 
-    const estimatedCost = BACKEND_COST_MAP[version] || 20;
+    const estimatedCost = getCostForReplicatePath(version);
     const jobRef = `replicate:${Date.now()}:${Math.random().toString(36).slice(2)}`;
 
     // User-context client (auth.uid() works in RPC)
@@ -47,24 +67,31 @@ replicateRouter.post('/predict', async (req, res) => {
         { global: { headers: { Authorization: authHeader } } }
     );
 
-    // 1) Reserve credits
-    const { data: reserved, error: reserveErr } = await supabaseUser.rpc('reserve_credits', {
-        amount: estimatedCost,
-        ref_type: 'replicate',
-        ref_id: jobRef
-    });
+    // ★ Check admin status — admins bypass all credit checks
+    const isAdmin = await checkIsAdmin(supabaseUser);
 
-    if (reserveErr) {
-        console.error('[Reserve Error]', reserveErr);
-        return res.status(500).json({ error: 'Reserve failed' });
-    }
-
-    if (!reserved) {
-        return res.status(402).json({
-            error: 'INSUFFICIENT_CREDITS',
-            code: 'INSUFFICIENT_CREDITS',
-            message: 'Insufficient credits'
+    if (!isAdmin) {
+        // 1) Reserve credits (normal users only)
+        const { data: reserved, error: reserveErr } = await supabaseUser.rpc('reserve_credits', {
+            amount: estimatedCost,
+            ref_type: 'replicate',
+            ref_id: jobRef
         });
+
+        if (reserveErr) {
+            console.error('[Reserve Error]', reserveErr);
+            return res.status(500).json({ error: 'Reserve failed' });
+        }
+
+        if (!reserved) {
+            return res.status(402).json({
+                error: 'INSUFFICIENT_CREDITS',
+                code: 'INSUFFICIENT_CREDITS',
+                message: 'Insufficient credits'
+            });
+        }
+    } else {
+        console.log(`[ADMIN BYPASS] Skipping credit reserve for admin user (cost would be ${estimatedCost})`);
     }
 
     // 2) Call Replicate
@@ -107,46 +134,54 @@ replicateRouter.post('/predict', async (req, res) => {
                 const errText = await response.text();
                 console.error(`[Replicate] Error ${response.status}: ${errText}`);
 
-                // Refund via ledger
-                await supabaseUser.rpc('refund_reserve', {
-                    amount: estimatedCost,
-                    ref_type: 'replicate',
-                    ref_id: jobRef
-                });
+                // Refund via ledger (normal users only)
+                if (!isAdmin) {
+                    await supabaseUser.rpc('refund_reserve', {
+                        amount: estimatedCost,
+                        ref_type: 'replicate',
+                        ref_id: jobRef
+                    });
+                }
 
                 return res.status(response.status).json({ error: errText });
             }
 
             const data = await response.json();
 
-            // Finalize (burn reserved credits)
-            await supabaseUser.rpc('finalize_reserve', {
-                ref_type: 'replicate',
-                ref_id: jobRef
-            });
+            // Finalize (burn reserved credits) — normal users only
+            if (!isAdmin) {
+                await supabaseUser.rpc('finalize_reserve', {
+                    ref_type: 'replicate',
+                    ref_id: jobRef
+                });
+            }
 
             return res.json(data);
         }
 
-        // Max retries exceeded → refund
-        await supabaseUser.rpc('refund_reserve', {
-            amount: estimatedCost,
-            ref_type: 'replicate',
-            ref_id: jobRef
-        });
-
-        return res.status(429).json({ error: '请求频率过高，请稍后重试。' });
-    } catch (error: any) {
-        console.error('[Replicate] Error:', error.message);
-
-        // Safety refund
-        try {
+        // Max retries exceeded → refund (normal users only)
+        if (!isAdmin) {
             await supabaseUser.rpc('refund_reserve', {
                 amount: estimatedCost,
                 ref_type: 'replicate',
                 ref_id: jobRef
             });
-        } catch (_) { /* best effort */ }
+        }
+
+        return res.status(429).json({ error: '请求频率过高，请稍后重试。' });
+    } catch (error: any) {
+        console.error('[Replicate] Error:', error.message);
+
+        // Safety refund (normal users only)
+        if (!isAdmin) {
+            try {
+                await supabaseUser.rpc('refund_reserve', {
+                    amount: estimatedCost,
+                    ref_type: 'replicate',
+                    ref_id: jobRef
+                });
+            } catch (_) { /* best effort */ }
+        }
 
         res.status(500).json({ error: error.message || 'Replicate prediction failed' });
     }
@@ -155,6 +190,12 @@ replicateRouter.post('/predict', async (req, res) => {
 // GET /api/replicate/status/:id
 replicateRouter.get('/status/:id', async (req, res) => {
     try {
+        // ★ SECURITY: Require authentication
+        const authHeader = req.headers.authorization;
+        if (!authHeader) {
+            return res.status(401).json({ error: 'Missing Authorization header' });
+        }
+
         const token = getToken();
         const { id } = req.params;
 

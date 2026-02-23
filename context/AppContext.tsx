@@ -55,6 +55,17 @@ interface AppContextType {
 
 // ★ No free credits — users must purchase credits via Stripe
 
+// ★ DEVELOPER EMAIL REGISTRY - for automatic admin mode detection
+const DEVELOPER_EMAILS = new Set([
+  'forevercrab321@gmail.com'
+]);
+
+// ★ Helper function to check if email is a developer/admin
+const isDeveloperEmail = (email: string): boolean => {
+  const lowerEmail = email?.toLowerCase() || '';
+  return DEVELOPER_EMAILS.has(lowerEmail);
+};
+
 const defaultSettings: AppSettings = {
   lang: 'en',
   imageModel: 'flux',
@@ -104,8 +115,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setSettings(prev => ({ ...prev, lang: prev.lang === 'en' ? 'zh' : 'en' }));
   };
 
-  const fetchProfile = async (userId: string) => {
+  const fetchProfile = async (userId: string, userEmail?: string) => {
     try {
+      console.log(`[PROFILE] Fetching profile for user: ${userId}, email: ${userEmail}`);
+      
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
@@ -129,10 +142,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           supabase.from('profiles').update({ credits: 0 }).eq('id', userId).then();
         }
 
+        // ★ AUTO-DETECT DEVELOPER: Check if email is in developer registry
+        const isDeveloper = userEmail ? isDeveloperEmail(userEmail) : data.is_admin;
+        console.log(`[PROFILE] isDeveloper check: email="${userEmail}", isDeveloper=${isDeveloper}, isDeveloperEmail result=${userEmail ? isDeveloperEmail(userEmail) : 'N/A'}`);
+        
         // Restore God Mode from LocalStorage if active
         const isGodMode = localStorage.getItem('ai_cine_god_mode') === 'true';
+        console.log(`[PROFILE] isGodMode=${isGodMode}, data.is_admin=${data.is_admin}`);
 
-        if (isGodMode || data.is_admin) {
+        if (isGodMode || isDeveloper || data.is_admin) {
+          console.log(`[ADMIN] ✅ ACTIVATING ADMIN MODE for ${userEmail}`);
           balanceRef.current = 999999;
           setUserState({
             balance: 999999,
@@ -141,7 +160,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             monthlyUsage: 0,
             planType: 'director'
           });
+          console.log(`[ADMIN] User ${userEmail} detected as developer/admin`, { isDeveloper, isGodMode, dbAdmin: data.is_admin });
         } else {
+          console.log(`[ADMIN] ❌ NOT ADMIN - normal user balance=${newBalance}`);
           balanceRef.current = newBalance; // ★ Sync ref immediately
           setUserState({
             balance: newBalance,
@@ -173,7 +194,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setSession(currentSession);
       if (currentSession?.user) {
         setIsAuthenticated(true);
-        fetchProfile(currentSession.user.id);
+        fetchProfile(currentSession.user.id, currentSession.user.email);
       }
     });
 
@@ -182,7 +203,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setSession(newSession);
       if (newSession?.user) {
         setIsAuthenticated(true);
-        fetchProfile(newSession.user.id);
+        fetchProfile(newSession.user.id, newSession.user.email);
       } else {
         setIsAuthenticated(false);
         setProfile(null);
@@ -273,6 +294,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // ★ NEW: Refresh balance from DB (call after API operations)
   const refreshBalance = async () => {
     if (!session?.user) return;
+    
+    // ★ IMPORTANT: If user is admin, don't override their 999999 balance
+    if (userState.isAdmin) {
+      console.log(`[CREDIT SYNC] Skipping refresh for admin user (keeping balance=${balanceRef.current})`);
+      return;
+    }
+    
     try {
       const { data, error } = await supabase
         .from('profiles')
@@ -382,3 +410,6 @@ export const useAppContext = () => {
   if (!context) throw new Error("useAppContext must be used within an AppProvider");
   return context;
 };
+
+// ★ Export helper to check if email is developer (for use in components)
+export { isDeveloperEmail, DEVELOPER_EMAILS };

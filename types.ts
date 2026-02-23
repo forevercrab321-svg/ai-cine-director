@@ -144,6 +144,58 @@ export const MODEL_COSTS: Record<VideoModel | 'DEFAULT', number> = {
   DEFAULT: 28
 };
 
+/**
+ * Replicate模型路径映射
+ * 将VideoModel枚举映射到Replicate API的完整模型路径
+ * 用于调用Replicate API时确定正确的endpoint
+ */
+export const REPLICATE_MODEL_PATHS: Record<VideoModel | ImageModel, string> = {
+  // Video models
+  wan_2_2_fast: "wan-video/wan-2.2-i2v-fast",
+  hailuo_02_fast: "minimax/hailuo-02-fast",
+  seedance_lite: "bytedance/seedance-1-lite",
+  kling_2_5: "kwaivgi/kling-v2.5-turbo-pro",
+  hailuo_live: "minimax/video-01-live",
+  google_gemini_nano_banana: "google/gemini-nano-banana",
+  // Image models
+  flux: "black-forest-labs/flux-1.1-pro",
+  flux_schnell: "black-forest-labs/flux-schnell",
+  nano_banana: "google/gemini-nano-banana"
+};
+
+/**
+ * 图片模型成本定义
+ */
+export const IMAGE_MODEL_COSTS: Record<ImageModel, number> = {
+  flux: 6,           // Flux Pro: ~$0.04/image
+  flux_schnell: 1,   // Flux Schnell: ~$0.003/image (fast budget option)
+  nano_banana: 2     // Gemini Nano: experimental
+};
+
+/**
+ * 根据Replicate路径获取模型成本
+ * 用于后端API路由，支持反向查找
+ * @param replicatePath - Replicate完整模型路径 (如 "wan-video/wan-2.2-i2v-fast")
+ * @returns 成本（credits）
+ */
+export function getCostForReplicatePath(replicatePath: string): number {
+  // 尝试匹配视频模型
+  for (const [model, path] of Object.entries(REPLICATE_MODEL_PATHS)) {
+    if (path === replicatePath) {
+      const videoModel = model as VideoModel;
+      if (MODEL_COSTS[videoModel] !== undefined) {
+        return MODEL_COSTS[videoModel];
+      }
+      // 检查是否是图片模型
+      const imageModel = model as ImageModel;
+      if (IMAGE_MODEL_COSTS[imageModel] !== undefined) {
+        return IMAGE_MODEL_COSTS[imageModel];
+      }
+    }
+  }
+  return MODEL_COSTS.DEFAULT;
+}
+
 export const MODEL_METADATA: Record<VideoModel, { label: string; tags: string[]; audio?: boolean; badge?: string; priceLabel: string }> = {
   wan_2_2_fast: {
     label: "Wan 2.2 Fast (Alibaba)",

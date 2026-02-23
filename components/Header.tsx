@@ -3,6 +3,14 @@ import { SettingsIcon, SparklesIcon } from './IconComponents';
 import { Language, UserCreditState, PLAN_LIMITS } from '../types';
 import { t } from '../i18n';
 
+declare global {
+  interface Window {
+    aistudio?: {
+      openSelectKey: () => Promise<void>;
+    };
+  }
+}
+
 interface HeaderProps {
   lang: Language;
   toggleLang: () => void;
@@ -35,7 +43,9 @@ const Header: React.FC<HeaderProps> = ({ lang, toggleLang, onOpenSettings, userS
         </div>
         <div>
           <h1 className="text-2xl font-bold text-white tracking-tight">
-            AI Cine-Director <span className="text-xs align-top bg-indigo-500/20 text-indigo-300 px-1.5 py-0.5 rounded ml-1 border border-indigo-500/30">Pro</span>
+            AI Cine-Director 
+            {userState.isAdmin && <span className="text-xs align-top bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded ml-1 border border-emerald-500/30">Dev</span>}
+            <span className="text-xs align-top bg-indigo-500/20 text-indigo-300 px-1.5 py-0.5 rounded ml-1 border border-indigo-500/30">Pro</span>
           </h1>
           <p className="text-xs text-slate-400">SaaS Edition v3.1</p>
         </div>

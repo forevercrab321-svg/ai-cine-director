@@ -7,18 +7,6 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { geminiRouter } from './routes/gemini';
 import { replicateRouter } from './routes/replicate';
-import fetch from 'node-fetch';
-
-if (!globalThis.fetch) {
-    // @ts-ignore
-    globalThis.fetch = fetch;
-    // @ts-ignore
-    globalThis.Headers = fetch.Headers;
-    // @ts-ignore
-    globalThis.Request = fetch.Request;
-    // @ts-ignore
-    globalThis.Response = fetch.Response;
-}
 
 // 加载 .env.local
 dotenv.config({ path: '.env.local' });
@@ -27,7 +15,14 @@ const app = express();
 const PORT = process.env.API_SERVER_PORT || 3002;
 
 // 中间件
-app.use(cors({ origin: true, credentials: true }));
+// ★ SECURITY: Restrict origins in production; allow all only in development
+const allowedOrigins = process.env.NODE_ENV === 'production'
+    ? [
+        'https://ai-cine-director.vercel.app',
+        /\.vercel\.app$/,
+      ]
+    : true;
+app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json({ limit: '10mb' })); // 支持 base64 图片上传
 
 // 路由

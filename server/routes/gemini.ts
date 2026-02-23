@@ -8,6 +8,33 @@ import { createClient } from '@supabase/supabase-js';
 
 export const geminiRouter = Router();
 
+// ★ DEVELOPER EMAILS - admin bypass list (must match AppContext.tsx)
+const DEVELOPER_EMAILS = new Set(['forevercrab321@gmail.com']);
+
+// ★ Helper: check if user is admin (by email or db flag)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function checkIsAdmin(supabaseUser: any): Promise<boolean> {
+    try {
+        const { data: { user } } = await supabaseUser.auth.getUser();
+        if (!user) return false;
+
+        if (user.email && DEVELOPER_EMAILS.has(user.email.toLowerCase())) {
+            console.log(`[ADMIN CHECK] Developer email detected: ${user.email}`);
+            return true;
+        }
+
+        const { data: profile } = await supabaseUser
+            .from('profiles')
+            .select('is_admin')
+            .eq('id', user.id)
+            .single();
+
+        return profile != null && profile.is_admin === true;
+    } catch {
+        return false;
+    }
+}
+
 const getAI = () => {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) throw new Error('GEMINI_API_KEY not configured on server');
@@ -56,26 +83,40 @@ geminiRouter.post('/generate', async (req, res) => {
             { global: { headers: { Authorization: authHeader } } }
         );
 
-        // Deduct 1 credit for Storyboard via ledger
+        // ★ 1b. Validate inputs FIRST — before reserving credits to prevent credit lock-up
+        if (!storyIdea || typeof storyIdea !== 'string') {
+            return res.status(400).json({ error: 'Missing storyIdea' });
+        }
+        if (storyIdea.length > 2000) {
+            return res.status(400).json({ error: 'storyIdea too long (max 2000 characters)' });
+        }
+        if (visualStyle && typeof visualStyle === 'string' && visualStyle.length > 200) {
+            return res.status(400).json({ error: 'visualStyle too long (max 200 characters)' });
+        }
+
+        // ★ Check admin status — admins bypass all credit checks
+        const isAdmin = await checkIsAdmin(supabaseUserClient);
+
+        // Deduct 1 credit for Storyboard via ledger (normal users only)
         const COST = 1;
 
-        const { data: reserved, error: reserveErr } = await supabaseUserClient.rpc('reserve_credits', {
-            amount: COST,
-            ref_type: 'gemini',
-            ref_id: jobRef
-        });
+        if (!isAdmin) {
+            const { data: reserved, error: reserveErr } = await supabaseUserClient.rpc('reserve_credits', {
+                amount: COST,
+                ref_type: 'gemini',
+                ref_id: jobRef
+            });
 
-        if (reserveErr) {
-            console.error('Gemini credit reserve error:', reserveErr);
-            return res.status(500).json({ error: 'Credit verification failed' });
-        }
+            if (reserveErr) {
+                console.error('Gemini credit reserve error:', reserveErr);
+                return res.status(500).json({ error: 'Credit verification failed' });
+            }
 
-        if (!reserved) {
-            return res.status(402).json({ error: "Insufficient credits", code: "INSUFFICIENT_CREDITS" });
-        }
-
-        if (!storyIdea) {
-            return res.status(400).json({ error: 'Missing storyIdea' });
+            if (!reserved) {
+                return res.status(402).json({ error: "Insufficient credits", code: "INSUFFICIENT_CREDITS" });
+            }
+        } else {
+            console.log(`[ADMIN BYPASS] Skipping credit reserve for admin user`);
         }
 
         const ai = getAI();
@@ -182,28 +223,33 @@ EVERY scene's "visual_description" MUST begin with the EXACT character_anchor te
             console.warn('[Gemini] Consistency metadata generation failed:', metaErr);
         }
 
-        // Finalize the reserve (credits are consumed)
-        await supabaseUserClient.rpc('finalize_reserve', {
-            ref_type: 'gemini',
-            ref_id: jobRef
-        });
+        // Finalize the reserve (credits are consumed) — normal users only
+        if (!isAdmin) {
+            await supabaseUserClient.rpc('finalize_reserve', {
+                ref_type: 'gemini',
+                ref_id: jobRef
+            });
+        }
 
         res.json(project);
     } catch (error: any) {
         console.error('[Gemini] Error:', error);
 
-        // Refund reserved credits on failure
+        // Refund reserved credits on failure (normal users only)
         try {
             const supabaseRefund = createClient(
                 process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!,
                 process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
                 { global: { headers: { Authorization: req.headers.authorization as string } } }
             );
-            await supabaseRefund.rpc('refund_reserve', {
-                amount: 1,
-                ref_type: 'gemini',
-                ref_id: jobRef
-            });
+            const refundIsAdmin = await checkIsAdmin(supabaseRefund);
+            if (!refundIsAdmin) {
+                await supabaseRefund.rpc('refund_reserve', {
+                    amount: 1,
+                    ref_type: 'gemini',
+                    ref_id: jobRef
+                });
+            }
         } catch (refundErr) {
             console.error('[Gemini] Refund failed:', refundErr);
         }
@@ -222,6 +268,12 @@ EVERY scene's "visual_description" MUST begin with the EXACT character_anchor te
 // POST /api/gemini/analyze - 分析角色锚点
 geminiRouter.post('/analyze', async (req, res) => {
     try {
+        // ★ SECURITY: Require authentication to prevent unauthorized Gemini API abuse
+        const authHeader = req.headers.authorization;
+        if (!authHeader) {
+            return res.status(401).json({ error: 'Missing Authorization header' });
+        }
+
         const { base64Data } = req.body;
         if (!base64Data) {
             return res.status(400).json({ error: 'Missing base64Data' });
@@ -232,7 +284,7 @@ geminiRouter.post('/analyze', async (req, res) => {
         const mimeType = base64Data.match(/:(.*?);/)?.[1] || 'image/png';
 
         const response = await ai.models.generateContent({
-            model: 'gemini-3-flash-preview',
+            model: 'gemini-2.0-flash',
             contents: {
                 parts: [
                     { inlineData: { mimeType, data: cleanBase64 } },

@@ -40,7 +40,8 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
         isAuthenticated,
         openPricingModal,
         hasEnoughCredits,
-        refreshBalance
+        refreshBalance,
+        deductCredits
     } = useAppContext();
 
     const imageCost = settings.imageModel === 'flux_schnell' ? CREDIT_COSTS.IMAGE_FLUX_SCHNELL : CREDIT_COSTS.IMAGE_FLUX;
@@ -108,6 +109,10 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
 
         setSceneStatus(prev => ({ ...prev, [scene.scene_number]: { status: 'image_gen', message: '🎨 正在生成图片...' } }));
 
+        // ★ Bug Fix #2: 乐观更新 - 立即扣款显示，提升UX
+        const optimisticCost = imageCost;
+        deductCredits(optimisticCost);
+
         try {
             const prompt = `${scene.visual_description}, ${scene.shot_type}`;
             const url = await generateImage(
@@ -120,9 +125,18 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
 
             setSceneImages(prev => ({ ...prev, [scene.scene_number]: url }));
             setSceneStatus(prev => ({ ...prev, [scene.scene_number]: { status: 'ready', message: '图片已就绪' } }));
-            await refreshBalance();
+            
+            // ★ 后台异步确认余额，不阻塞UI
+            refreshBalance().catch(e => {
+                console.error('[Image Gen] Balance sync failed (non-critical):', e);
+            });
+            
             return url;
         } catch (e: any) {
+            // ★ 失败时从数据库重新获取真实余额（确保正确）
+            console.error('[Image Gen] Generation failed, syncing balance from DB');
+            await refreshBalance();
+
             setSceneStatus(prev => ({
                 ...prev,
                 [scene.scene_number]: { status: 'failed', error: e.message, message: '图片生成失败' }
@@ -242,6 +256,10 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
         }
 
         setSceneStatus(prev => ({ ...prev, [sceneNum]: { status: 'queued', message: '准备中...' } }));
+        
+        // ★ Bug Fix #2: 乐观更新 - 立即扣款
+        deductCredits(baseCost);
+        
         try {
             const res = await startVideoTask(
                 scene.shot_type || "cinematic motion",
@@ -255,18 +273,26 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
                 settings.videoResolution,
                 project.character_anchor
             );
+
             setActiveVideoJobs(prev => ({ ...prev, [sceneNum]: { id: res.id, startTime: Date.now() } }));
             setScenePredictionIds(prev => ({ ...prev, [sceneNum]: res.id }));
-            setSceneStatus(prev => ({ ...prev, [sceneNum]: { status: 'starting', message: '🚀 已开始渲染' } }));
+            setSceneStatus(prev => ({ ...prev, [sceneNum]: { status: 'starting', message: '🚀 已发送请求' } }));
+            
+            // ★ 后台异步确认余额
+            refreshBalance().catch(e => {
+                console.error('[Video Gen] Balance sync failed (non-critical):', e);
+            });
         } catch (e: any) {
+            // ★ 失败时重新同步真实余额
+            console.error('[Video Gen] Generation failed, syncing balance from DB');
+            await refreshBalance();
+            
             if (e.code === 'INSUFFICIENT_CREDITS' || e.message === 'INSUFFICIENT_CREDITS') {
                 openPricingModal();
-                return;
+            } else {
+                setSceneStatus(prev => ({ ...prev, [sceneNum]: { status: 'failed', error: e.message, message: friendlyError(e.message) } }));
             }
-            console.error(e);
-            setSceneStatus(prev => ({ ...prev, [sceneNum]: { status: 'failed', error: e.message, message: friendlyError(e.message) } }));
         }
-        await refreshBalance();
     };
 
     return (
