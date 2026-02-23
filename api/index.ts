@@ -87,6 +87,29 @@ app.post('/api/auth/ensure-user', async (req: any, res: any) => {
     }
 });
 
+app.post('/api/auth/generate-link', async (req: any, res: any) => {
+    try {
+        const email = String(req.body?.email || '').trim().toLowerCase();
+        const redirectTo = String(req.body?.redirectTo || '').trim();
+        if (!email) return res.status(400).json({ error: 'Missing email' });
+
+        const supabaseAdmin = getSupabaseAdmin();
+        const { data, error } = await supabaseAdmin.auth.admin.generateLink({
+            type: 'magiclink',
+            email,
+            options: redirectTo ? { redirectTo } : undefined
+        });
+
+        if (error || !data?.properties?.action_link) {
+            return res.status(500).json({ error: error?.message || 'Failed to generate magic link' });
+        }
+
+        return res.json({ actionLink: data.properties.action_link });
+    } catch (err: any) {
+        return res.status(500).json({ error: err.message || 'Failed to generate magic link' });
+    }
+});
+
 // --- Cost ---
 const estimateCost = (model: string): number => {
     const COSTS: Record<string, number> = {
