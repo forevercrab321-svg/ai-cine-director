@@ -88,6 +88,15 @@ const isAdminUser = (email: string | undefined): boolean => {
     return ADMIN_EMAILS.includes(email.toLowerCase());
 };
 
+const isNsfwError = (text: string) => /nsfw|safety|moderation|content policy/i.test(text || '');
+
+const sanitizePromptForSafety = (prompt: string) => {
+    return (prompt || '')
+        .replace(/\b(kill|killing|blood|bloody|gore|gory|brutal|weapon|sword|spear|fight|battle|war)\b/gi, 'cinematic')
+        .replace(/大战|战斗|厮杀|杀戮|血腥|武器|长矛|刀剑/g, '史诗对峙')
+        .concat(' Family-friendly cinematic scene, no gore, no violence, no explicit content.');
+};
+
 // --- Routes ---
 
 // Replicate Predict with Reserve / Finalize / Refund
@@ -156,6 +165,33 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
 
         if (!response.ok) {
             const errText = await response.text();
+            // NSFW fallback retry (sanitized prompt + flux_schnell)
+            if (isNsfwError(errText) && input?.prompt) {
+                const safePrompt = sanitizePromptForSafety(input.prompt);
+                const fallbackVersion = 'black-forest-labs/flux-schnell';
+                const fallbackTargetUrl = `${base}/models/${fallbackVersion}/predictions`;
+                const fallbackResponse = await fetch(fallbackTargetUrl, {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                        'Content-Type': 'application/json',
+                        Prefer: 'wait',
+                    },
+                    body: JSON.stringify({ input: { ...input, prompt: safePrompt } })
+                });
+
+                if (fallbackResponse.ok) {
+                    const prediction = await fallbackResponse.json() as ReplicateResponse;
+                    if (!skipCreditCheck) {
+                        await supabaseUser.rpc('finalize_reserve', {
+                            ref_type: 'replicate',
+                            ref_id: jobRef
+                        });
+                    }
+                    return res.json(prediction);
+                }
+            }
+
             // 3a) Refund reserve (skip for admin)
             if (!skipCreditCheck) {
                 await supabaseUser.rpc('refund_reserve', {
