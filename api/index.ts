@@ -23,20 +23,21 @@ app.use('/api/billing/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '10mb' }));
 
 const getReplicateToken = () => {
-    const token = process.env.REPLICATE_API_TOKEN;
+    const raw = process.env.REPLICATE_API_TOKEN;
+    const token = raw?.trim();
     if (!token) throw new Error('REPLICATE_API_TOKEN not configured');
     return token;
 };
 
 const getSupabaseAdmin = () => {
-    const url = process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const url = (process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim();
+    const key = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
     if (!url || !key) throw new Error('Supabase URL or Service Key missing');
     return createClient(url, key);
 };
 
 const getStripe = () => {
-    const key = process.env.STRIPE_SECRET_KEY;
+    const key = process.env.STRIPE_SECRET_KEY?.trim();
     if (!key) throw new Error('STRIPE_SECRET_KEY missing');
     return new Stripe(key, { apiVersion: '2026-01-28.clover' });
 };
@@ -213,7 +214,7 @@ app.get('/api/replicate/status/:id', requireAuth, async (req: any, res: any) => 
 // --- Gemini Routes (must be inline for Vercel serverless) ---
 
 const getGeminiAI = () => {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY?.trim();
     if (!apiKey) throw new Error('GEMINI_API_KEY not configured');
     return new GoogleGenAI({ apiKey });
 };
