@@ -17,9 +17,10 @@ interface HeaderProps {
   onOpenSettings: () => void;
   userState: UserCreditState;
   onUpgrade: () => void;
+  onLogout: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ lang, toggleLang, onOpenSettings, userState, onUpgrade }) => {
+const Header: React.FC<HeaderProps> = ({ lang, toggleLang, onOpenSettings, userState, onUpgrade, onLogout }) => {
 
   const handleOpenKeySelector = async () => {
     if (typeof window !== 'undefined' && window.aistudio) {
@@ -120,6 +121,15 @@ const Header: React.FC<HeaderProps> = ({ lang, toggleLang, onOpenSettings, userS
           title={t(lang, 'settings')}
         >
           <SettingsIcon className="w-5 h-5" />
+        </button>
+
+        {/* Logout */}
+        <button
+          onClick={onLogout}
+          className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-red-500/20 text-slate-300 hover:text-red-300 text-xs font-bold transition-colors"
+          title="Logout"
+        >
+          Logout
         </button>
       </div>
     </div>

@@ -19,6 +19,7 @@ const MainLayout: React.FC = () => {
     profile,
     login,
     completeProfile,
+    logout,
     toggleLang,
     updateSettings,
     upgradeUser,
@@ -149,6 +150,7 @@ const MainLayout: React.FC = () => {
           onOpenSettings={() => setIsSettingsOpen(true)}
           userState={userState}
           onUpgrade={openPricingModal}
+          onLogout={logout}
         />
 
         <div className="mb-8 flex items-center justify-between animate-in fade-in duration-700">

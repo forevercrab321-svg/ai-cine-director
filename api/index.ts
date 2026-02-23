@@ -63,6 +63,30 @@ const requireAuth = async (req: any, res: any, next: any) => {
     next();
 };
 
+// --- Auth helper (supports projects with signups disabled) ---
+app.post('/api/auth/ensure-user', async (req: any, res: any) => {
+    try {
+        const email = String(req.body?.email || '').trim().toLowerCase();
+        if (!email) return res.status(400).json({ error: 'Missing email' });
+
+        const supabaseAdmin = getSupabaseAdmin();
+
+        // Try to pre-create user (idempotent for existing users)
+        const { error } = await supabaseAdmin.auth.admin.createUser({
+            email,
+            email_confirm: true
+        });
+
+        if (error && !String(error.message || '').includes('already registered')) {
+            return res.status(500).json({ error: error.message || 'Failed to ensure user' });
+        }
+
+        return res.json({ ok: true });
+    } catch (err: any) {
+        return res.status(500).json({ error: err.message || 'Failed to ensure user' });
+    }
+});
+
 // --- Cost ---
 const estimateCost = (model: string): number => {
     const COSTS: Record<string, number> = {

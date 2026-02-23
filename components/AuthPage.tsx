@@ -47,6 +47,39 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
     callback();
   };
 
+  const sendOtpWithFallback = async () => {
+    const origin = typeof window !== 'undefined' ? window.location.origin : undefined;
+    const { error } = await supabase.auth.signInWithOtp({
+      email: email,
+      options: {
+        shouldCreateUser: true,
+        emailRedirectTo: origin,
+      }
+    });
+
+    if (!error) return;
+
+    // If signups are disabled or user doesn't exist, pre-create via server and retry once
+    const isRateLimit = error?.status === 429 || error?.message?.includes('Too Many');
+    if (isRateLimit) throw error;
+
+    await fetch('/api/auth/ensure-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+
+    const { error: retryError } = await supabase.auth.signInWithOtp({
+      email: email,
+      options: {
+        shouldCreateUser: true,
+        emailRedirectTo: origin,
+      }
+    });
+
+    if (retryError) throw retryError;
+  };
+
   const handleEmailSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setValidationError('');
@@ -67,14 +100,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
     handleAction(async () => {
       setIsLoading(true);
       try {
-        const { error } = await supabase.auth.signInWithOtp({
-          email: email,
-          options: {
-            shouldCreateUser: true,
-          }
-        });
-
-        if (error) throw error;
+        await sendOtpWithFallback();
 
         setStep('otp');
         setCountdown(60);
@@ -258,9 +284,16 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
                 ) : (
                   <button
                     type="button"
-                    onClick={() => {
+                    onClick={async () => {
                       setCountdown(60);
-                      supabase.auth.signInWithOtp({ email: email });
+                      try {
+                        await sendOtpWithFallback();
+                      } catch (error: any) {
+                        const msg = error?.status === 429 || error?.message?.includes('429') || error?.message?.includes('Too Many')
+                          ? '发送太频繁，请稍后再试'
+                          : (error.message || '发送验证码失败');
+                        setValidationError(msg);
+                      }
                     }}
                     className="text-[10px] text-indigo-400 hover:text-white font-bold uppercase tracking-wider transition-colors"
                   >
