@@ -46,7 +46,11 @@ const requireAuth = async (req: any, res: any, next: any) => {
     const authHeader = req.headers.authorization;
     if (!authHeader) return res.status(401).json({ error: 'Missing Authorization header' });
 
-    const token = authHeader.replace('Bearer ', '');
+    const rawAuthHeader = Array.isArray(authHeader) ? authHeader[0] : authHeader;
+    const token = rawAuthHeader.replace(/^Bearer\s+/i, '').trim();
+    if (!token) return res.status(401).json({ error: 'Invalid Authorization header' });
+
+    req.accessToken = token;
     const supabase = getSupabaseAdmin();
     const { data: { user }, error } = await supabase.auth.getUser(token);
 
@@ -88,7 +92,7 @@ const isAdminUser = (email: string | undefined): boolean => {
 // Replicate Predict with Reserve / Finalize / Refund
 app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
     const { version, input } = req.body;
-    const authHeader = req.headers.authorization;
+    const authHeader = `Bearer ${req.accessToken}`;
     const userEmail = req.user?.email;
 
     const estimatedCost = estimateCost(version);
@@ -241,7 +245,7 @@ app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
     const jobRef = `gemini:${Date.now()}:${Math.random().toString(36).slice(2)}`;
     try {
         const { storyIdea, visualStyle, language, identityAnchor } = req.body;
-        const authHeader = req.headers.authorization;
+        const authHeader = `Bearer ${req.accessToken}`;
 
         const supabaseUser = createClient(
             process.env.VITE_SUPABASE_URL!,
