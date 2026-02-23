@@ -72,7 +72,7 @@ app.post('/api/auth/ensure-user', async (req: any, res: any) => {
         const supabaseAdmin = getSupabaseAdmin();
 
         // Try to pre-create user (idempotent for existing users)
-        const { error } = await supabaseAdmin.auth.admin.createUser({
+        const { data: createdUser, error } = await supabaseAdmin.auth.admin.createUser({
             email,
             email_confirm: true
         });
@@ -80,6 +80,28 @@ app.post('/api/auth/ensure-user', async (req: any, res: any) => {
         if (error && !String(error.message || '').includes('already registered')) {
             console.error('[Auth Ensure User] Failed:', error);
             return res.status(500).json({ error: error.message || 'Failed to ensure user' });
+        }
+
+        let userId = createdUser?.user?.id;
+        if (!userId) {
+            const { data: existing } = await supabaseAdmin.auth.admin.listUsers({
+                page: 1,
+                perPage: 1000
+            });
+            const users = (existing as any)?.users as Array<{ id: string; email?: string }> | undefined;
+            const match = users?.find(u => (u.email || '').toLowerCase() === email);
+            userId = match?.id;
+        }
+
+        if (userId) {
+            await supabaseAdmin
+                .from('profiles')
+                .upsert({
+                    id: userId,
+                    name: email,
+                    role: 'Director',
+                    credits: 50,
+                }, { onConflict: 'id' });
         }
 
         return res.json({ ok: true });

@@ -52,7 +52,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
     const { error } = await supabase.auth.signInWithOtp({
       email: email,
       options: {
-        shouldCreateUser: true,
+        shouldCreateUser: false,
         emailRedirectTo: origin,
       }
     });
@@ -76,7 +76,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
     const { error: retryError } = await supabase.auth.signInWithOtp({
       email: email,
       options: {
-        shouldCreateUser: true,
+        shouldCreateUser: false,
         emailRedirectTo: origin,
       }
     });
