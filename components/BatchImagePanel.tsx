@@ -144,8 +144,8 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
 }) => {
     const { settings, isAuthenticated, hasEnoughCredits, openPricingModal, refreshBalance } = useAppContext();
 
-    // Config
-    const [count, setCount] = useState(Math.min(9, allShots.length));
+    // Config - Allow up to 100 images per batch
+    const [count, setCount] = useState(Math.min(100, allShots.length));
     const [model, setModel] = useState<ImageModel>('flux');
 
     // Job state
@@ -245,7 +245,7 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                 aspect_ratio: '16:9',
                 style: 'none',
                 character_anchor: characterAnchor,
-                concurrency: 2,
+                concurrency: 3,
             });
 
             setJobId(result.job_id);
@@ -285,7 +285,7 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                 aspect_ratio: '16:9',
                 style: 'none',
                 character_anchor: characterAnchor,
-                concurrency: 2,
+                concurrency: 3,
             });
 
             if (result.all_done && !result.job_id) {

@@ -2,6 +2,7 @@ import React from 'react';
 import { SettingsIcon, SparklesIcon } from './IconComponents';
 import { Language, UserCreditState, PLAN_LIMITS } from '../types';
 import { t } from '../i18n';
+import { useAppContext } from '../context/AppContext';
 
 declare global {
   interface Window {
@@ -20,8 +21,25 @@ interface HeaderProps {
   onLogout: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ lang, toggleLang, onOpenSettings, userState, onUpgrade, onLogout }) => {
+// ★ GOD MODE Badge Component
+const GodModeBadge: React.FC = () => {
+  const { entitlement } = useAppContext();
+  
+  if (!entitlement.isDeveloper && entitlement.mode !== 'developer') {
+    return null;
+  }
+  
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 rounded border border-amber-500/40 animate-pulse">
+      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+      GOD MODE
+    </span>
+  );
+};
 
+const Header: React.FC<HeaderProps> = ({ lang, toggleLang, onOpenSettings, userState, onUpgrade, onLogout }) => {
+  const { entitlement } = useAppContext();
+  
   const handleOpenKeySelector = async () => {
     if (typeof window !== 'undefined' && window.aistudio) {
       await window.aistudio.openSelectKey();
@@ -45,7 +63,8 @@ const Header: React.FC<HeaderProps> = ({ lang, toggleLang, onOpenSettings, userS
         <div>
           <h1 className="text-2xl font-bold text-white tracking-tight">
             AI Cine-Director 
-            {userState.isAdmin && <span className="text-xs align-top bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded ml-1 border border-emerald-500/30">Dev</span>}
+            <GodModeBadge />
+            {userState.isAdmin && !entitlement.isDeveloper && <span className="text-xs align-top bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded ml-1 border border-emerald-500/30">Dev</span>}
             <span className="text-xs align-top bg-indigo-500/20 text-indigo-300 px-1.5 py-0.5 rounded ml-1 border border-indigo-500/30">Pro</span>
           </h1>
           <p className="text-xs text-slate-400">SaaS Edition v3.1</p>

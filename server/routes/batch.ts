@@ -141,12 +141,12 @@ batchRouter.post('/gen-images', async (req, res) => {
         const {
             project_id,
             shots,             // Array<{ shot_id, shot_number, scene_number, image_prompt, seed_hint?, reference_policy? }>
-            count = 9,         // Default: first 9 shots
+            count = 100,       // Default: up to 100 shots per batch
             model = 'flux',
             aspect_ratio = '16:9',
             style = 'none',
             character_anchor = '',
-            concurrency = 2,
+            concurrency = 3,
         } = req.body;
 
         if (!project_id) return res.status(400).json({ error: 'Missing project_id' });
@@ -294,13 +294,13 @@ batchRouter.post('/gen-images/continue', async (req, res) => {
             project_id,
             shots,                  // ALL shots in the project
             shots_with_images = [], // Array of shot_ids that already have a primary image
-            count = 9,
+            count = 100,            // Default: up to 100 shots per batch
             strategy = 'strict',    // 'strict' | 'skip_failed'
             model = 'flux',
             aspect_ratio = '16:9',
             style = 'none',
             character_anchor = '',
-            concurrency = 2,
+            concurrency = 3,
         } = req.body;
 
         if (!project_id) return res.status(400).json({ error: 'Missing project_id' });

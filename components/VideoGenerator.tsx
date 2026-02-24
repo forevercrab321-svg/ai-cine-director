@@ -79,7 +79,11 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
                     const statusRes = await checkPredictionStatus(jobId);
 
                     if (statusRes.status === 'succeeded' && statusRes.output) {
-                        setSceneVideoUrls(prev => ({ ...prev, [sNum]: String(statusRes.output) }));
+                        // ★ Fix: Handle both array and string output formats
+                        const videoUrl = Array.isArray(statusRes.output) 
+                            ? statusRes.output[0] 
+                            : String(statusRes.output);
+                        setSceneVideoUrls(prev => ({ ...prev, [sNum]: videoUrl }));
                         setSceneStatus(prev => ({ ...prev, [sNum]: { status: 'done', message: '✅ 渲染完成' } }));
                         setActiveVideoJobs(prev => {
                             const next = { ...prev };
@@ -225,7 +229,8 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
                         settings.videoDuration,
                         settings.videoFps,
                         settings.videoResolution,
-                        project.character_anchor
+                        project.character_anchor,
+                        settings.aspectRatio  // ★ Fix: Pass aspectRatio for Hailuo model
                     );
 
                     setActiveVideoJobs(prev => ({ ...prev, [sNum]: { id: res.id, startTime: Date.now() } }));
@@ -339,7 +344,8 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({ project, onBackToScript
                 settings.videoDuration,
                 settings.videoFps,
                 settings.videoResolution,
-                project.character_anchor
+                project.character_anchor,
+                settings.aspectRatio  // ★ Fix: Pass aspectRatio for Hailuo model
             );
 
             setActiveVideoJobs(prev => ({ ...prev, [sceneNum]: { id: res.id, startTime: Date.now() } }));

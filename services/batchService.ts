@@ -61,12 +61,12 @@ export async function startBatchGenImages(params: {
         body: JSON.stringify({
             project_id: params.project_id,
             shots: params.shots,
-            count: params.count ?? 9,
+            count: params.count ?? 100,
             model: params.model ?? 'flux',
             aspect_ratio: params.aspect_ratio ?? '16:9',
             style: params.style ?? 'none',
             character_anchor: params.character_anchor ?? '',
-            concurrency: params.concurrency ?? 2,
+            concurrency: params.concurrency ?? 3,
         }),
     });
 
@@ -176,13 +176,13 @@ export async function continueBatchGenImages(params: {
             project_id: params.project_id,
             shots: params.shots,
             shots_with_images: params.shots_with_images,
-            count: params.count ?? 9,
+            count: params.count ?? 100,
             strategy: params.strategy ?? 'strict',
             model: params.model ?? 'flux',
             aspect_ratio: params.aspect_ratio ?? '16:9',
             style: params.style ?? 'none',
             character_anchor: params.character_anchor ?? '',
-            concurrency: params.concurrency ?? 2,
+            concurrency: params.concurrency ?? 3,
         }),
     });
 

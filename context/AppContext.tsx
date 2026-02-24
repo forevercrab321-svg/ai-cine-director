@@ -1,7 +1,22 @@
 
-import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode, useCallback } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { UserCreditState, Language, ImageModel, VideoModel, VideoStyle, AspectRatio, VideoQuality, VideoDuration, VideoFps, VideoResolution, MODEL_COSTS } from '../types';
+
+// ═══════════════════════════════════════════════════════════════
+// Entitlement Types (from /api/entitlement)
+// ═══════════════════════════════════════════════════════════════
+interface EntitlementState {
+  isDeveloper: boolean;
+  isAdmin: boolean;
+  plan: 'free' | 'paid' | 'developer';
+  credits: number;
+  canGenerate: boolean;
+  mode: 'developer' | 'paid' | 'free';
+  reasonIfBlocked: string | null;
+  loading: boolean;
+  error: string | null;
+}
 
 interface UserProfile {
   id: string;
@@ -31,6 +46,10 @@ interface AppContextType {
   isAuthenticated: boolean;
   profile: UserProfile | null;
   settings: AppSettings;
+  
+  // ★ GOD MODE: Entitlement state from backend
+  entitlement: EntitlementState;
+  fetchEntitlement: () => Promise<void>;
 
   // Actions
   login: (bypass?: boolean) => void; // Triggered after successful auth
@@ -84,6 +103,19 @@ const defaultSettings: AppSettings = {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
+// ★ Default entitlement state
+const defaultEntitlement: EntitlementState = {
+  isDeveloper: false,
+  isAdmin: false,
+  plan: 'free',
+  credits: 0,
+  canGenerate: false,
+  mode: 'free',
+  reasonIfBlocked: null,
+  loading: true,
+  error: null,
+};
+
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [session, setSession] = useState<any>(null);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
@@ -96,6 +128,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     monthlyUsage: 0,
     planType: 'creator'
   });
+  
+  // ★ GOD MODE: Entitlement state from backend
+  const [entitlement, setEntitlement] = useState<EntitlementState>(defaultEntitlement);
 
   // ★ CRITICAL: Real-time balance ref for atomic credit checks
   // React state is stale in closures — this ref is the ONLY source of truth
@@ -106,6 +141,58 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const hasAutoShownPaywall = useRef(false);
 
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
+  
+  // ★ Fetch entitlement from backend (GOD MODE check)
+  const fetchEntitlement = useCallback(async () => {
+    try {
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      if (!currentSession?.access_token) {
+        setEntitlement({ ...defaultEntitlement, loading: false });
+        return;
+      }
+      
+      const response = await fetch('/api/entitlement', {
+        headers: {
+          'Authorization': `Bearer ${currentSession.access_token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Entitlement check failed: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      setEntitlement({
+        isDeveloper: data.isDeveloper ?? false,
+        isAdmin: data.isAdmin ?? false,
+        plan: data.plan ?? 'free',
+        credits: data.credits ?? 0,
+        canGenerate: data.canGenerate ?? false,
+        mode: data.mode ?? 'free',
+        reasonIfBlocked: data.reasonIfBlocked ?? null,
+        loading: false,
+        error: null,
+      });
+      
+      // Sync with userState if GOD MODE
+      if (data.isDeveloper || data.isAdmin) {
+        balanceRef.current = 999999;
+        setUserState(prev => ({
+          ...prev,
+          balance: 999999,
+          isAdmin: true,
+          isPro: true,
+        }));
+        console.log('[GOD MODE] ✅ Developer/Admin mode activated via /api/entitlement');
+      }
+      
+    } catch (err: any) {
+      console.error('[Entitlement] Error:', err);
+      setEntitlement(prev => ({ ...prev, loading: false, error: err.message }));
+    }
+  }, []);
 
   const updateSettings = (newSettings: Partial<AppSettings>) => {
     setSettings(prev => ({ ...prev, ...newSettings }));
@@ -219,6 +306,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (currentSession?.user) {
         setIsAuthenticated(true);
         fetchProfile(currentSession.user.id, currentSession.user.email);
+        // ★ Fetch entitlement from backend (GOD MODE check)
+        fetchEntitlement();
       }
     });
 
@@ -228,16 +317,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (newSession?.user) {
         setIsAuthenticated(true);
         fetchProfile(newSession.user.id, newSession.user.email);
+        // ★ Fetch entitlement from backend (GOD MODE check)
+        fetchEntitlement();
       } else {
         setIsAuthenticated(false);
         setProfile(null);
         balanceRef.current = 0;
         setUserState({ balance: 0, isPro: false, isAdmin: false, monthlyUsage: 0, planType: 'creator' });
+        setEntitlement(defaultEntitlement);
       }
     });
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [fetchEntitlement]);
 
   const login = () => {
     // Standard login trigger - session listener handles the actual state update
@@ -249,6 +341,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setSession(null);
     setIsAuthenticated(false);
     setProfile(null);
+    setEntitlement(defaultEntitlement);
     hasAutoShownPaywall.current = false;
   };
 
@@ -390,6 +483,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     balanceRef.current = 999999; // ★ Sync ref
     localStorage.setItem('ai_cine_god_mode', 'true'); // Persist session
     setUserState({ balance: 999999, isPro: true, isAdmin: true, monthlyUsage: 0, planType: 'director' });
+    setEntitlement(prev => ({
+      ...prev,
+      isDeveloper: true,
+      isAdmin: true,
+      mode: 'developer',
+      credits: 999999,
+      canGenerate: true,
+    }));
   };
 
   // Safe Service Worker Cleanup
@@ -409,6 +510,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       isAuthenticated,
       profile,
       settings,
+      entitlement,
+      fetchEntitlement,
       login,
       completeProfile,
       logout,

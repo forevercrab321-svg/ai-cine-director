@@ -45,6 +45,18 @@ const DownloadIcon = () => (
   </svg>
 );
 
+const CloseIcon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+  </svg>
+);
+
+const ExpandIcon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9m11.25-5.25h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25v-4.5m0 4.5h-4.5m4.5 0L15 15M3.75 20.25h4.5m-4.5 0v-4.5m0 4.5L9 15" />
+  </svg>
+);
+
 const downloadFile = async (url: string, filename: string) => {
   try {
     const response = await fetch(url);
@@ -119,6 +131,24 @@ const SceneCard: React.FC<SceneCardProps> = ({
 }) => {
   const { openPricingModal, userState, hasEnoughCredits } = useAppContext();
   const [isImageLoading, setIsImageLoading] = useState(false);
+  const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
+
+  // ESC key to close video modal
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isVideoModalOpen) {
+        setIsVideoModalOpen(false);
+      }
+    };
+    if (isVideoModalOpen) {
+      document.addEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = 'hidden'; // Prevent scroll when modal open
+    }
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = '';
+    };
+  }, [isVideoModalOpen]);
 
   // Calculate costs
   const videoBaseCost = MODEL_COSTS[videoModel] || 28;
@@ -267,16 +297,130 @@ const SceneCard: React.FC<SceneCardProps> = ({
                 </div>
               </div>
             ) : externalVideoUrl ? (
-              <div className="relative w-full h-full group/vidplay">
-                <video src={externalVideoUrl} controls className="w-full h-full object-cover" />
-                <button
-                  onClick={() => downloadFile(externalVideoUrl!, `scene-${scene.scene_number}-video.mp4`)}
-                  title="Download Video"
-                  className="absolute top-3 right-3 p-2 bg-black/60 hover:bg-emerald-500 hover:text-white text-white rounded-full backdrop-blur-md transition-all border border-white/10 opacity-0 group-hover/vidplay:opacity-100"
+              <>
+                {/* Video preview - clicking opens modal */}
+                <div 
+                  className="relative w-full h-full group/vidplay cursor-pointer"
+                  onClick={() => setIsVideoModalOpen(true)}
                 >
-                  <DownloadIcon />
-                </button>
-              </div>
+                  {/* Video preview with custom overlay instead of native controls */}
+                  <video 
+                    src={externalVideoUrl} 
+                    className="w-full h-full object-cover pointer-events-none" 
+                    muted 
+                    loop 
+                    autoPlay 
+                    playsInline
+                  />
+                  
+                  {/* Play overlay - indicates clickable */}
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/20 hover:bg-black/30 transition-colors">
+                    <div className="w-16 h-16 rounded-full bg-white/30 backdrop-blur-sm flex items-center justify-center border-2 border-white/50">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8 text-white ml-1">
+                        <path fillRule="evenodd" d="M4.5 5.653c0-1.426 1.529-2.33 2.779-1.643l11.54 6.348c1.295.712 1.295 2.573 0 3.285L7.28 19.991c-1.25.687-2.779-.217-2.779-1.643V5.653z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                  </div>
+                  
+                  {/* Action buttons overlay */}
+                  <div className="absolute top-3 right-3 flex gap-2" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsVideoModalOpen(true);
+                      }}
+                      title="全屏播放"
+                      className="p-2 bg-slate-800/90 hover:bg-slate-700 text-white rounded-full backdrop-blur-md transition-all border border-white/20 shadow-lg"
+                    >
+                      <ExpandIcon />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        downloadFile(externalVideoUrl!, `scene-${scene.scene_number}-video.mp4`);
+                      }}
+                      title="下载视频"
+                      className="p-2.5 bg-emerald-600/90 hover:bg-emerald-500 text-white rounded-full backdrop-blur-md transition-all border border-white/20 shadow-lg flex items-center gap-1"
+                    >
+                      <DownloadIcon />
+                      <span className="text-xs font-bold pr-1">下载</span>
+                    </button>
+                  </div>
+                  
+                  {/* Bottom hint */}
+                  <div className="absolute bottom-2 left-0 right-0 text-center">
+                    <span className="text-xs text-white/70 bg-black/50 px-3 py-1 rounded-full backdrop-blur-sm">
+                      点击播放视频
+                    </span>
+                  </div>
+                </div>
+
+                {/* Video Fullscreen Modal */}
+                {isVideoModalOpen && (
+                  <div 
+                    className="fixed inset-0 z-[9999] bg-black/95 flex items-center justify-center"
+                    onClick={() => setIsVideoModalOpen(false)}
+                  >
+                    {/* Top bar with buttons */}
+                    <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center bg-gradient-to-b from-black/80 to-transparent z-10">
+                      {/* Back/Close button - LEFT side, very prominent */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setIsVideoModalOpen(false);
+                        }}
+                        className="flex items-center gap-2 px-5 py-3 bg-white/20 hover:bg-white/30 text-white rounded-full backdrop-blur-md transition-all border border-white/30 shadow-xl"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+                        </svg>
+                        <span className="text-base font-bold">返回</span>
+                      </button>
+
+                      {/* Right side buttons */}
+                      <div className="flex gap-3">
+                        {/* Download button */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            downloadFile(externalVideoUrl!, `scene-${scene.scene_number}-video.mp4`);
+                          }}
+                          className="flex items-center gap-2 px-4 py-3 bg-emerald-600/90 hover:bg-emerald-500 text-white rounded-full backdrop-blur-md transition-all border border-white/20 shadow-xl"
+                        >
+                          <DownloadIcon />
+                          <span className="text-sm font-bold">下载视频</span>
+                        </button>
+
+                        {/* Close X button */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setIsVideoModalOpen(false);
+                          }}
+                          className="p-3 bg-red-600/80 hover:bg-red-500 text-white rounded-full backdrop-blur-md transition-all border border-white/20 shadow-xl"
+                          title="关闭"
+                        >
+                          <CloseIcon />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Video player */}
+                    <video 
+                      src={externalVideoUrl} 
+                      controls 
+                      autoPlay
+                      className="max-w-[90vw] max-h-[80vh] rounded-lg shadow-2xl"
+                      onClick={(e) => e.stopPropagation()}
+                    />
+
+                    {/* Hint text */}
+                    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 text-white/50 text-sm">
+                      点击任意位置或按 ESC 关闭
+                    </div>
+                  </div>
+                )}
+              </>
             ) : (
               <button
                 onClick={canAffordVideo ? handleGenerateVideoClick : openPricingModal}

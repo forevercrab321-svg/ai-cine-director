@@ -3,7 +3,7 @@
  * Shows primary image prominently, other images as thumbnails.
  * Includes generate/reroll/edit/download/video buttons per image.
  */
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Shot, ShotImage, ImageModel, AspectRatio, VideoStyle, MODEL_COSTS } from '../types';
 import { generateShotImage, editShotImage, getImageCost, GenerateImageResult } from '../services/shotImageService';
 import { startVideoTask, checkPredictionStatus } from '../services/replicateService';
@@ -45,6 +45,8 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
     const [generatingVideoForImage, setGeneratingVideoForImage] = useState<string | null>(null);
     const [videoUrl, setVideoUrl] = useState<string | null>(shot.video_url || null);
     const [videoError, setVideoError] = useState<string | null>(null);
+    const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
+    const videoRef = useRef<HTMLVideoElement>(null);
 
     const primaryImage = images.find(i => i.is_primary) || images[0];
     const otherImages = images.filter(i => i.id !== primaryImage?.id);
@@ -335,18 +337,76 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
                             href={videoUrl}
                             download={`shot-${shot.shot_number}-video.mp4`}
                             className="text-xs text-violet-400 hover:text-violet-300 flex items-center gap-1"
+                            onClick={(e) => e.stopPropagation()}
                         >
                             <DownloadIcon /> 下载视频
                         </a>
                     </div>
-                    <video
-                        src={videoUrl}
-                        controls
-                        autoPlay
-                        loop
-                        muted
-                        className="w-full max-h-48 object-contain bg-black"
-                    />
+                    <div 
+                        className="relative cursor-pointer group"
+                        onClick={() => setIsVideoModalOpen(true)}
+                    >
+                        <video
+                            src={videoUrl}
+                            autoPlay
+                            loop
+                            muted
+                            playsInline
+                            className="w-full max-h-48 object-contain bg-black"
+                        />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <span className="text-white text-sm font-medium">🎬 点击全屏播放</span>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Video fullscreen modal */}
+            {isVideoModalOpen && videoUrl && (
+                <div 
+                    className="fixed inset-0 bg-black/95 z-[9999] flex flex-col"
+                    onClick={() => setIsVideoModalOpen(false)}
+                >
+                    {/* Header with close and download buttons */}
+                    <div className="flex items-center justify-between p-4 bg-black/80">
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setIsVideoModalOpen(false);
+                            }}
+                            className="flex items-center gap-2 text-white hover:text-violet-300 transition-colors"
+                        >
+                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                            </svg>
+                            <span>返回</span>
+                        </button>
+                        <span className="text-white font-medium">镜头 {shot.shot_number} - 视频</span>
+                        <a
+                            href={videoUrl}
+                            download={`shot-${shot.shot_number}-video.mp4`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="flex items-center gap-2 text-white hover:text-violet-300 transition-colors bg-violet-600/30 px-4 py-2 rounded-lg"
+                        >
+                            <DownloadIcon /> 下载
+                        </a>
+                    </div>
+                    
+                    {/* Video player */}
+                    <div 
+                        className="flex-1 flex items-center justify-center p-4"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <video
+                            ref={videoRef}
+                            src={videoUrl}
+                            controls
+                            autoPlay
+                            loop
+                            className="max-w-full max-h-full rounded-lg"
+                            style={{ maxHeight: 'calc(100vh - 120px)' }}
+                        />
+                    </div>
                 </div>
             )}
 

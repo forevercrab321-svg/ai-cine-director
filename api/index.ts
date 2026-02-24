@@ -390,7 +390,37 @@ const estimateCost = (model: string): number => {
     return COSTS[model] || 28;  // 默认值与 types.ts MODEL_COSTS.DEFAULT 保持一致
 };
 
-// --- Admin Check ---
+// ═══════════════════════════════════════════════════════════════
+// GOD MODE - Developer Allowlist (env-driven + hardcoded fallback)
+// ═══════════════════════════════════════════════════════════════
+
+// Hardcoded developer emails (always checked, no env dependency)
+const HARDCODED_DEV_EMAILS = [
+    'forevercrab321@gmail.com',
+    'monsterlee@gmail.com',
+];
+
+const getDeveloperAllowlist = (): string[] => {
+    const envVal = process.env.DEV_EMAIL_ALLOWLIST || '';
+    const envEmails = envVal
+        .split(',')
+        .map((e) => e.trim().toLowerCase())
+        .filter(Boolean);
+    // Merge hardcoded + env-driven, dedupe
+    return [...new Set([...HARDCODED_DEV_EMAILS.map(e => e.toLowerCase()), ...envEmails])];
+};
+
+const isDeveloper = (email: string | null | undefined): boolean => {
+    if (!email) return false;
+    const allowlist = getDeveloperAllowlist();
+    return allowlist.includes(email.toLowerCase());
+};
+
+const logDeveloperAccess = (email: string, action: string) => {
+    console.log(`[GOD MODE] Developer "${email}" performed: ${action}`);
+};
+
+// --- Legacy Admin Check (backward compat, will merge with isDeveloper) ---
 const ADMIN_EMAILS = [
     'forevercrab321@gmail.com',
     'monsterlee@gmail.com',
@@ -398,7 +428,134 @@ const ADMIN_EMAILS = [
 
 const isAdminUser = (email: string | undefined): boolean => {
     if (!email) return false;
-    return ADMIN_EMAILS.includes(email.toLowerCase());
+    // Check both hardcoded ADMIN_EMAILS and env-driven DEV_EMAIL_ALLOWLIST
+    return ADMIN_EMAILS.includes(email.toLowerCase()) || isDeveloper(email);
+};
+
+// ═══════════════════════════════════════════════════════════════
+// Entitlement Types
+// ═══════════════════════════════════════════════════════════════
+type EntitlementAction = 
+    | 'generate_script' | 'generate_shots' | 'generate_image'
+    | 'generate_video' | 'edit_image' | 'batch_images' | 'analyze_image';
+
+type UserPlan = 'free' | 'paid' | 'developer';
+
+interface EntitlementResult {
+    allowed: boolean;
+    mode: 'developer' | 'paid' | 'free';
+    unlimited: boolean;
+    credits: number;
+    plan: UserPlan;
+    reason?: string;
+    errorCode?: 'NEED_PAYMENT' | 'INSUFFICIENT_CREDITS' | 'RATE_LIMITED' | 'UNAUTHORIZED';
+}
+
+/**
+ * Unified entitlement check - ALL generation routes MUST call this
+ */
+const checkEntitlement = async (
+    userId: string,
+    email: string,
+    action: EntitlementAction,
+    cost: number = 0
+): Promise<EntitlementResult> => {
+    // 1. GOD MODE check
+    if (isDeveloper(email)) {
+        logDeveloperAccess(email, action);
+        return {
+            allowed: true,
+            mode: 'developer',
+            unlimited: true,
+            credits: 999999,
+            plan: 'developer',
+        };
+    }
+    
+    // 2. Get user profile + credits (using service role for admin access)
+    const supabaseAdmin = createClient(
+        process.env.VITE_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+    
+    let { data: profile, error: profileErr } = await supabaseAdmin
+        .from('profiles')
+        .select('id, credits, plan, is_paid')
+        .eq('id', userId)
+        .single();
+    
+    // ★ AUTO-CREATE PROFILE if not exists (fix for new user signup)
+    if (profileErr || !profile) {
+        console.log(`[Profile] Creating new profile for user ${userId} (${email})`);
+        
+        // Insert new profile with 50 initial credits
+        const { data: newProfile, error: insertErr } = await supabaseAdmin
+            .from('profiles')
+            .insert({
+                id: userId,
+                name: email.split('@')[0],
+                credits: 50,  // Initial free credits
+                is_admin: false,
+                is_pro: false,
+            })
+            .select('id, credits, plan, is_paid')
+            .single();
+        
+        if (insertErr) {
+            console.error('[Profile] Failed to create profile:', insertErr.message);
+            return {
+                allowed: false,
+                mode: 'free',
+                unlimited: false,
+                credits: 0,
+                plan: 'free',
+                reason: 'Failed to create user profile. Please try again.',
+                errorCode: 'UNAUTHORIZED',
+            };
+        }
+        
+        profile = newProfile;
+        console.log(`[Profile] Created new profile for ${email} with 50 credits`);
+    }
+    
+    const userCredits = profile.credits ?? 0;
+    const isPaid = profile.is_paid === true || profile.plan === 'paid';
+    const plan: UserPlan = isPaid ? 'paid' : 'free';
+    
+    // 3. Free user with no credits → NEED_PAYMENT
+    if (!isPaid && userCredits <= 0) {
+        return {
+            allowed: false,
+            mode: 'free',
+            unlimited: false,
+            credits: userCredits,
+            plan: 'free',
+            reason: 'Please purchase credits or subscribe to use this feature',
+            errorCode: 'NEED_PAYMENT',
+        };
+    }
+    
+    // 4. Insufficient credits for this action
+    if (cost > 0 && userCredits < cost) {
+        return {
+            allowed: false,
+            mode: plan === 'paid' ? 'paid' : 'free',
+            unlimited: false,
+            credits: userCredits,
+            plan,
+            reason: `Insufficient credits: need ${cost}, have ${userCredits}`,
+            errorCode: 'INSUFFICIENT_CREDITS',
+        };
+    }
+    
+    // 5. Allowed
+    return {
+        allowed: true,
+        mode: plan === 'paid' ? 'paid' : 'free',
+        unlimited: false,
+        credits: userCredits,
+        plan,
+    };
 };
 
 const isNsfwError = (text: string) => /nsfw|safety|moderation|content policy/i.test(text || '');
@@ -410,21 +567,155 @@ const sanitizePromptForSafety = (prompt: string) => {
         .concat(' Family-friendly cinematic scene, no gore, no violence, no explicit content.');
 };
 
+// ═══════════════════════════════════════════════════════════════
+// /api/entitlement - 前端获取当前用户权限状态
+// ═══════════════════════════════════════════════════════════════
+app.get('/api/entitlement', requireAuth, async (req: any, res: any) => {
+    try {
+        const userId = req.user?.id;
+        const userEmail = req.user?.email;
+        
+        if (!userId || !userEmail) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        
+        // Check GOD MODE first
+        const isDevMode = isDeveloper(userEmail);
+        
+        if (isDevMode) {
+            logDeveloperAccess(userEmail, 'entitlement_check');
+            return res.json({
+                isDeveloper: true,
+                isAdmin: true,
+                plan: 'developer',
+                credits: 999999,
+                canGenerate: true,
+                mode: 'developer',
+                reasonIfBlocked: null,
+            });
+        }
+        
+        // Get profile for regular users
+        const supabaseAdmin = createClient(
+            process.env.VITE_SUPABASE_URL!,
+            process.env.SUPABASE_SERVICE_ROLE_KEY!
+        );
+        
+        const { data: profile } = await supabaseAdmin
+            .from('profiles')
+            .select('id, credits, plan, is_paid, is_admin')
+            .eq('id', userId)
+            .single();
+        
+        const credits = profile?.credits ?? 0;
+        const isPaid = profile?.is_paid === true || profile?.plan === 'paid';
+        const plan: UserPlan = isPaid ? 'paid' : 'free';
+        const canGenerate = credits > 0 || isPaid;
+        
+        res.json({
+            isDeveloper: false,
+            isAdmin: profile?.is_admin === true,
+            plan,
+            credits,
+            canGenerate,
+            mode: plan,
+            reasonIfBlocked: canGenerate ? null : 'NEED_PAYMENT',
+        });
+        
+    } catch (err: any) {
+        console.error('[/api/entitlement Error]', err);
+        res.status(500).json({ error: err.message || 'Failed to check entitlement' });
+    }
+});
+
 // --- Routes ---
+
+// ═══════════════════════════════════════════════════════════════
+// IMAGE URL PREPROCESSING - Fix for Replicate temporary URL expiration
+// ═══════════════════════════════════════════════════════════════
+
+// Video models that require image input
+const VIDEO_MODELS = ['wan-video', 'minimax', 'bytedance', 'kwaivgi', 'hailuo', 'kling'];
+
+// Check if this is a video model request
+function isVideoModelRequest(version: string): boolean {
+    return VIDEO_MODELS.some(prefix => version.toLowerCase().includes(prefix));
+}
+
+// Download image and convert to base64 data URL
+async function downloadImageAsBase64(url: string): Promise<string> {
+    console.log('[ImageProxy] Downloading image:', url.substring(0, 80) + '...');
+    
+    const response = await fetch(url, {
+        headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; AI-Cine-Director/1.0)'
+        }
+    });
+    
+    if (!response.ok) {
+        throw new Error(`Image download failed: ${response.status} ${response.statusText}`);
+    }
+    
+    const buffer = await response.buffer();
+    const contentType = response.headers.get('content-type') || 'image/jpeg';
+    const base64 = buffer.toString('base64');
+    
+    console.log('[ImageProxy] Downloaded image, size:', buffer.length, 'bytes, type:', contentType);
+    
+    return `data:${contentType};base64,${base64}`;
+}
+
+// Preprocess input for video models - convert image URLs to base64
+async function preprocessVideoInput(input: Record<string, any>): Promise<Record<string, any>> {
+    const imageFields = ['image', 'first_frame_image', 'start_frame', 'reference_image'];
+    const result = { ...input };
+    
+    for (const field of imageFields) {
+        const url = input[field];
+        if (url && typeof url === 'string' && url.startsWith('http')) {
+            // Check if URL is a temporary Replicate delivery URL
+            if (url.includes('replicate.delivery') || url.includes('pbxt.replicate.delivery')) {
+                try {
+                    result[field] = await downloadImageAsBase64(url);
+                    console.log('[ImageProxy] Converted', field, 'to base64');
+                } catch (err: any) {
+                    console.error('[ImageProxy] Failed to download image:', err.message);
+                    throw new Error(`图片已过期，请重新生成图片后再生成视频 (Image expired, please regenerate the image)`);
+                }
+            }
+        }
+    }
+    
+    return result;
+}
 
 // Replicate Predict with Reserve / Finalize / Refund
 app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
-    const { version, input } = req.body;
+    const { version, input: rawInput } = req.body;
     const authHeader = `Bearer ${req.accessToken}`;
+    const userId = req.user?.id;
     const userEmail = req.user?.email;
 
     const estimatedCost = estimateCost(version);
     const jobRef = `replicate:${Date.now()}:${Math.random().toString(36).slice(2)}`;
 
-    // ★ ADMIN BYPASS: Skip credit check for admin users
-    const skipCreditCheck = isAdminUser(userEmail);
+    // ★ GOD MODE: Check entitlement before proceeding
+    const entitlement = await checkEntitlement(userId, userEmail, 'generate_image', estimatedCost);
+    if (!entitlement.allowed) {
+        const status = entitlement.errorCode === 'NEED_PAYMENT' ? 402 
+                     : entitlement.errorCode === 'INSUFFICIENT_CREDITS' ? 402 : 403;
+        return res.status(status).json({
+            error: entitlement.reason,
+            code: entitlement.errorCode,
+            credits: entitlement.credits,
+            plan: entitlement.plan,
+        });
+    }
+    
+    // Skip credit operations for developers (GOD MODE)
+    const skipCreditCheck = entitlement.mode === 'developer';
     if (skipCreditCheck) {
-        console.log(`[ADMIN BYPASS] Skipping credit reserve for admin: ${userEmail} (cost would be ${estimatedCost})`);
+        logDeveloperAccess(userEmail, `replicate:${version}:cost=${estimatedCost}`);
     }
 
     // User-context client for RPC
@@ -434,7 +725,7 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
         { global: { headers: { Authorization: authHeader } } }
     );
 
-    // 1) Reserve credits (skip for admin)
+    // 1) Reserve credits (skip for GOD MODE)
     let reserved = true;
     if (!skipCreditCheck) {
         const { data, error: reserveErr } = await supabaseUser.rpc('reserve_credits', {
@@ -462,6 +753,27 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
     try {
         const token = getReplicateToken();
         const base = 'https://api.replicate.com/v1';
+
+        // ★ Preprocess input for video models - convert expired image URLs to base64
+        let input = rawInput;
+        if (isVideoModelRequest(version)) {
+            try {
+                input = await preprocessVideoInput(rawInput);
+            } catch (err: any) {
+                // Image download failed (likely expired URL)
+                if (!skipCreditCheck) {
+                    await supabaseUser.rpc('refund_reserve', {
+                        amount: estimatedCost,
+                        ref_type: 'replicate',
+                        ref_id: jobRef
+                    });
+                }
+                return res.status(400).json({ 
+                    error: err.message,
+                    code: 'IMAGE_EXPIRED'
+                });
+            }
+        }
 
         const isModelPath = version.includes('/') && !version.match(/^[a-f0-9]{64}$/);
         const targetUrl = isModelPath ? `${base}/models/${version}/predictions` : `${base}/predictions`;
@@ -596,8 +908,26 @@ app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
     try {
         const { storyIdea, visualStyle, language, identityAnchor } = req.body;
         const authHeader = `Bearer ${req.accessToken}`;
+        const userId = req.user?.id;
         const userEmail = req.user?.email;
-        const skipCreditCheck = isAdminUser(userEmail);
+        
+        // ★ GOD MODE: Check entitlement
+        const COST = 1;
+        const entitlement = await checkEntitlement(userId, userEmail, 'generate_script', COST);
+        if (!entitlement.allowed) {
+            const status = entitlement.errorCode === 'NEED_PAYMENT' ? 402 
+                         : entitlement.errorCode === 'INSUFFICIENT_CREDITS' ? 402 : 403;
+            return res.status(status).json({
+                error: entitlement.reason,
+                code: entitlement.errorCode,
+                credits: entitlement.credits,
+            });
+        }
+        
+        const skipCreditCheck = entitlement.mode === 'developer';
+        if (skipCreditCheck) {
+            logDeveloperAccess(userEmail, `gemini:generate:cost=${COST}`);
+        }
 
         const supabaseUser = createClient(
             process.env.VITE_SUPABASE_URL!,
@@ -605,8 +935,7 @@ app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
             { global: { headers: { Authorization: authHeader } } }
         );
 
-        // Reserve 1 credit
-        const COST = 1;
+        // Reserve credits (skip for GOD MODE)
         if (!skipCreditCheck) {
             const { data: reserved, error: reserveErr } = await supabaseUser.rpc('reserve_credits', {
                 amount: COST, ref_type: 'gemini', ref_id: jobRef
@@ -614,8 +943,6 @@ app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
 
             if (reserveErr) return res.status(500).json({ error: 'Credit verification failed' });
             if (!reserved) return res.status(402).json({ error: 'INSUFFICIENT_CREDITS', code: 'INSUFFICIENT_CREDITS' });
-        } else {
-            console.log(`[ADMIN BYPASS] Skipping gemini credit reserve for admin: ${userEmail}`);
         }
         if (!storyIdea) return res.status(400).json({ error: 'Missing storyIdea' });
 
@@ -734,10 +1061,30 @@ async function checkIsAdmin(supabaseUser: any): Promise<boolean> {
     try {
         const { data: { user } } = await supabaseUser.auth.getUser();
         if (!user) return false;
+        // GOD MODE check via env-driven allowlist
+        if (isDeveloper(user.email)) return true;
+        // Legacy hardcoded admin check
         if (user.email && ADMIN_EMAILS.includes(user.email.toLowerCase())) return true;
+        // DB-based admin check
         const { data: profile } = await supabaseUser.from('profiles').select('is_admin').eq('id', user.id).single();
         return profile?.is_admin === true;
     } catch { return false; }
+}
+
+// Helper: Get user email from supabase client
+async function getUserEmail(supabaseUser: any): Promise<string | null> {
+    try {
+        const { data: { user } } = await supabaseUser.auth.getUser();
+        return user?.email || null;
+    } catch { return null; }
+}
+
+// Helper: Get user id from supabase client
+async function getUserId(supabaseUser: any): Promise<string | null> {
+    try {
+        const { data: { user } } = await supabaseUser.auth.getUser();
+        return user?.id || null;
+    } catch { return null; }
 }
 
 const REPLICATE_API_BASE = 'https://api.replicate.com/v1';
@@ -951,16 +1298,37 @@ app.post('/api/shots/generate', async (req: any, res: any) => {
         if (!visual_description) return res.status(400).json({ error: 'Missing visual_description' });
 
         const supabaseUser = getUserClient(authHeader);
-        const isAdmin = await checkIsAdmin(supabaseUser);
+        const userId = await getUserId(supabaseUser);
+        const userEmail = await getUserEmail(supabaseUser);
+        
+        if (!userId || !userEmail) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        
+        // ★ GOD MODE: Check entitlement
         const COST = 1;
+        const entitlement = await checkEntitlement(userId, userEmail, 'generate_shots', COST);
+        if (!entitlement.allowed) {
+            const status = entitlement.errorCode === 'NEED_PAYMENT' ? 402 
+                         : entitlement.errorCode === 'INSUFFICIENT_CREDITS' ? 402 : 403;
+            return res.status(status).json({
+                error: entitlement.reason,
+                code: entitlement.errorCode,
+                credits: entitlement.credits,
+            });
+        }
+        
+        const skipCreditCheck = entitlement.mode === 'developer';
         const jobRef = `shots:${Date.now()}:${Math.random().toString(36).slice(2)}`;
 
-        if (!isAdmin) {
+        if (!skipCreditCheck) {
             const { data: reserved, error: reserveErr } = await supabaseUser.rpc('reserve_credits', {
                 amount: COST, ref_type: 'shots', ref_id: jobRef
             });
             if (reserveErr) return res.status(500).json({ error: 'Credit verification failed' });
             if (!reserved) return res.status(402).json({ error: 'Insufficient credits', code: 'INSUFFICIENT_CREDITS' });
+        } else {
+            logDeveloperAccess(userEmail, `shots:generate:cost=${COST}`);
         }
 
         const ai = getGeminiAI();
@@ -1032,7 +1400,7 @@ ${character_anchor ? `Character Anchor (MUST appear in every shot's image_prompt
             updated_at: new Date().toISOString(),
         }));
 
-        if (!isAdmin) {
+        if (!skipCreditCheck) {
             await supabaseUser.rpc('finalize_reserve', { ref_type: 'shots', ref_id: jobRef });
         }
 
@@ -1056,11 +1424,11 @@ app.post('/api/shots/:shotId/rewrite', async (req: any, res: any) => {
         if (!fields_to_rewrite?.length) return res.status(400).json({ error: 'No fields specified for rewrite' });
 
         const supabaseUser = getUserClient(authHeader);
-        const isAdmin = await checkIsAdmin(supabaseUser);
+        const skipCreditCheck = await checkIsAdmin(supabaseUser);
         const COST = 1;
         const jobRef = `rewrite:${Date.now()}:${Math.random().toString(36).slice(2)}`;
 
-        if (!isAdmin) {
+        if (!skipCreditCheck) {
             const { data: reserved, error: reserveErr } = await supabaseUser.rpc('reserve_credits', {
                 amount: COST, ref_type: 'rewrite', ref_id: jobRef
             });
@@ -1125,7 +1493,7 @@ ${shotJson}
             if (!fields_to_rewrite.includes(key)) delete rewrittenFields[key];
         }
 
-        if (!isAdmin) {
+        if (!skipCreditCheck) {
             await supabaseUser.rpc('finalize_reserve', { ref_type: 'rewrite', ref_id: jobRef });
         }
 
@@ -1149,18 +1517,40 @@ app.post('/api/shot-images/:shotId/generate', async (req: any, res: any) => {
         if (!authHeader) return res.status(401).json({ error: 'Missing Authorization header' });
 
         const supabaseUser = getUserClient(authHeader);
-        const isAdmin = await checkIsAdmin(supabaseUser);
+        const userId = await getUserId(supabaseUser);
+        const userEmail = await getUserEmail(supabaseUser);
+        
+        if (!userId || !userEmail) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        
         const imageModel = model || 'flux';
         const replicatePath = (REPLICATE_MODEL_PATHS as any)[imageModel] || REPLICATE_MODEL_PATHS['flux'];
         const cost = (IMAGE_MODEL_COSTS as any)[imageModel] ?? 6;
+        
+        // ★ GOD MODE: Check entitlement
+        const entitlement = await checkEntitlement(userId, userEmail, 'generate_image', cost);
+        if (!entitlement.allowed) {
+            const status = entitlement.errorCode === 'NEED_PAYMENT' ? 402 
+                         : entitlement.errorCode === 'INSUFFICIENT_CREDITS' ? 402 : 403;
+            return res.status(status).json({
+                error: entitlement.reason,
+                code: entitlement.errorCode,
+                credits: entitlement.credits,
+            });
+        }
+        
+        const skipCreditCheck = entitlement.mode === 'developer';
 
         const jobRef = `shot-img:${Date.now()}:${Math.random().toString(36).slice(2)}`;
-        if (!isAdmin) {
+        if (!skipCreditCheck) {
             const { data: reserved, error: reserveErr } = await supabaseUser.rpc('reserve_credits', {
                 amount: cost, ref_type: 'shot-image', ref_id: jobRef,
             });
             if (reserveErr) return res.status(500).json({ error: 'Credit verification failed' });
             if (!reserved) return res.status(402).json({ error: 'Insufficient credits', code: 'INSUFFICIENT_CREDITS' });
+        } else {
+            logDeveloperAccess(userEmail, `shot-image:generate:model=${imageModel}:cost=${cost}`);
         }
 
         const finalPrompt = buildFinalPrompt({
@@ -1172,11 +1562,11 @@ app.post('/api/shot-images/:shotId/generate', async (req: any, res: any) => {
         try {
             result = await callReplicateImage({ prompt: finalPrompt, model: replicatePath, aspectRatio: aspect_ratio || '16:9', seed: seed ?? 142857 });
         } catch (genErr: any) {
-            if (!isAdmin) { try { await supabaseUser.rpc('refund_reserve', { amount: cost, ref_type: 'shot-image', ref_id: jobRef }); } catch (_) {} }
+            if (!skipCreditCheck) { try { await supabaseUser.rpc('refund_reserve', { amount: cost, ref_type: 'shot-image', ref_id: jobRef }); } catch (_) {} }
             throw genErr;
         }
 
-        if (!isAdmin) { await supabaseUser.rpc('finalize_reserve', { ref_type: 'shot-image', ref_id: jobRef }); }
+        if (!skipCreditCheck) { await supabaseUser.rpc('finalize_reserve', { ref_type: 'shot-image', ref_id: jobRef }); }
 
         const now = new Date().toISOString();
         const imageId = crypto.randomUUID();
@@ -1211,18 +1601,40 @@ app.post('/api/shot-images/:imageId/edit', async (req: any, res: any) => {
         if (!edit_mode) return res.status(400).json({ error: 'Missing edit_mode' });
 
         const supabaseUser = getUserClient(authHeader);
-        const isAdmin = await checkIsAdmin(supabaseUser);
+        const userId = await getUserId(supabaseUser);
+        const userEmail = await getUserEmail(supabaseUser);
+        
+        if (!userId || !userEmail) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+        
         const imageModel = model || 'flux';
         const replicatePath = (REPLICATE_MODEL_PATHS as any)[imageModel] || REPLICATE_MODEL_PATHS['flux'];
         const cost = (IMAGE_MODEL_COSTS as any)[imageModel] ?? 6;
+        
+        // ★ GOD MODE: Check entitlement
+        const entitlement = await checkEntitlement(userId, userEmail, 'edit_image', cost);
+        if (!entitlement.allowed) {
+            const status = entitlement.errorCode === 'NEED_PAYMENT' ? 402 
+                         : entitlement.errorCode === 'INSUFFICIENT_CREDITS' ? 402 : 403;
+            return res.status(status).json({
+                error: entitlement.reason,
+                code: entitlement.errorCode,
+                credits: entitlement.credits,
+            });
+        }
+        
+        const skipCreditCheck = entitlement.mode === 'developer';
 
         const jobRef = `shot-img-edit:${Date.now()}:${Math.random().toString(36).slice(2)}`;
-        if (!isAdmin) {
+        if (!skipCreditCheck) {
             const { data: reserved, error: reserveErr } = await supabaseUser.rpc('reserve_credits', {
                 amount: cost, ref_type: 'shot-image-edit', ref_id: jobRef,
             });
             if (reserveErr) return res.status(500).json({ error: 'Credit verification failed' });
             if (!reserved) return res.status(402).json({ error: 'Insufficient credits', code: 'INSUFFICIENT_CREDITS' });
+        } else {
+            logDeveloperAccess(userEmail, `shot-image:edit:model=${imageModel}:cost=${cost}`);
         }
 
         let basePrompt = original_prompt || '';
@@ -1242,11 +1654,11 @@ app.post('/api/shot-images/:imageId/edit', async (req: any, res: any) => {
         try {
             result = await callReplicateImage({ prompt: finalPrompt, model: replicatePath, aspectRatio: aspect_ratio || '16:9', seed: editSeed });
         } catch (genErr: any) {
-            if (!isAdmin) { try { await supabaseUser.rpc('refund_reserve', { amount: cost, ref_type: 'shot-image-edit', ref_id: jobRef }); } catch (_) {} }
+            if (!skipCreditCheck) { try { await supabaseUser.rpc('refund_reserve', { amount: cost, ref_type: 'shot-image-edit', ref_id: jobRef }); } catch (_) {} }
             throw genErr;
         }
 
-        if (!isAdmin) { await supabaseUser.rpc('finalize_reserve', { ref_type: 'shot-image-edit', ref_id: jobRef }); }
+        if (!skipCreditCheck) { await supabaseUser.rpc('finalize_reserve', { ref_type: 'shot-image-edit', ref_id: jobRef }); }
 
         const now = new Date().toISOString();
         const newImageId = crypto.randomUUID();
@@ -1274,7 +1686,7 @@ app.post('/api/shot-images/:imageId/edit', async (req: any, res: any) => {
 // ───────────────────────────────────────────────────────────────
 app.post('/api/batch/gen-images', async (req: any, res: any) => {
     try {
-        const { project_id, shots, count = 9, model = 'flux', aspect_ratio = '16:9', style = 'none', character_anchor = '', concurrency = 2 } = req.body;
+        const { project_id, shots, count = 100, model = 'flux', aspect_ratio = '16:9', style = 'none', character_anchor = '', concurrency = 2 } = req.body;
         if (!project_id) return res.status(400).json({ error: 'Missing project_id' });
         if (!shots?.length) return res.status(400).json({ error: 'Missing or empty shots array' });
 
@@ -1282,18 +1694,40 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
         if (!authHeader) return res.status(401).json({ error: 'Missing Authorization header' });
 
         const supabaseUser = getUserClient(authHeader);
-        const isAdmin = await checkIsAdmin(supabaseUser);
+        const userId = await getUserId(supabaseUser);
+        const userEmail = await getUserEmail(supabaseUser);
+        
+        if (!userId || !userEmail) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
 
         const sortedShots = [...shots].sort((a: any, b: any) => (a.scene_number - b.scene_number) || (a.shot_number - b.shot_number)).slice(0, count);
         const replicatePath = (REPLICATE_MODEL_PATHS as any)[model] || REPLICATE_MODEL_PATHS['flux'];
         const costPerImage = (IMAGE_MODEL_COSTS as any)[model] ?? 6;
         const totalCost = costPerImage * sortedShots.length;
 
+        // ★ GOD MODE: Check entitlement
+        const entitlement = await checkEntitlement(userId, userEmail, 'batch_images', totalCost);
+        if (!entitlement.allowed) {
+            const status = entitlement.errorCode === 'NEED_PAYMENT' ? 402 
+                         : entitlement.errorCode === 'INSUFFICIENT_CREDITS' ? 402 : 403;
+            return res.status(status).json({
+                error: entitlement.reason,
+                code: entitlement.errorCode,
+                credits: entitlement.credits,
+                needed: totalCost,
+            });
+        }
+        
+        const skipCreditCheck = entitlement.mode === 'developer';
+
         const batchRef = `batch-img:${Date.now()}:${Math.random().toString(36).slice(2)}`;
-        if (!isAdmin) {
+        if (!skipCreditCheck) {
             const { data: reserved, error: reserveErr } = await supabaseUser.rpc('reserve_credits', { amount: totalCost, ref_type: 'batch-image', ref_id: batchRef });
             if (reserveErr) return res.status(500).json({ error: 'Credit verification failed' });
             if (!reserved) return res.status(402).json({ error: 'Insufficient credits', code: 'INSUFFICIENT_CREDITS', needed: totalCost });
+        } else {
+            logDeveloperAccess(userEmail, `batch:gen-images:count=${sortedShots.length}:totalCost=${totalCost}`);
         }
 
         const jobId = crypto.randomUUID();
@@ -1306,12 +1740,12 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
         };
 
         const job = createBatchJob({
-            jobId, projectId: project_id, userId: '', concurrency: Math.min(concurrency, 3), executor,
+            jobId, projectId: project_id, userId: '', concurrency: Math.min(concurrency, 5), executor,
             items: sortedShots.map((s: any) => ({ shotId: s.shot_id, shotNumber: s.shot_number, sceneNumber: s.scene_number })),
         });
 
         // Async credit finalization
-        if (!isAdmin) {
+        if (!skipCreditCheck) {
             (async () => {
                 for (let a = 0; a < 600; a++) {
                     await new Promise(r => setTimeout(r, 3000));
@@ -1339,7 +1773,7 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
 // ───────────────────────────────────────────────────────────────
 app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
     try {
-        const { project_id, shots, shots_with_images = [], count = 9, strategy = 'strict', model = 'flux', aspect_ratio = '16:9', style = 'none', character_anchor = '', concurrency = 2 } = req.body;
+        const { project_id, shots, shots_with_images = [], count = 100, strategy = 'strict', model = 'flux', aspect_ratio = '16:9', style = 'none', character_anchor = '', concurrency = 2 } = req.body;
         if (!project_id) return res.status(400).json({ error: 'Missing project_id' });
         if (!shots?.length) return res.status(400).json({ error: 'Missing or empty shots array' });
 
@@ -1347,7 +1781,12 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
         if (!authHeader) return res.status(401).json({ error: 'Missing Authorization header' });
 
         const supabaseUser = getUserClient(authHeader);
-        const isAdmin = await checkIsAdmin(supabaseUser);
+        const userId = await getUserId(supabaseUser);
+        const userEmail = await getUserEmail(supabaseUser);
+        
+        if (!userId || !userEmail) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
 
         const sortedAll = [...shots].sort((a: any, b: any) => (a.scene_number - b.scene_number) || (a.shot_number - b.shot_number));
         const hasImageSet = new Set(shots_with_images as string[]);
@@ -1379,11 +1818,28 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
         const costPerImage = (IMAGE_MODEL_COSTS as any)[model] ?? 6;
         const totalCost = costPerImage * nextBatch.length;
 
+        // ★ GOD MODE: Check entitlement
+        const entitlement = await checkEntitlement(userId, userEmail, 'batch_images', totalCost);
+        if (!entitlement.allowed) {
+            const status = entitlement.errorCode === 'NEED_PAYMENT' ? 402 
+                         : entitlement.errorCode === 'INSUFFICIENT_CREDITS' ? 402 : 403;
+            return res.status(status).json({
+                error: entitlement.reason,
+                code: entitlement.errorCode,
+                credits: entitlement.credits,
+                needed: totalCost,
+            });
+        }
+        
+        const skipCreditCheck = entitlement.mode === 'developer';
+
         const batchRef = `batch-continue:${Date.now()}:${Math.random().toString(36).slice(2)}`;
-        if (!isAdmin) {
+        if (!skipCreditCheck) {
             const { data: reserved, error: reserveErr } = await supabaseUser.rpc('reserve_credits', { amount: totalCost, ref_type: 'batch-image-continue', ref_id: batchRef });
             if (reserveErr) return res.status(500).json({ error: 'Credit verification failed' });
             if (!reserved) return res.status(402).json({ error: 'Insufficient credits', code: 'INSUFFICIENT_CREDITS', needed: totalCost });
+        } else {
+            logDeveloperAccess(userEmail, `batch:gen-images:continue:count=${nextBatch.length}:totalCost=${totalCost}`);
         }
 
         const jobId = crypto.randomUUID();
@@ -1396,7 +1852,7 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
         };
 
         const job = createBatchJob({
-            jobId, projectId: project_id, userId: '', concurrency: Math.min(concurrency, 3), executor,
+            jobId, projectId: project_id, userId: '', concurrency: Math.min(concurrency, 5), executor,
             items: nextBatch.map((s: any) => ({ shotId: s.shot_id, shotNumber: s.shot_number, sceneNumber: s.scene_number })),
         });
 
@@ -1411,7 +1867,7 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
             }
         }
 
-        if (!isAdmin) {
+        if (!skipCreditCheck) {
             (async () => {
                 for (let a = 0; a < 600; a++) {
                     await new Promise(r => setTimeout(r, 3000));
