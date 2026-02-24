@@ -3,7 +3,6 @@ import { StoryboardProject, Scene, MODEL_COSTS, CREDIT_COSTS, MODEL_MULTIPLIERS,
 import { useAppContext } from '../context/AppContext';
 import { LoaderIcon, CheckIcon } from './IconComponents';
 import { supabase } from '../lib/supabaseClient';
-import { initiateCheckout } from '../services/stripeService';
 
 interface PricingModalProps {
   isOpen: boolean;
@@ -40,8 +39,28 @@ const PricingModal: React.FC<PricingModalProps> = ({ isOpen, onClose, onUpgrade 
         return;
       }
 
-      // We are redirecting directly to the hardcoded Stripe Payment Link
-      initiateCheckout(session.user.id);
+      // Use the proper checkout API that creates a Stripe Checkout Session
+      // This sends user_id + credits in metadata so the webhook can add credits correctly
+      const response = await fetch('/api/billing/checkout', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ packageId: pack.id }),
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+        throw new Error(errData.error || '创建支付会话失败');
+      }
+
+      const { url } = await response.json();
+      if (url) {
+        window.location.href = url;
+      } else {
+        throw new Error('未获取到支付链接');
+      }
 
     } catch (e: any) {
       console.error(e);

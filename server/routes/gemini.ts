@@ -53,11 +53,12 @@ const responseSchema = {
                 type: Type.OBJECT,
                 properties: {
                     scene_number: { type: Type.INTEGER },
+                    scene_setting: { type: Type.STRING },
                     visual_description: { type: Type.STRING },
                     audio_description: { type: Type.STRING },
                     shot_type: { type: Type.STRING },
                 },
-                required: ['scene_number', 'visual_description', 'audio_description', 'shot_type'],
+                required: ['scene_number', 'scene_setting', 'visual_description', 'audio_description', 'shot_type'],
             },
         },
     },
@@ -68,7 +69,8 @@ const responseSchema = {
 geminiRouter.post('/generate', async (req, res) => {
     const jobRef = `gemini:${Date.now()}:${Math.random().toString(36).slice(2)}`;
     try {
-        const { storyIdea, visualStyle, language, mode, identityAnchor } = req.body;
+        const { storyIdea, visualStyle, language, mode, identityAnchor, sceneCount } = req.body;
+        const targetScenes = Math.min(Math.max(Number(sceneCount) || 5, 1), 50);
 
         // ★ 1. Auth & Credit Check
         const authHeader = req.headers.authorization;
@@ -122,30 +124,50 @@ geminiRouter.post('/generate', async (req, res) => {
         const ai = getAI();
 
         const systemInstruction = `
-**Role:** Professional Hollywood Screenwriter & Director of Photography.
-**Task:** Break down the User's Story Concept into a production-ready script with 5 distinct scenes.
+**Role:** Professional Short Drama Screenwriter & Director of Photography.
 
-**★ CRITICAL — CHARACTER CONSISTENCY RULES (MANDATORY):**
-The "character_anchor" field is the SINGLE SOURCE OF TRUTH for the protagonist's appearance.
-It MUST be an extremely detailed, frozen visual identity containing ALL of the following:
-- Exact ethnicity and age range (e.g., "East Asian male, early 20s")
-- Face shape, eye color, eye shape, eyebrow style
-- Hair: exact color, length, style (e.g., "jet black spiky hair, shoulder length")
-- Outfit: exact clothing with colors and materials (e.g., "red silk scarf, golden armor plates, dark leather boots")
-- Body type and posture
-- Art style lock (e.g., "3D donghua style" or "photorealistic" — MUST match the user's chosen visual style)
+**★★★ CORE CONCEPT — SHORT DRAMA CONTINUITY ★★★**
+You are writing a SHORT DRAMA (短剧). The ${targetScenes} scenes are like TRAIN CARRIAGES — they connect end-to-end into ONE continuous story. Scene 1's ending leads directly into Scene 2's beginning, Scene 2's ending leads into Scene 3, and so on.
 
+**CONTINUITY RULES (MANDATORY):**
+1. **One Continuous Story:** All ${targetScenes} scenes tell a SINGLE coherent story from start to finish. They are NOT independent vignettes.
+2. **Scene Transitions:** The END of each scene must naturally connect to the BEGINNING of the next scene. Think of it as cutting from one shot to the next in a movie — the viewer should feel the story flowing forward.
+3. **Progressive Plot:** The story must progress: introduction → development → turning point → climax → ending. Each scene pushes the plot forward.
+4. **Same World:** Scenes can share locations if the story calls for it (e.g., a character walks through a park, then sits on a bench in the same park). Do NOT force random unrelated locations.
+5. **Cause & Effect:** What happens in Scene N should have consequences visible in Scene N+1.
+
+**★ SCENE_SETTING FIELD:**
+Describe WHERE and WHEN this scene takes place. Settings can recur or evolve naturally (e.g., "Same café, 10 minutes later" or "The park from Scene 1, now at sunset"). The goal is story logic, not forced variety.
+
+**★ VISUAL_DESCRIPTION FIELD:**
+This field describes what the character is DOING in this specific moment — their action, expression, body language, and how they interact with the environment.
+
+**FORMAT REQUIREMENT:**
+visual_description must START with an ACTION VERB or descriptive phrase of the scene:
+✅ GOOD: "stands at the mountain peak, gazing at the sunrise with determination"
+✅ GOOD: "carves through fresh powder, spraying snow behind"
+✅ GOOD: "crashes into a snowdrift, laughing and struggling to stand up"
+❌ BAD: "A 25-year-old Han Chinese man with... [repeating character_anchor]"
+❌ BAD: Starting with character appearance description
+
+**CRITICAL RULE: DO NOT COPY character_anchor INTO visual_description.**
+The character_anchor is ALREADY stored separately at the top level.
+Each scene's visual_description shows ONLY the unique action/moment that advances the plot.
+
+Each scene must show a DIFFERENT moment in the story — the character doing something new that advances the plot.
+This should read like a movie shot description focusing on ACTION and EMOTION.
+
+**★ CHARACTER CONSISTENCY:**
+The "character_anchor" is the protagonist's frozen visual identity — same face, same outfit, same person across all scenes.
 ${identityAnchor
-                ? `The character is HARD-LOCKED to: "${identityAnchor}". Copy this identity EXACTLY into character_anchor. Do NOT modify it.`
-                : `You MUST invent a highly specific, unique character_anchor. Be extremely detailed — face, hair, skin, outfit, accessories, art style. The more detail, the better.`}
+                ? `Character is LOCKED to: "${identityAnchor}". Copy this EXACTLY into character_anchor.`
+                : `Invent a detailed character_anchor: ethnicity, age, face shape, eye color, hair (color/length/style), outfit (colors/materials), body type. Must match the "${visualStyle}" art style.`}
+The character_anchor is stored ONCE at the top level. Each scene's visual_description should focus on what the character is DOING, not re-describe their appearance.
 
-**★ SCENE CONSISTENCY RULE:**
-EVERY scene's "visual_description" MUST begin with the EXACT character_anchor text, word for word, followed by the scene-specific action and environment. This ensures the same character appears in every frame. Do NOT paraphrase or abbreviate the anchor.
-
-**Technical Precision:** Describe camera movements (dolly, tracking, crane), lighting (golden hour, neon, overcast), and composition.
+**Technical Precision:** Specify camera work (dolly, tracking, crane, handheld, pan), lighting, and composition per scene.
 
 **Language Rule:**
-* **visual_description** & **shot_type**: ALWAYS in English.
+* **visual_description**, **scene_setting** & **shot_type**: ALWAYS in English.
 * **audio_description** & **project_title**: ${language === 'zh' ? "Chinese (Simplified)" : "English"}.
 
 **Output Format:** JSON strictly following the provided schema.
@@ -155,7 +177,7 @@ EVERY scene's "visual_description" MUST begin with the EXACT character_anchor te
         try {
             response = await ai.models.generateContent({
                 model: 'gemini-2.0-flash',
-                contents: `Draft a 5-scene storyboard for: ${storyIdea}. Style: ${visualStyle}`,
+                contents: `Write a ${targetScenes}-scene SHORT DRAMA (短剧) for: ${storyIdea}. Style: ${visualStyle}. The ${targetScenes} scenes must connect like train carriages — Scene 1 flows into Scene 2, Scene 2 flows into Scene 3, etc. Tell ONE continuous story with the SAME character throughout. Each scene shows a different moment that advances the plot forward.`,
                 config: {
                     systemInstruction,
                     responseMimeType: 'application/json',
@@ -169,7 +191,7 @@ EVERY scene's "visual_description" MUST begin with the EXACT character_anchor te
                 console.warn('[Gemini] Quota exhausted on 2.0-flash, falling back to 1.5-flash...');
                 response = await ai.models.generateContent({
                     model: 'gemini-1.5-flash',
-                    contents: `Draft a 5-scene storyboard for: ${storyIdea}. Style: ${visualStyle}`,
+                    contents: `Write a ${targetScenes}-scene SHORT DRAMA (短剧) for: ${storyIdea}. Style: ${visualStyle}. The ${targetScenes} scenes must connect like train carriages — Scene 1 flows into Scene 2, Scene 2 flows into Scene 3, etc. Tell ONE continuous story with the SAME character throughout. Each scene shows a different moment that advances the plot forward.`,
                     config: {
                         systemInstruction,
                         responseMimeType: 'application/json',
@@ -190,15 +212,80 @@ EVERY scene's "visual_description" MUST begin with the EXACT character_anchor te
         // ★ Generate unique project ID for batch operations
         project.id = crypto.randomUUID();
         
+        // ★ CRITICAL: Force character_anchor to match identityAnchor if provided
+        // Gemini sometimes rewrites/changes the locked identity (e.g., changing gender).
+        // We override at the code level to guarantee consistency.
+        if (identityAnchor && identityAnchor.trim().length > 10) {
+            project.character_anchor = identityAnchor.trim();
+        }
+
         const anchor = project.character_anchor || '';
-        project.scenes = project.scenes.map((s: any) => ({
-            ...s,
-            // ★ CRITICAL: Scene description FIRST, then character (avoids character sheet generation)
-            image_prompt: anchor 
-                ? `Cinematic ${s.shot_type}: ${s.visual_description}. Character: ${anchor}. Single scene only.`
-                : `${s.visual_description}, ${s.shot_type}`,
-            video_motion_prompt: s.shot_type,
-        }));
+
+        // ★ CRITICAL POST-PROCESSING: Strip repeated character_anchor prefix from visual_description
+        // Gemini stubbornly prefixes every visual_description with the character_anchor text.
+        // This makes all scenes look identical when truncated in the UI.
+        // We strip the anchor prefix so visual_description shows ONLY the unique action/scene content.
+        const anchorLower = anchor.toLowerCase().trim();
+
+        project.scenes = project.scenes.map((s: any, idx: number) => {
+            const setting = s.scene_setting || '';
+            let rawDesc = (s.visual_description || '').trim();
+
+            // ★ METHOD 1: Direct similarity check
+            // If visual_description is essentially a copy of character_anchor (>80% similarity),
+            // it means Gemini ignored our instructions. Use a fallback generic description.
+            if (anchorLower.length > 20 && rawDesc.length > 0) {
+                const descLower = rawDesc.toLowerCase();
+                const commonChars = [...anchorLower].filter(c => descLower.includes(c)).length;
+                const similarity = commonChars / anchorLower.length;
+                
+                if (similarity > 0.8 || descLower.includes(anchorLower.slice(0, 50))) {
+                    // High similarity → Gemini copied the anchor. Strip it.
+                    rawDesc = `Scene ${idx + 1} action`;
+                }
+            }
+
+            // ★ METHOD 2: Strip character_anchor prefix if Gemini repeated it
+            if (anchorLower.length > 20) {
+                const descLower = rawDesc.toLowerCase();
+                // Try exact prefix match
+                if (descLower.startsWith(anchorLower)) {
+                    rawDesc = rawDesc.slice(anchor.length).replace(/^[,;.:\s]+/, '').trim();
+                } else {
+                    // Try fuzzy match: find where the anchor-like text ends
+                    // Look for first 30 chars of anchor as prefix indicator
+                    const anchorStart = anchorLower.slice(0, Math.min(30, anchorLower.length));
+                    if (descLower.startsWith(anchorStart)) {
+                        // Find the divergence point after the anchor-like prefix
+                        // Scan for common action verbs or scene transition markers
+                        const actionMarkers = /\b(is |are |was |stands |standing |walks |walking |runs |running |sits |sitting |looks |looking |holds |holding |reaches |reaching |turns |turning |steps |stepping |enters |entering |exits |leaving |opens |opening |closes |fights |fighting |rides |riding |drives |driving |picks |picking |carries |carrying |gazes |gazing |smiles |smiling |cries |crying |laughs |laughing |struggles |struggling |discovers |examining |the camera |camera |she |he |they |who |while )/.exec(descLower);
+                        if (actionMarkers && actionMarkers.index > 20) {
+                            rawDesc = rawDesc.slice(actionMarkers.index).trim();
+                            // Capitalize first letter
+                            rawDesc = rawDesc.charAt(0).toUpperCase() + rawDesc.slice(1);
+                        }
+                    }
+                }
+            }
+
+            // Fallback: if rawDesc is still empty or too short after stripping
+            if (rawDesc.length < 10) {
+                rawDesc = s.visual_description || `Scene ${idx + 1}`;
+            }
+
+            // Build image prompt: anchor (for character consistency) + setting + unique action
+            const actionForPrompt = rawDesc;
+            const prompt = anchor
+                ? `${anchor}. ${setting ? 'Setting: ' + setting + '. ' : ''}${actionForPrompt}. ${s.shot_type}. Single cinematic frame.`
+                : `${s.visual_description}, ${setting}, ${s.shot_type}`;
+
+            return {
+                ...s,
+                visual_description: rawDesc,  // ★ Now shows ONLY the unique action, not the repeated anchor
+                image_prompt: prompt,
+                video_motion_prompt: s.shot_type,
+            };
+        });
 
         // Attach lightweight consistency metadata per scene so tests and UI can
         // validate anchor prefix and keyword coverage. This is a heuristic: we
@@ -296,7 +383,21 @@ geminiRouter.post('/analyze', async (req, res) => {
             contents: {
                 parts: [
                     { inlineData: { mimeType, data: cleanBase64 } },
-                    { text: 'Analyze this character and extract a dense Identity Anchor description: face, hair, and key outfit elements.' },
+                    { text: `You are a professional character designer. Analyze this image and produce an EXACT visual identity description for AI image generation.
+
+**CRITICAL: OBSERVE THE ACTUAL IMAGE. DO NOT GUESS OR ASSUME.**
+- If the person in the image is female, write "female". If male, write "male".
+- Describe EXACTLY what you SEE — do not invent or change any features.
+
+**Output format (one dense paragraph, English only):**
+A [age]-year-old [ethnicity] [female/male] with [face shape] face, [skin tone] skin, [eye color/shape] eyes, [nose description], [lip description]. [Hair: color, length, style, texture]. Wearing [top: color, material, style], [bottom: color, style], [shoes if visible], [accessories: jewelry, glasses, hat, bag, etc.]. [Body type: height impression, build]. [Any distinctive features: tattoos, scars, freckles, dimples, beauty marks].
+
+**Rules:**
+1. Gender MUST match the actual person in the image — LOOK at the image carefully
+2. Every detail must come from observation, not assumption
+3. Be specific about colors ("dusty rose" not just "pink")
+4. Include ALL visible clothing and accessories
+5. Output ONLY the description paragraph, nothing else` },
                 ],
             },
         });

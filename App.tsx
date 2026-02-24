@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AppProvider, useAppContext } from './context/AppContext';
 import { generateStoryboard, analyzeImageForAnchor } from './services/geminiService';
 import { saveStoryboard } from './services/storyboardService';
@@ -29,37 +29,67 @@ const MainLayout: React.FC = () => {
     isPricingOpen,
     openPricingModal,
     closePricingModal,
-    hasEnoughCredits
+    hasEnoughCredits,
+    refreshBalance
   } = useAppContext();
 
-  const [workflowStage, setWorkflowStage] = useState<'input' | 'scripting' | 'shots' | 'production'>('input');
+  const [workflowStage, setWorkflowStageRaw] = useState<'input' | 'scripting' | 'shots' | 'production'>('input');
+  const workflowStageRef = useRef(workflowStage);
   const [storyIdea, setStoryIdea] = useState('A cyberpunk cat delivering pizza in Neo-Tokyo');
   const [project, setProject] = useState<StoryboardProject | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [extractedAnchor, setExtractedAnchor] = useState<string>("");
   const [referenceImagePreview, setReferenceImagePreview] = useState<string | null>(null);
+  const [sceneCount, setSceneCount] = useState<number>(5);
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   // const [isPricingOpen, setIsPricingOpen] = useState(false); // Moved to Context
+
+  // ★ Browser history management — pressing back navigates within workflow
+  const setWorkflowStage = (stage: 'input' | 'scripting' | 'shots' | 'production') => {
+    setWorkflowStageRaw(stage);
+    workflowStageRef.current = stage;
+    window.history.pushState({ stage }, '', `#${stage}`);
+  };
+
+  useEffect(() => {
+    // Set initial history state
+    window.history.replaceState({ stage: 'input' }, '', `#input`);
+
+    const handlePopState = (e: PopStateEvent) => {
+      const stage = e.state?.stage;
+      if (stage && ['input', 'scripting', 'shots', 'production'].includes(stage)) {
+        setWorkflowStageRaw(stage);
+        workflowStageRef.current = stage;
+      } else {
+        // No valid state — stay where we are, re-push current stage
+        const current = workflowStageRef.current;
+        window.history.pushState({ stage: current }, '', `#${current}`);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   // ★ Stripe Payment Success Callback
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('success') === 'true') {
       // Clean URL to remove query params
-      window.history.replaceState({}, '', window.location.pathname);
+      window.history.replaceState({ stage: 'input' }, '', window.location.pathname + '#input');
       // Credits are added by backend webhook (add_credits RPC).
-      // The profile will auto-refresh via Supabase auth listener.
-      // Show confirmation to user.
-      setTimeout(() => {
+      // Force refresh balance to reflect new credits immediately
+      setTimeout(async () => {
+        await refreshBalance().catch(() => {});
         alert('✅ 支付成功！额度已添加到您的账户。');
-      }, 500);
+      }, 1500); // Wait a bit for webhook to process
     }
     if (params.get('canceled') === 'true') {
-      window.history.replaceState({}, '', window.location.pathname);
+      window.history.replaceState({ stage: 'input' }, '', window.location.pathname + '#input');
     }
-  }, []);
+  }, [refreshBalance]);
 
   const handleGenerateScript = async () => {
     if (!storyIdea.trim()) return;
@@ -76,7 +106,7 @@ const MainLayout: React.FC = () => {
     setProject(null);
 
     try {
-      const data = await generateStoryboard(storyIdea, settings.videoStyle, settings.lang, settings.generationMode, extractedAnchor);
+      const data = await generateStoryboard(storyIdea, settings.videoStyle, settings.lang, settings.generationMode, extractedAnchor, sceneCount);
       setProject(data);
       setWorkflowStage('scripting');
     } catch (err: any) {
@@ -179,6 +209,27 @@ const MainLayout: React.FC = () => {
               className="w-full bg-slate-950 border border-slate-700 rounded-lg p-4 h-32 text-white mb-6 focus:ring-2 focus:ring-indigo-500 outline-none"
               placeholder={t(settings.lang, 'storyPlaceholder')}
             />
+
+            {/* 场景数量选择 */}
+            <div className="mb-6">
+              <label className="block text-sm font-semibold text-slate-300 mb-3">📽️ 场景数量 / Number of Scenes</label>
+              <div className="flex flex-wrap gap-2">
+                {[5, 10, 15, 20, 25, 30].map(n => (
+                  <button
+                    key={n}
+                    onClick={() => setSceneCount(n)}
+                    className={`px-4 py-2 rounded-lg text-sm font-bold transition-all border ${
+                      sceneCount === n
+                        ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-500/25'
+                        : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-white'
+                    }`}
+                  >
+                    {n} 场景
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-slate-500 mt-2">电影短片建议 10-15 场景，短剧建议 20-30 场景</p>
+            </div>
 
             {/* 参考图片上传 */}
             <div className="mb-6">

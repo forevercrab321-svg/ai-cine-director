@@ -68,6 +68,8 @@ async function callReplicateImage(params: {
         prompt: params.prompt,
         aspect_ratio: params.aspectRatio,
         output_format: 'jpg',
+        prompt_upsampling: false,  // ★ LOCK: Prevent Flux from rewriting prompts differently per image
+        output_quality: 90,        // ★ LOCK: Consistent quality across all shots
     };
     if (params.seed != null) input.seed = params.seed;
 
@@ -115,21 +117,36 @@ function buildFinalPrompt(params: {
     referencePolicy?: string;
 }): string {
     const parts: string[] = [];
-    if (params.characterAnchor && params.referencePolicy !== 'none') {
-        parts.push(`[CRITICAL: Maintain exact same character identity. Same face, hairstyle, costume, body proportions.] ${params.characterAnchor}.`);
+
+    // ★ POSITION 1: VISUAL STYLE ANCHOR — comes FIRST for maximum attention weight.
+    // The SAME style keywords at the start of EVERY prompt ensures Flux generates
+    // images with a unified visual language (color palette, lighting, rendering).
+    const stylePreset = (params.style && params.style !== 'none')
+        ? STYLE_PRESETS.find(s => s.id === params.style)
+        : null;
+    if (stylePreset) {
+        parts.push(stylePreset.promptModifier.replace(/^,\s*/, ''));
+    } else {
+        parts.push('Professional cinematic photography, consistent warm lighting, unified color grading, photorealistic, high quality, 35mm film');
     }
+
+    // ★ POSITION 2: CHARACTER ANCHOR — identical character description across all shots
+    if (params.characterAnchor && params.referencePolicy !== 'none') {
+        parts.push(`Same character throughout: ${params.characterAnchor}`);
+    }
+
+    // ★ POSITION 3: SHOT-SPECIFIC CONTENT
     parts.push(params.basePrompt);
+
+    // ★ EDIT INSTRUCTION (if any)
     if (params.deltaInstruction) {
-        parts.push(`[EDIT INSTRUCTION: ${params.deltaInstruction}]`);
+        parts.push(`Edit: ${params.deltaInstruction}`);
     }
-    if (params.style && params.style !== 'none') {
-        const preset = STYLE_PRESETS.find(s => s.id === params.style);
-        if (preset) parts.push(preset.promptModifier);
-    }
-    if (params.characterAnchor && params.referencePolicy !== 'none') {
-        parts.push('[IMPORTANT: Character must look IDENTICAL to description above.]');
-    }
-    return parts.join(' ');
+
+    // ★ POSITION 4: CONSISTENCY SUFFIX — reinforce unified visual identity
+    parts.push('consistent visual style, same color palette, same lighting, same character appearance');
+
+    return parts.join('. ');
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -184,6 +201,12 @@ batchRouter.post('/gen-images', async (req, res) => {
 
         const jobId = crypto.randomUUID();
 
+        // ★ CONSISTENCY SEED: Generate ONE fixed seed for the entire project batch.
+        // All shots without a custom seed_hint will share this seed, ensuring
+        // Flux produces images with consistent style/color palette across all scenes.
+        // We derive the seed from project_id so re-runs of the same project get the same style.
+        const projectSeed = Math.abs([...project_id].reduce((hash, c) => ((hash << 5) - hash + c.charCodeAt(0)) | 0, 0)) % 1000000 || 142857;
+
         // Build the executor function that will generate each image
         const executor: TaskExecutor = async (item) => {
             const shotData = sortedShots.find((s: any) => s.shot_id === item.shot_id);
@@ -201,7 +224,7 @@ batchRouter.post('/gen-images', async (req, res) => {
                 prompt: finalPrompt,
                 model: replicatePath,
                 aspectRatio: aspect_ratio,
-                seed: shotData.seed_hint ?? null,
+                seed: shotData.seed_hint ?? projectSeed,
             });
 
             return {
@@ -220,7 +243,7 @@ batchRouter.post('/gen-images', async (req, res) => {
                 shotNumber: s.shot_number,
                 sceneNumber: s.scene_number,
             })),
-            concurrency: Math.min(concurrency, 3), // Cap at 3
+            concurrency: 1, // ★ FORCE sequential generation for visual consistency & script order
             executor,
         });
 
@@ -391,6 +414,9 @@ batchRouter.post('/gen-images/continue', async (req, res) => {
 
         const jobId = crypto.randomUUID();
 
+        // ★ CONSISTENCY SEED: Same project_id-based seed as initial batch
+        const projectSeed = Math.abs([...project_id].reduce((hash: number, c: string) => ((hash << 5) - hash + c.charCodeAt(0)) | 0, 0)) % 1000000 || 142857;
+
         const executor: TaskExecutor = async (item) => {
             const shotData = nextBatch.find((s: any) => s.shot_id === item.shot_id);
             if (!shotData) throw new Error('Shot data not found');
@@ -407,7 +433,7 @@ batchRouter.post('/gen-images/continue', async (req, res) => {
                 prompt: finalPrompt,
                 model: replicatePath,
                 aspectRatio: aspect_ratio,
-                seed: shotData.seed_hint ?? null,
+                seed: shotData.seed_hint ?? projectSeed,
             });
 
             return {
@@ -425,7 +451,7 @@ batchRouter.post('/gen-images/continue', async (req, res) => {
                 shotNumber: s.shot_number,
                 sceneNumber: s.scene_number,
             })),
-            concurrency: Math.min(concurrency, 3),
+            concurrency: 1, // ★ FORCE sequential generation for visual consistency & script order
             executor,
         });
 
@@ -552,6 +578,13 @@ batchRouter.post('/:jobId/retry', async (req, res) => {
 
         const replicatePath = (REPLICATE_MODEL_PATHS as any)[model] || REPLICATE_MODEL_PATHS['flux'];
 
+        // Derive project-level consistent seed from the job's project_id
+        const jobStatus = getJobStatus(jobId);
+        const retryProjectId = jobStatus?.job?.project_id || '';
+        const retryProjectSeed = retryProjectId
+            ? Math.abs([...retryProjectId].reduce((hash, c) => ((hash << 5) - hash + c.charCodeAt(0)) | 0, 0)) % 1000000 || 142857
+            : 142857;
+
         // Rebuild executor with same parameters
         const executor: TaskExecutor = async (item) => {
             const shotData = shots.find((s: any) => s.shot_id === item.shot_id);
@@ -567,7 +600,7 @@ batchRouter.post('/:jobId/retry', async (req, res) => {
                 prompt: finalPrompt,
                 model: replicatePath,
                 aspectRatio: aspect_ratio,
-                seed: shotData?.seed_hint ?? null,
+                seed: shotData?.seed_hint ?? retryProjectSeed,
             });
 
             return {

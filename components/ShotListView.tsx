@@ -263,6 +263,9 @@ const SceneSection: React.FC<{
                             </span>
                         )}
                     </div>
+                    {scene.scene_setting && (
+                        <p className="text-xs text-amber-400/70 mt-1 font-medium">📍 {scene.scene_setting}</p>
+                    )}
                     <p className="text-xs text-slate-500 mt-1 max-w-xl truncate">{scene.visual_description}</p>
                 </div>
 

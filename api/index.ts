@@ -892,11 +892,12 @@ const geminiResponseSchema = {
                 type: Type.OBJECT,
                 properties: {
                     scene_number: { type: Type.INTEGER },
+                    scene_setting: { type: Type.STRING },
                     visual_description: { type: Type.STRING },
                     audio_description: { type: Type.STRING },
                     shot_type: { type: Type.STRING },
                 },
-                required: ['scene_number', 'visual_description', 'audio_description', 'shot_type'],
+                required: ['scene_number', 'scene_setting', 'visual_description', 'audio_description', 'shot_type'],
             },
         },
     },
@@ -906,7 +907,8 @@ const geminiResponseSchema = {
 app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
     const jobRef = `gemini:${Date.now()}:${Math.random().toString(36).slice(2)}`;
     try {
-        const { storyIdea, visualStyle, language, identityAnchor } = req.body;
+        const { storyIdea, visualStyle, language, identityAnchor, sceneCount } = req.body;
+        const targetScenes = Math.min(Math.max(Number(sceneCount) || 5, 1), 50);
         const authHeader = `Bearer ${req.accessToken}`;
         const userId = req.user?.id;
         const userEmail = req.user?.email;
@@ -948,44 +950,67 @@ app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
 
         const ai = getGeminiAI();
         const systemInstruction = `
-**Role:** Professional Hollywood Screenwriter & Director of Photography.
-**Task:** Break down the User's Story Concept into a production-ready script with 5 distinct scenes.
+**Role:** Professional Short Drama Screenwriter & Director of Photography.
 
-**★ CRITICAL — CHARACTER CONSISTENCY RULES (MANDATORY):**
-The "character_anchor" field is the SINGLE SOURCE OF TRUTH for the protagonist's appearance.
-It MUST be an extremely detailed, frozen visual identity containing ALL of the following:
-- Exact ethnicity and age range
-- Face shape, eye/hair color, hair style
-- Outfit: exact clothing with colors and materials (e.g., "red ski suit")
-- Specific Equipment: (e.g., "snowboard", "skis", or "camera")
+**★★★ CORE CONCEPT — SHORT DRAMA CONTINUITY ★★★**
+You are writing a SHORT DRAMA (短剧). The ${targetScenes} scenes are like TRAIN CARRIAGES — they connect end-to-end into ONE continuous story. Scene 1's ending leads directly into Scene 2's beginning, Scene 2's ending leads into Scene 3, and so on.
 
-**★ CRITICAL RULE FOR VISUAL DESCRIPTION:**
-You MUST rigidly copy the character's exact clothing, colors, and specific equipment from the \`character_anchor\` into EVERY SINGLE \`visual_description\`. 
-NEVER change their equipment (e.g., do NOT switch a snowboard to skis). 
-If the anchor wears a 'red suit', you must explicitly write 'wearing a red suit' in the visual description of Scene 1, Scene 2, Scene 3, Scene 4, and Scene 5. 
-Diffusion models have no memory; you must feed them the exact visual traits in every prompt.
+**CONTINUITY RULES (MANDATORY):**
+1. **One Continuous Story:** All ${targetScenes} scenes tell a SINGLE coherent story from start to finish. They are NOT independent vignettes.
+2. **Scene Transitions:** The END of each scene must naturally connect to the BEGINNING of the next scene. Think of it as cutting from one shot to the next in a movie — the viewer should feel the story flowing forward.
+3. **Progressive Plot:** The story must progress: introduction → development → turning point → climax → ending. Each scene pushes the plot forward.
+4. **Same World:** Scenes can share locations if the story calls for it (e.g., a character walks through a park, then sits on a bench in the same park). Do NOT force random unrelated locations.
+5. **Cause & Effect:** What happens in Scene N should have consequences visible in Scene N+1.
 
-EVERY scene's "visual_description" MUST begin with the EXACT character_anchor text, word for word, followed by the scene-specific action and environment. 
+**★ SCENE_SETTING FIELD:**
+Describe WHERE and WHEN this scene takes place. Settings can recur or evolve naturally (e.g., "Same café, 10 minutes later" or "The park from Scene 1, now at sunset"). The goal is story logic, not forced variety.
 
-**Technical Precision:** Describe camera movements, lighting, and composition.
+**★ VISUAL_DESCRIPTION FIELD:**
+This field describes what the character is DOING in this specific moment — their action, expression, body language, and how they interact with the environment.
+
+**FORMAT REQUIREMENT:**
+visual_description must START with an ACTION VERB or descriptive phrase of the scene:
+✅ GOOD: "stands at the mountain peak, gazing at the sunrise with determination"
+✅ GOOD: "carves through fresh powder, spraying snow behind"
+✅ GOOD: "crashes into a snowdrift, laughing and struggling to stand up"
+❌ BAD: "A 25-year-old Han Chinese man with... [repeating character_anchor]"
+❌ BAD: Starting with character appearance description
+
+**CRITICAL RULE: DO NOT COPY character_anchor INTO visual_description.**
+The character_anchor is ALREADY stored separately at the top level.
+Each scene's visual_description shows ONLY the unique action/moment that advances the plot.
+
+Each scene must show a DIFFERENT moment in the story — the character doing something new that advances the plot.
+This should read like a movie shot description focusing on ACTION and EMOTION.
+
+**★ CHARACTER CONSISTENCY:**
+The "character_anchor" is the protagonist's frozen visual identity — same face, same outfit, same person across all scenes.
+${identityAnchor
+                ? `Character is LOCKED to: "${identityAnchor}". Copy this EXACTLY into character_anchor.`
+                : `Invent a detailed character_anchor: ethnicity, age, face shape, eye color, hair (color/length/style), outfit (colors/materials), body type. Must match the "${visualStyle}" art style.`}
+The character_anchor is stored ONCE at the top level. Each scene's visual_description should focus on what the character is DOING, not re-describe their appearance.
+
+**Technical Precision:** Specify camera work (dolly, tracking, crane, handheld, pan), lighting, and composition per scene.
 
 **Language Rule:**
-* **visual_description** & **shot_type**: ALWAYS in English.
+* **visual_description**, **scene_setting** & **shot_type**: ALWAYS in English.
 * **audio_description** & **project_title**: ${language === 'zh' ? "Chinese (Simplified)" : "English"}.
-**Output Format:** JSON strictly following the provided schema.`;
+
+**Output Format:** JSON strictly following the provided schema.
+`;
 
         let response;
         try {
             response = await ai.models.generateContent({
                 model: 'gemini-2.0-flash',
-                contents: `Draft a 5-scene storyboard for: ${storyIdea}. Style: ${visualStyle}`,
+                contents: `Write a ${targetScenes}-scene SHORT DRAMA (短剧) for: ${storyIdea}. Style: ${visualStyle}. The ${targetScenes} scenes must connect like train carriages — Scene 1 flows into Scene 2, Scene 2 flows into Scene 3, etc. Tell ONE continuous story with the SAME character throughout. Each scene shows a different moment that advances the plot forward.`,
                 config: { systemInstruction, responseMimeType: 'application/json', responseSchema: geminiResponseSchema, temperature: 0.7 },
             });
         } catch (initialError: any) {
             if (initialError.message?.includes('429') || initialError.message?.includes('Resource exhausted')) {
                 response = await ai.models.generateContent({
                     model: 'gemini-1.5-flash',
-                    contents: `Draft a 5-scene storyboard for: ${storyIdea}. Style: ${visualStyle}`,
+                    contents: `Write a ${targetScenes}-scene SHORT DRAMA (短剧) for: ${storyIdea}. Style: ${visualStyle}. The ${targetScenes} scenes must connect like train carriages — Scene 1 flows into Scene 2, Scene 2 flows into Scene 3, etc. Tell ONE continuous story with the SAME character throughout. Each scene shows a different moment that advances the plot forward.`,
                     config: { systemInstruction, responseMimeType: 'application/json', responseSchema: geminiResponseSchema, temperature: 0.7 },
                 });
             } else {
@@ -1000,11 +1025,63 @@ EVERY scene's "visual_description" MUST begin with the EXACT character_anchor te
         // ★ Generate unique project ID for batch operations
         project.id = crypto.randomUUID();
         
-        project.scenes = project.scenes.map((s: any) => ({
-            ...s,
-            image_prompt: `${project.character_anchor}, ${s.visual_description}, ${s.shot_type}`,
-            video_motion_prompt: s.shot_type,
-        }));
+        // ★ CRITICAL: Force character_anchor to match identityAnchor if provided
+        // Gemini sometimes rewrites/changes the locked identity (e.g., changing gender).
+        // We override at the code level to guarantee consistency.
+        if (identityAnchor && identityAnchor.trim().length > 10) {
+            project.character_anchor = identityAnchor.trim();
+        }
+
+        const anchor = project.character_anchor || '';
+        const anchorLower = anchor.toLowerCase().trim();
+
+        project.scenes = project.scenes.map((s: any, idx: number) => {
+            const setting = s.scene_setting || '';
+            let rawDesc = (s.visual_description || '').trim();
+
+            // ★ METHOD 1: Direct similarity check
+            // If visual_description is essentially a copy of character_anchor (>80% similarity),
+            // it means Gemini ignored our instructions. Use a fallback generic description.
+            if (anchorLower.length > 20 && rawDesc.length > 0) {
+                const descLower = rawDesc.toLowerCase();
+                const commonChars = [...anchorLower].filter(c => descLower.includes(c)).length;
+                const similarity = commonChars / anchorLower.length;
+                
+                if (similarity > 0.8 || descLower.includes(anchorLower.slice(0, 50))) {
+                    // High similarity → Gemini copied the anchor. Strip it.
+                    rawDesc = `Scene ${idx + 1} action`;
+                }
+            }
+
+            // ★ METHOD 2: Strip character_anchor prefix from visual_description
+            if (anchorLower.length > 20) {
+                const descLower = rawDesc.toLowerCase();
+                if (descLower.startsWith(anchorLower)) {
+                    rawDesc = rawDesc.slice(anchor.length).replace(/^[,;.:\s]+/, '').trim();
+                } else {
+                    const anchorStart = anchorLower.slice(0, Math.min(30, anchorLower.length));
+                    if (descLower.startsWith(anchorStart)) {
+                        const actionMarkers = /\b(is |are |was |stands |standing |walks |walking |runs |running |sits |sitting |looks |looking |holds |holding |reaches |reaching |turns |turning |steps |stepping |enters |entering |exits |leaving |opens |opening |closes |fights |fighting |rides |riding |drives |driving |picks |picking |carries |carrying |gazes |gazing |smiles |smiling |cries |crying |laughs |laughing |struggles |struggling |discovers |examining |the camera |camera |she |he |they |who |while )/.exec(descLower);
+                        if (actionMarkers && actionMarkers.index > 20) {
+                            rawDesc = rawDesc.slice(actionMarkers.index).trim();
+                            rawDesc = rawDesc.charAt(0).toUpperCase() + rawDesc.slice(1);
+                        }
+                    }
+                }
+            }
+            if (rawDesc.length < 10) rawDesc = s.visual_description || `Scene ${idx + 1}`;
+
+            const prompt = anchor
+                ? `${anchor}. ${setting ? 'Setting: ' + setting + '. ' : ''}${rawDesc}. ${s.shot_type}. Single cinematic frame.`
+                : `${s.visual_description}, ${setting}, ${s.shot_type}`;
+
+            return {
+                ...s,
+                visual_description: rawDesc,
+                image_prompt: prompt,
+                video_motion_prompt: s.shot_type,
+            };
+        });
 
         if (!skipCreditCheck) {
             await supabaseUser.rpc('finalize_reserve', { ref_type: 'gemini', ref_id: jobRef });
@@ -1034,9 +1111,24 @@ app.post('/api/gemini/analyze', async (req: any, res: any) => {
         const ai = getGeminiAI();
         const cleanBase64 = base64Data.split(',')[1] || base64Data;
         const mimeType = base64Data.match(/:(.*?);/)?.[1] || 'image/png';
+        const analyzePrompt = `You are a professional character designer. Analyze this image and produce an EXACT visual identity description for AI image generation.
+
+**CRITICAL: OBSERVE THE ACTUAL IMAGE. DO NOT GUESS OR ASSUME.**
+- If the person in the image is female, write "female". If male, write "male".
+- Describe EXACTLY what you SEE — do not invent or change any features.
+
+**Output format (one dense paragraph, English only):**
+A [age]-year-old [ethnicity] [female/male] with [face shape] face, [skin tone] skin, [eye color/shape] eyes, [nose description], [lip description]. [Hair: color, length, style, texture]. Wearing [top: color, material, style], [bottom: color, style], [shoes if visible], [accessories: jewelry, glasses, hat, bag, etc.]. [Body type: height impression, build]. [Any distinctive features: tattoos, scars, freckles, dimples, beauty marks].
+
+**Rules:**
+1. Gender MUST match the actual person in the image — LOOK at the image carefully
+2. Every detail must come from observation, not assumption
+3. Be specific about colors ("dusty rose" not just "pink")
+4. Include ALL visible clothing and accessories
+5. Output ONLY the description paragraph, nothing else`;
         const response = await ai.models.generateContent({
             model: 'gemini-2.0-flash',
-            contents: { parts: [{ inlineData: { mimeType, data: cleanBase64 } }, { text: 'Analyze this character and extract a dense Identity Anchor description: face, hair, and key outfit elements.' }] },
+            contents: { parts: [{ inlineData: { mimeType, data: cleanBase64 } }, { text: analyzePrompt }] },
         });
         res.json({ anchor: (response.text || 'A cinematic character').trim() });
     } catch (error: any) {
@@ -1101,6 +1193,8 @@ async function callReplicateImage(params: {
 
     const input: Record<string, any> = {
         prompt: params.prompt, aspect_ratio: params.aspectRatio, output_format: 'jpg',
+        prompt_upsampling: false,  // ★ LOCK: Prevent Flux from rewriting prompts differently per image
+        output_quality: 90,        // ★ LOCK: Consistent quality across all shots
     };
     if (params.seed != null) input.seed = params.seed;
     const body = isModelPath ? { input } : { version: modelPath, input };
@@ -1132,19 +1226,25 @@ function buildFinalPrompt(params: {
     basePrompt: string; deltaInstruction?: string; characterAnchor?: string; style?: string; referencePolicy?: string;
 }): string {
     const parts: string[] = [];
-    if (params.characterAnchor && params.referencePolicy !== 'none') {
-        parts.push(`[CRITICAL: Maintain exact same character identity. Same face, hairstyle, costume, body proportions.] ${params.characterAnchor}.`);
+    // ★ POSITION 1: VISUAL STYLE ANCHOR — FIRST for maximum attention weight
+    const stylePreset = (params.style && params.style !== 'none')
+        ? STYLE_PRESETS.find(s => s.id === params.style)
+        : null;
+    if (stylePreset) {
+        parts.push(stylePreset.promptModifier.replace(/^,\s*/, ''));
+    } else {
+        parts.push('Professional cinematic photography, consistent warm lighting, unified color grading, photorealistic, high quality, 35mm film');
     }
+    // ★ POSITION 2: CHARACTER ANCHOR
+    if (params.characterAnchor && params.referencePolicy !== 'none') {
+        parts.push(`Same character throughout: ${params.characterAnchor}`);
+    }
+    // ★ POSITION 3: SHOT-SPECIFIC CONTENT
     parts.push(params.basePrompt);
-    if (params.deltaInstruction) parts.push(`[EDIT INSTRUCTION: ${params.deltaInstruction}]`);
-    if (params.style && params.style !== 'none') {
-        const preset = STYLE_PRESETS.find(s => s.id === params.style);
-        if (preset) parts.push(preset.promptModifier);
-    }
-    if (params.characterAnchor && params.referencePolicy !== 'none') {
-        parts.push('[IMPORTANT: Character must look IDENTICAL to description above.]');
-    }
-    return parts.join(' ');
+    if (params.deltaInstruction) parts.push(`Edit: ${params.deltaInstruction}`);
+    // ★ POSITION 4: CONSISTENCY SUFFIX
+    parts.push('consistent visual style, same color palette, same lighting, same character appearance');
+    return parts.join('. ');
 }
 
 // --- In-memory BatchQueue (same as server/batchQueue.ts) ---
@@ -1731,16 +1831,18 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
         }
 
         const jobId = crypto.randomUUID();
+        // ★ CONSISTENCY SEED: All shots in the same project share a seed for visual style consistency
+        const projectSeed = Math.abs([...project_id].reduce((hash: number, c: string) => ((hash << 5) - hash + c.charCodeAt(0)) | 0, 0)) % 1000000 || 142857;
         const executor: TaskExecutor = async (item) => {
             const shotData = sortedShots.find((s: any) => s.shot_id === item.shot_id);
             if (!shotData) throw new Error('Shot data not found');
             const finalPrompt = buildFinalPrompt({ basePrompt: shotData.image_prompt || '', characterAnchor: character_anchor, style, referencePolicy: shotData.reference_policy || 'anchor' });
-            const result = await callReplicateImage({ prompt: finalPrompt, model: replicatePath, aspectRatio: aspect_ratio, seed: shotData.seed_hint ?? null });
+            const result = await callReplicateImage({ prompt: finalPrompt, model: replicatePath, aspectRatio: aspect_ratio, seed: shotData.seed_hint ?? projectSeed });
             return { image_id: crypto.randomUUID(), image_url: result.url };
         };
 
         const job = createBatchJob({
-            jobId, projectId: project_id, userId: '', concurrency: Math.min(concurrency, 5), executor,
+            jobId, projectId: project_id, userId: '', concurrency: 1, executor,
             items: sortedShots.map((s: any) => ({ shotId: s.shot_id, shotNumber: s.shot_number, sceneNumber: s.scene_number })),
         });
 
@@ -1843,16 +1945,18 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
         }
 
         const jobId = crypto.randomUUID();
+        // ★ CONSISTENCY SEED: Same project-based seed as initial batch
+        const projectSeed = Math.abs([...project_id].reduce((hash: number, c: string) => ((hash << 5) - hash + c.charCodeAt(0)) | 0, 0)) % 1000000 || 142857;
         const executor: TaskExecutor = async (item) => {
             const shotData = nextBatch.find((s: any) => s.shot_id === item.shot_id);
             if (!shotData) throw new Error('Shot data not found');
             const finalPrompt = buildFinalPrompt({ basePrompt: shotData.image_prompt || '', characterAnchor: character_anchor, style, referencePolicy: shotData.reference_policy || 'anchor' });
-            const result = await callReplicateImage({ prompt: finalPrompt, model: replicatePath, aspectRatio: aspect_ratio, seed: shotData.seed_hint ?? null });
+            const result = await callReplicateImage({ prompt: finalPrompt, model: replicatePath, aspectRatio: aspect_ratio, seed: shotData.seed_hint ?? projectSeed });
             return { image_id: crypto.randomUUID(), image_url: result.url };
         };
 
         const job = createBatchJob({
-            jobId, projectId: project_id, userId: '', concurrency: Math.min(concurrency, 5), executor,
+            jobId, projectId: project_id, userId: '', concurrency: 1, executor,
             items: nextBatch.map((s: any) => ({ shotId: s.shot_id, shotNumber: s.shot_number, sceneNumber: s.scene_number })),
         });
 
@@ -1920,10 +2024,16 @@ app.post('/api/batch/:jobId/retry', async (req: any, res: any) => {
     try {
         const { model = 'flux', aspect_ratio = '16:9', style = 'none', character_anchor = '', shots = [] } = req.body;
         const replicatePath = (REPLICATE_MODEL_PATHS as any)[model] || REPLICATE_MODEL_PATHS['flux'];
+        // Derive project-level consistent seed from the job's project_id
+        const retryJobStatus = getBatchJobStatus(req.params.jobId);
+        const retryProjectId = retryJobStatus?.job?.project_id || '';
+        const retryProjectSeed = retryProjectId
+            ? Math.abs([...retryProjectId].reduce((hash, c) => ((hash << 5) - hash + c.charCodeAt(0)) | 0, 0)) % 1000000 || 142857
+            : 142857;
         const executor: TaskExecutor = async (item) => {
             const shotData = shots.find((s: any) => s.shot_id === item.shot_id);
             const finalPrompt = buildFinalPrompt({ basePrompt: shotData?.image_prompt || '', characterAnchor: character_anchor, style, referencePolicy: shotData?.reference_policy || 'anchor' });
-            const result = await callReplicateImage({ prompt: finalPrompt, model: replicatePath, aspectRatio: aspect_ratio, seed: shotData?.seed_hint ?? null });
+            const result = await callReplicateImage({ prompt: finalPrompt, model: replicatePath, aspectRatio: aspect_ratio, seed: shotData?.seed_hint ?? retryProjectSeed });
             return { image_id: crypto.randomUUID(), image_url: result.url };
         };
         const ok = retryFailedBatchItems(req.params.jobId, executor);

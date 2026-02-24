@@ -59,7 +59,8 @@ const ExpandIcon = () => (
 
 const downloadFile = async (url: string, filename: string) => {
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, { mode: 'cors' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const blob = await response.blob();
     const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -70,8 +71,19 @@ const downloadFile = async (url: string, filename: string) => {
     document.body.removeChild(a);
     URL.revokeObjectURL(blobUrl);
   } catch {
-    // Fallback: open in new tab
-    window.open(url, '_blank');
+    // CORS blocked: open in new tab (never replace current page)
+    const newWin = window.open(url, '_blank', 'noopener,noreferrer');
+    if (!newWin) {
+      // Popup blocked: create a temporary link to download
+      const a = document.createElement('a');
+      a.href = url;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
   }
 };
 
@@ -216,10 +228,15 @@ const SceneCard: React.FC<SceneCardProps> = ({
   return (
     <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 relative group/card transition-all duration-300 hover:border-slate-600 hover:shadow-2xl hover:shadow-black/50">
       <div className="flex justify-between mb-4">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <span className="bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">
             SEQ {String(scene.scene_number).padStart(2, '0')}
           </span>
+          {scene.scene_setting && (
+            <span className="text-xs text-amber-400/80 font-medium truncate max-w-[300px]" title={scene.scene_setting}>
+              📍 {scene.scene_setting}
+            </span>
+          )}
           {predictionId && <span className="text-[10px] font-mono text-slate-600">#{predictionId.slice(0, 6)}</span>}
         </div>
       </div>

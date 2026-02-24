@@ -200,6 +200,7 @@ export interface ShotRewriteRequest {
 export interface Scene {
   id?: string; // Database ID
   scene_number: number;
+  scene_setting?: string; // Unique location/time for this scene (e.g., "A neon-lit alley — midnight")
   visual_description: string;
   audio_description: string;
   shot_type: string;

@@ -56,6 +56,8 @@ async function callReplicateImage(params: {
         prompt: params.prompt,
         aspect_ratio: params.aspectRatio,
         output_format: 'jpg',
+        prompt_upsampling: false,  // ★ LOCK: Prevent Flux from rewriting prompts differently per image
+        output_quality: 90,        // ★ LOCK: Consistent quality across all shots
     };
     if (params.seed != null) input.seed = params.seed;
 
@@ -106,30 +108,33 @@ function buildFinalPrompt(params: {
 }): string {
     const parts: string[] = [];
 
-    // Consistency prefix
-    if (params.characterAnchor && params.referencePolicy !== 'none') {
-        parts.push(`[CRITICAL: Maintain exact same character identity. Same face, hairstyle, costume, body proportions.] ${params.characterAnchor}.`);
+    // ★ POSITION 1: VISUAL STYLE ANCHOR — FIRST for maximum attention weight
+    const stylePreset = (params.style && params.style !== 'none')
+        ? STYLE_PRESETS.find(s => s.id === params.style)
+        : null;
+    if (stylePreset) {
+        parts.push(stylePreset.promptModifier.replace(/^,\s*/, ''));
+    } else {
+        parts.push('Professional cinematic photography, consistent warm lighting, unified color grading, photorealistic, high quality, 35mm film');
     }
 
+    // ★ POSITION 2: CHARACTER ANCHOR
+    if (params.characterAnchor && params.referencePolicy !== 'none') {
+        parts.push(`Same character throughout: ${params.characterAnchor}`);
+    }
+
+    // ★ POSITION 3: SHOT-SPECIFIC CONTENT
     parts.push(params.basePrompt);
 
-    // Delta instruction
+    // ★ EDIT INSTRUCTION (if any)
     if (params.deltaInstruction) {
-        parts.push(`[EDIT INSTRUCTION: ${params.deltaInstruction}]`);
+        parts.push(`Edit: ${params.deltaInstruction}`);
     }
 
-    // Style modifier
-    if (params.style && params.style !== 'none') {
-        const preset = STYLE_PRESETS.find(s => s.id === params.style);
-        if (preset) parts.push(preset.promptModifier);
-    }
+    // ★ POSITION 4: CONSISTENCY SUFFIX
+    parts.push('consistent visual style, same color palette, same lighting, same character appearance');
 
-    // Consistency suffix
-    if (params.characterAnchor && params.referencePolicy !== 'none') {
-        parts.push('[IMPORTANT: Character must look IDENTICAL to description above.]');
-    }
-
-    return parts.join(' ');
+    return parts.join('. ');
 }
 
 // ═══════════════════════════════════════════════════════════════

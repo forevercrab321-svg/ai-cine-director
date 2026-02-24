@@ -15,7 +15,8 @@ export const generateStoryboard = async (
   visualStyle: string,
   language: Language,
   mode: GenerationMode,
-  identityAnchor?: string
+  identityAnchor?: string,
+  sceneCount?: number
 ): Promise<StoryboardProject> => {
   try {
     const { data: { session } } = await supabase.auth.getSession();
@@ -33,6 +34,7 @@ export const generateStoryboard = async (
         language,
         mode,
         identityAnchor,
+        sceneCount: sceneCount || 5,
       }),
     });
 
