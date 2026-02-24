@@ -1233,6 +1233,7 @@ async function callReplicateImage(params: {
     if (params.seed != null) input.seed = params.seed;
     const body = isModelPath ? { input } : { version: modelPath, input };
 
+    console.log(`[Replicate] Calling ${targetUrl} with model=${modelPath}`);
     const response = await fetch(targetUrl, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Prefer: 'wait' },
@@ -1240,6 +1241,9 @@ async function callReplicateImage(params: {
     });
     if (!response.ok) {
         const errText = await response.text();
+        if (response.status === 404) {
+            throw new Error(`Model "${modelPath}" not found on Replicate. Please select a different model.`);
+        }
         throw new Error(`Replicate error ${response.status}: ${errText}`);
     }
 

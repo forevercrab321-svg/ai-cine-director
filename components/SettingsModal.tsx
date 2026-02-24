@@ -184,7 +184,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
               className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-3 text-white focus:ring-2 focus:ring-indigo-500 outline-none appearance-none"
             >
               <option value="flux">Flux 1.1 Pro ({t(lang, 'qualityPro')})</option>
-              <option value="nano_banana">Google Gemini Nano Banana ({t(lang, 'qualityDraft')})</option>
+              <option value="flux_schnell">Flux Schnell ({t(lang, 'qualityDraft')})</option>
             </select>
           </div>
 
@@ -206,9 +206,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                   </option>
                   <option value="hailuo_02_fast">
                     {getModelLabel('hailuo_02_fast')} (💎 {Math.ceil(MODEL_COSTS.hailuo_02_fast * (MODEL_MULTIPLIERS.hailuo_02_fast || 1))})
-                  </option>
-                  <option value="google_gemini_nano_banana">
-                    {getModelLabel('google_gemini_nano_banana')} (💎 {Math.ceil(MODEL_COSTS.google_gemini_nano_banana * (MODEL_MULTIPLIERS.google_gemini_nano_banana || 1))})
                   </option>
                 </optgroup>
 
