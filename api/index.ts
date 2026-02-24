@@ -1039,29 +1039,15 @@ The character_anchor is stored ONCE at the top level. Each scene's visual_descri
             const setting = s.scene_setting || '';
             let rawDesc = (s.visual_description || '').trim();
 
-            // ★ METHOD 1: Direct similarity check
-            // If visual_description is essentially a copy of character_anchor (>80% similarity),
-            // it means Gemini ignored our instructions. Use a fallback generic description.
+            // ★ Strip character_anchor prefix from visual_description if Gemini repeated it
             if (anchorLower.length > 20 && rawDesc.length > 0) {
-                const descLower = rawDesc.toLowerCase();
-                const commonChars = [...anchorLower].filter(c => descLower.includes(c)).length;
-                const similarity = commonChars / anchorLower.length;
-                
-                if (similarity > 0.8 || descLower.includes(anchorLower.slice(0, 50))) {
-                    // High similarity → Gemini copied the anchor. Strip it.
-                    rawDesc = `Scene ${idx + 1} action`;
-                }
-            }
-
-            // ★ METHOD 2: Strip character_anchor prefix from visual_description
-            if (anchorLower.length > 20) {
                 const descLower = rawDesc.toLowerCase();
                 if (descLower.startsWith(anchorLower)) {
                     rawDesc = rawDesc.slice(anchor.length).replace(/^[,;.:\s]+/, '').trim();
                 } else {
-                    const anchorStart = anchorLower.slice(0, Math.min(30, anchorLower.length));
+                    const anchorStart = anchorLower.slice(0, Math.min(50, anchorLower.length));
                     if (descLower.startsWith(anchorStart)) {
-                        const actionMarkers = /\b(is |are |was |stands |standing |walks |walking |runs |running |sits |sitting |looks |looking |holds |holding |reaches |reaching |turns |turning |steps |stepping |enters |entering |exits |leaving |opens |opening |closes |fights |fighting |rides |riding |drives |driving |picks |picking |carries |carrying |gazes |gazing |smiles |smiling |cries |crying |laughs |laughing |struggles |struggling |discovers |examining |the camera |camera |she |he |they |who |while )/.exec(descLower);
+                        const actionMarkers = /\b(is |are |was |stands |standing |walks |walking |runs |running |sits |sitting |looks |looking |holds |holding |reaches |reaching |turns |turning |steps |stepping |enters |entering |exits |leaving |opens |opening |closes |fights |fighting |rides |riding |drives |driving |picks |picking |carries |carrying |gazes |gazing |smiles |smiling |cries |crying |laughs |laughing |struggles |struggling |discovers |examining |the camera |camera |she |he |they |who |while |battling |climbing |grappling |pulling |pushing |throwing )/.exec(descLower);
                         if (actionMarkers && actionMarkers.index > 20) {
                             rawDesc = rawDesc.slice(actionMarkers.index).trim();
                             rawDesc = rawDesc.charAt(0).toUpperCase() + rawDesc.slice(1);
