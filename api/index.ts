@@ -956,13 +956,28 @@ app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
 **Role:** Professional Short Drama Screenwriter & Director of Photography.
 
 **★★★ CORE CONCEPT — SHORT DRAMA CONTINUITY ★★★**
-You are writing a SHORT DRAMA (短剧). The ${targetScenes} scenes are like TRAIN CARRIAGES — they connect end-to-end into ONE continuous story. Scene 1's ending leads directly into Scene 2's beginning, Scene 2's ending leads into Scene 3, and so on.
+You are writing a SHORT DRAMA (短剧). The ${targetScenes} scenes are like TRAIN CARRIAGES — they connect end-to-end into ONE continuous story.
+
+**★★★ IN MEDIAS RES — START WITH ACTION ★★★**
+Scene 1 MUST open with the character ALREADY doing the core activity described in the story idea.
+DO NOT waste scenes on preparation, travel, arrival, or backstory.
+If the story is about snowboarding → Scene 1 = character IS snowboarding.
+If the story is about cooking → Scene 1 = character IS cooking.
+The audience should see the MAIN ACTIVITY from the very first scene.
+
+**ANTI-PADDING RULES (MANDATORY):**
+❌ NO scenes of "waking up", "packing gear", "traveling to location", "setting up camp"
+❌ NO scenes that don't involve the core activity mentioned in the story idea
+❌ NO generic "looking at scenery" filler scenes
+✅ Every single scene must show a DIFFERENT moment of the core activity
+✅ Vary the action: different moves, different terrain, different challenges, different emotions
+✅ Example for snowboarding: carving powder, jumping, navigating moguls, riding through trees, wiping out, celebrating
 
 **CONTINUITY RULES (MANDATORY):**
 1. **One Continuous Story:** All ${targetScenes} scenes tell a SINGLE coherent story from start to finish. They are NOT independent vignettes.
-2. **Scene Transitions:** The END of each scene must naturally connect to the BEGINNING of the next scene. Think of it as cutting from one shot to the next in a movie — the viewer should feel the story flowing forward.
-3. **Progressive Plot:** The story must progress: introduction → development → turning point → climax → ending. Each scene pushes the plot forward.
-4. **Same World:** Scenes can share locations if the story calls for it (e.g., a character walks through a park, then sits on a bench in the same park). Do NOT force random unrelated locations.
+2. **Scene Transitions:** The END of each scene must naturally connect to the BEGINNING of the next scene.
+3. **Action-Driven Plot:** The story progresses through DIFFERENT MOMENTS of the core activity. Think of it as a highlight reel with narrative flow — each scene showcases a new aspect of the activity.
+4. **Same World:** Scenes can share locations if the story calls for it. Settings should evolve naturally within the activity context.
 5. **Cause & Effect:** What happens in Scene N should have consequences visible in Scene N+1.
 
 **★ SCENE_SETTING FIELD:**
@@ -1006,14 +1021,18 @@ The character_anchor is stored ONCE at the top level. Each scene's visual_descri
         try {
             response = await ai.models.generateContent({
                 model: 'gemini-2.0-flash',
-                contents: `Write a ${targetScenes}-scene SHORT DRAMA (短剧) for: ${storyIdea}. Style: ${visualStyle}. The ${targetScenes} scenes must connect like train carriages — Scene 1 flows into Scene 2, Scene 2 flows into Scene 3, etc. Tell ONE continuous story with the SAME character throughout. Each scene shows a different moment that advances the plot forward.`,
+                contents: `Write a ${targetScenes}-scene SHORT DRAMA (短剧) for: ${storyIdea}. Style: ${visualStyle}.
+
+★ CRITICAL: Scene 1 must START with the character ALREADY doing the core activity ("${storyIdea}"). Do NOT show preparation, travel, or arrival. Every scene must showcase a DIFFERENT moment of the activity itself. Think of it as a cinematic highlight reel with narrative flow.`,
                 config: { systemInstruction, responseMimeType: 'application/json', responseSchema: geminiResponseSchema, temperature: 0.7 },
             });
         } catch (initialError: any) {
             if (initialError.message?.includes('429') || initialError.message?.includes('Resource exhausted')) {
                 response = await ai.models.generateContent({
                     model: 'gemini-1.5-flash',
-                    contents: `Write a ${targetScenes}-scene SHORT DRAMA (短剧) for: ${storyIdea}. Style: ${visualStyle}. The ${targetScenes} scenes must connect like train carriages — Scene 1 flows into Scene 2, Scene 2 flows into Scene 3, etc. Tell ONE continuous story with the SAME character throughout. Each scene shows a different moment that advances the plot forward.`,
+                    contents: `Write a ${targetScenes}-scene SHORT DRAMA (短剧) for: ${storyIdea}. Style: ${visualStyle}.
+
+★ CRITICAL: Scene 1 must START with the character ALREADY doing the core activity ("${storyIdea}"). Do NOT show preparation, travel, or arrival. Every scene must showcase a DIFFERENT moment of the activity itself. Think of it as a cinematic highlight reel with narrative flow.`,
                     config: { systemInstruction, responseMimeType: 'application/json', responseSchema: geminiResponseSchema, temperature: 0.7 },
                 });
             } else {
