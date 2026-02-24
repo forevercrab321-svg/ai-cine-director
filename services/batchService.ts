@@ -126,6 +126,7 @@ export async function startBatchGenImagesSSE(params: {
     style?: VideoStyle;
     character_anchor?: string;
     concurrency?: number;
+    reference_image_url?: string;  // ★ Compressed base64 data URL for Flux Redux consistency
 }, onProgress: (data: BatchProgressResult) => void): Promise<BatchProgressResult> {
     const headers = await getAuthHeaders();
     const abortController = new AbortController();
@@ -266,6 +267,8 @@ export async function continueBatchGenImagesSSE(params: {
     style?: VideoStyle;
     character_anchor?: string;
     concurrency?: number;
+    anchor_image_url?: string;     // ★ Anchor from previous batch for cross-batch consistency
+    reference_image_url?: string;  // ★ User's reference photo for Flux Redux
 }, onProgress: (data: BatchProgressResult) => void): Promise<BatchProgressResult & { range_label?: string; remaining_count?: number; all_done?: boolean }> {
     const headers = await getAuthHeaders();
 
@@ -283,6 +286,8 @@ export async function continueBatchGenImagesSSE(params: {
             style: params.style ?? 'none',
             character_anchor: params.character_anchor ?? '',
             concurrency: params.concurrency ?? 3,
+            anchor_image_url: params.anchor_image_url ?? '',
+            reference_image_url: params.reference_image_url ?? '',
         }),
     });
 

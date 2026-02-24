@@ -41,6 +41,7 @@ const MainLayout: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [extractedAnchor, setExtractedAnchor] = useState<string>("");
   const [referenceImagePreview, setReferenceImagePreview] = useState<string | null>(null);
+  const [referenceImageDataUrl, setReferenceImageDataUrl] = useState<string>('');  // ★ Compressed base64 for Flux Redux
   const [sceneCount, setSceneCount] = useState<number>(5);
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -239,6 +240,7 @@ const MainLayout: React.FC = () => {
                   setExtractedAnchor(anchor);
                   setReferenceImagePreview(preview);
                 }}
+                onImageDataUrl={(dataUrl) => setReferenceImageDataUrl(dataUrl)}
                 currentAnchor={extractedAnchor}
               />
             </div>
@@ -307,6 +309,7 @@ const MainLayout: React.FC = () => {
         {workflowStage === 'shots' && project && (
           <ShotListView
             project={project}
+            referenceImageDataUrl={referenceImageDataUrl}
             onBack={() => setWorkflowStage('scripting')}
           />
         )}

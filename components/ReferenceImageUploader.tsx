@@ -8,11 +8,14 @@ import { LoaderIcon } from './IconComponents';
 
 interface ReferenceImageUploaderProps {
     onAnchorGenerated: (anchor: string, imagePreview: string) => void;
+    /** ★ Called with compressed base64 data URL for Flux Redux image_prompt consistency */
+    onImageDataUrl?: (dataUrl: string) => void;
     currentAnchor?: string;
 }
 
 const ReferenceImageUploader: React.FC<ReferenceImageUploaderProps> = ({
     onAnchorGenerated,
+    onImageDataUrl,
     currentAnchor,
 }) => {
     const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -63,6 +66,13 @@ const ReferenceImageUploader: React.FC<ReferenceImageUploaderProps> = ({
             // 调用 Gemini Vision 分析
             console.log('[RefImage] Analyzing image with Gemini Vision...');
             const anchor = await analyzeImageForAnchor(base64);
+
+            // ★ Expose the compressed reference image data URL for Flux Redux consistency
+            // This will be passed as image_prompt to every Flux generation call
+            if (onImageDataUrl) {
+                onImageDataUrl(base64);
+                console.log('[RefImage] ★ Reference image data URL stored for Flux Redux');
+            }
 
             // 回调父组件
             onAnchorGenerated(anchor, URL.createObjectURL(file));

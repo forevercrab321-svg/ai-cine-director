@@ -14,6 +14,7 @@ import { t } from '../i18n';
 
 interface ShotListViewProps {
     project: StoryboardProject;
+    referenceImageDataUrl?: string;  // ★ Compressed base64 for Flux Redux consistency
     onBack: () => void;
 }
 
@@ -352,7 +353,7 @@ const SceneSection: React.FC<{
 // ═══════════════════════════════════════════════════════════════
 // Main ShotListView component
 // ═══════════════════════════════════════════════════════════════
-const ShotListView: React.FC<ShotListViewProps> = ({ project, onBack }) => {
+const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageDataUrl, onBack }) => {
     const { settings, isAuthenticated, openPricingModal, hasEnoughCredits, refreshBalance } = useAppContext();
 
     // ★ Generate a stable project ID if missing (for legacy projects)
@@ -557,6 +558,7 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, onBack }) => {
                     projectId={effectiveProjectId}
                     characterAnchor={project.character_anchor}
                     visualStyle={project.visual_style}
+                    referenceImageDataUrl={referenceImageDataUrl}
                     imagesByShot={imagesByShot}
                     onImagesGenerated={(results) => {
                         // Update imagesByShot with newly generated images

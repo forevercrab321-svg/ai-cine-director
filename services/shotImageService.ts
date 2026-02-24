@@ -46,6 +46,7 @@ export async function generateShotImage(params: {
     character_anchor?: string;
     reference_policy?: 'none' | 'anchor' | 'first-frame' | 'previous-frame';
     project_id?: string;
+    anchor_image_url?: string;  // ★ Reference image URL for Flux Redux consistency
 }): Promise<GenerateImageResult> {
     const headers = await getAuthHeaders();
 

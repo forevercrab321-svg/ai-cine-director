@@ -31,6 +31,8 @@ interface BatchImagePanelProps {
     projectId?: string;
     characterAnchor: string;
     visualStyle: string;
+    /** ★ Compressed reference image data URL for Flux Redux consistency */
+    referenceImageDataUrl?: string;
     /** Current images for each shot — used to determine which shots need generation */
     imagesByShot: Record<string, ShotImage[]>;
     /** Called when images are generated — parent updates imagesByShot */
@@ -140,7 +142,7 @@ const StrategyDialog: React.FC<{
 // Main BatchImagePanel
 // ═══════════════════════════════════════════════════════════════
 const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
-    allShots, projectId, characterAnchor, visualStyle, imagesByShot, onImagesGenerated,
+    allShots, projectId, characterAnchor, visualStyle, referenceImageDataUrl, imagesByShot, onImagesGenerated,
 }) => {
     const { settings, isAuthenticated, hasEnoughCredits, openPricingModal, refreshBalance } = useAppContext();
 
@@ -155,6 +157,9 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
     const [isStarting, setIsStarting] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const abortRef = useRef<AbortController | null>(null);
+
+    // ★ Anchor image URL from first batch — passed to continue batches for cross-batch consistency
+    const [anchorImageUrl, setAnchorImageUrl] = useState<string | null>(null);
 
     // Continue state
     const [rangeLabel, setRangeLabel] = useState<string | null>(null);
@@ -175,9 +180,14 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
     );
 
     // ── SSE Progress handler ──
-    const handleSSEProgress = useCallback((data: BatchProgressResult) => {
+    const handleSSEProgress = useCallback((data: BatchProgressResult & { anchor_image_url?: string }) => {
         setJob(data.job);
         setItems(data.items);
+
+        // ★ Capture anchor image URL from server for cross-batch consistency
+        if ((data as any).anchor_image_url) {
+            setAnchorImageUrl((data as any).anchor_image_url);
+        }
         
         // Emit partial results immediately as images complete
         if (data.job.status === 'completed' || data.job.status === 'failed' || data.job.status === 'cancelled') {
@@ -238,6 +248,7 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                 style: 'none',
                 character_anchor: characterAnchor,
                 concurrency: 1,
+                reference_image_url: referenceImageDataUrl || '',
             }, handleSSEProgress);
 
             // SSE stream completed — final results already handled in handleSSEProgress
@@ -279,6 +290,8 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                 style: 'none',
                 character_anchor: characterAnchor,
                 concurrency: 1,
+                anchor_image_url: anchorImageUrl || '',
+                reference_image_url: referenceImageDataUrl || '',
             }, handleSSEProgress);
 
             setJobId(result.job?.id || null);

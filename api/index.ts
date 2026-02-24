@@ -1217,6 +1217,7 @@ const REPLICATE_API_BASE = 'https://api.replicate.com/v1';
 
 async function callReplicateImage(params: {
     prompt: string; model: string; aspectRatio: string; seed: number | null;
+    imagePrompt?: string; // ★ URL or data URL of reference image for Flux Redux — visual consistency anchor
 }): Promise<{ url: string; predictionId: string }> {
     const token = getReplicateToken();
     const modelPath = params.model;
@@ -1231,6 +1232,15 @@ async function callReplicateImage(params: {
         output_quality: 90,        // ★ LOCK: Consistent quality across all shots
     };
     if (params.seed != null) input.seed = params.seed;
+
+    // ★ FLUX REDUX — Image-guided generation for extreme character/style consistency
+    // Only Flux 1.1 Pro and Pro Ultra support the image_prompt parameter.
+    // This conditions every generated image on the reference, preserving face, outfit, palette.
+    if (params.imagePrompt && (modelPath.includes('flux-1.1-pro') || modelPath.includes('flux-pro'))) {
+        input.image_prompt = params.imagePrompt;
+        console.log(`[Replicate] ★ Redux: image_prompt set (${params.imagePrompt.substring(0, 60)}...)`);
+    }
+
     const body = isModelPath ? { input } : { version: modelPath, input };
 
     console.log(`[Replicate] Calling ${targetUrl} with model=${modelPath}`);
@@ -1280,8 +1290,8 @@ function buildFinalPrompt(params: {
     // ★ POSITION 3: SHOT-SPECIFIC CONTENT
     parts.push(params.basePrompt);
     if (params.deltaInstruction) parts.push(`Edit: ${params.deltaInstruction}`);
-    // ★ POSITION 4: CONSISTENCY SUFFIX
-    parts.push('consistent visual style, same color palette, same lighting, same character appearance');
+    // ★ POSITION 4: IDENTITY LOCK SUFFIX — maximum consistency enforcement
+    parts.push('IDENTITY LOCK: same person, identical face, identical hairstyle, identical outfit and accessories, same skin tone, same body proportions. Same color grading, same lighting setup, same film grain, same art direction across all frames');
     return parts.join('. ');
 }
 
@@ -1649,7 +1659,7 @@ app.post('/api/shot-images/:shotId/generate', async (req: any, res: any) => {
     const startTime = Date.now();
     try {
         const { shotId } = req.params;
-        const { prompt, negative_prompt, delta_instruction, model, aspect_ratio, style, seed, character_anchor, reference_policy, project_id } = req.body;
+        const { prompt, negative_prompt, delta_instruction, model, aspect_ratio, style, seed, character_anchor, reference_policy, project_id, anchor_image_url } = req.body;
 
         const authHeader = req.headers.authorization;
         if (!authHeader) return res.status(401).json({ error: 'Missing Authorization header' });
@@ -1698,7 +1708,7 @@ app.post('/api/shot-images/:shotId/generate', async (req: any, res: any) => {
 
         let result: { url: string; predictionId: string };
         try {
-            result = await callReplicateImage({ prompt: finalPrompt, model: replicatePath, aspectRatio: aspect_ratio || '16:9', seed: seed ?? 142857 });
+            result = await callReplicateImage({ prompt: finalPrompt, model: replicatePath, aspectRatio: aspect_ratio || '16:9', seed: seed ?? 142857, imagePrompt: anchor_image_url || undefined });
         } catch (genErr: any) {
             if (!skipCreditCheck) { try { await supabaseUser.rpc('refund_reserve', { amount: cost, ref_type: 'shot-image', ref_id: jobRef }); } catch (_) {} }
             throw genErr;
@@ -1826,7 +1836,7 @@ app.post('/api/shot-images/:imageId/edit', async (req: any, res: any) => {
 // ───────────────────────────────────────────────────────────────
 app.post('/api/batch/gen-images', async (req: any, res: any) => {
     try {
-        const { project_id, shots, count = 100, model = 'flux', aspect_ratio = '16:9', style = 'none', character_anchor = '', concurrency = 2 } = req.body;
+        const { project_id, shots, count = 100, model = 'flux', aspect_ratio = '16:9', style = 'none', character_anchor = '', concurrency = 2, reference_image_url = '' } = req.body;
         if (!project_id) return res.status(400).json({ error: 'Missing project_id' });
         if (!shots?.length) return res.status(400).json({ error: 'Missing or empty shots array' });
 
@@ -1899,6 +1909,15 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
         // Send initial progress
         sendSSE('progress', { job, items });
 
+        // ★ FLUX REDUX ANCHORING — First-image anchoring for extreme consistency
+        // Priority: 1) User's uploaded reference photo  2) First successfully generated image
+        // The anchor image is passed as `image_prompt` to Flux Redux, conditioning
+        // every subsequent image on the same face, outfit, palette, and style.
+        let anchorImageUrl: string | null = reference_image_url || null;
+        if (anchorImageUrl) {
+            console.log(`[Batch] ★ Using user reference image as anchor: ${anchorImageUrl.substring(0, 80)}...`);
+        }
+
         // ★ Process each image sequentially
         let cancelled = false;
         req.on('close', () => { cancelled = true; });
@@ -1927,7 +1946,8 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
                 
                 const result = await callReplicateImage({ 
                     prompt: finalPrompt, model: replicatePath, 
-                    aspectRatio: aspect_ratio, seed: shotData.seed_hint ?? projectSeed 
+                    aspectRatio: aspect_ratio, seed: shotData.seed_hint ?? projectSeed,
+                    imagePrompt: anchorImageUrl || undefined,
                 });
 
                 item.status = 'succeeded';
@@ -1935,6 +1955,12 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
                 item.image_url = result.url;
                 item.completed_at = new Date().toISOString();
                 job.succeeded += 1;
+
+                // ★ First successful image becomes the anchor for all subsequent images
+                if (!anchorImageUrl && result.url) {
+                    anchorImageUrl = result.url;
+                    console.log(`[Batch] ★ First-image anchor set: ${result.url.substring(0, 80)}...`);
+                }
             } catch (err: any) {
                 item.status = 'failed';
                 item.error = err.message || 'Unknown error';
@@ -1967,7 +1993,7 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
             try { await supabaseUser.rpc('finalize_reserve', { ref_type: 'batch-image', ref_id: batchRef }); } catch(e) {}
         }
 
-        sendSSE('done', { job, items });
+        sendSSE('done', { job, items, anchor_image_url: anchorImageUrl });
         res.end();
     } catch (error: any) {
         console.error('[Batch GenImages] Error:', error.message);
@@ -1985,7 +2011,7 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
 // ───────────────────────────────────────────────────────────────
 app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
     try {
-        const { project_id, shots, shots_with_images = [], count = 100, strategy = 'strict', model = 'flux', aspect_ratio = '16:9', style = 'none', character_anchor = '', concurrency = 2 } = req.body;
+        const { project_id, shots, shots_with_images = [], count = 100, strategy = 'strict', model = 'flux', aspect_ratio = '16:9', style = 'none', character_anchor = '', concurrency = 2, anchor_image_url = '', reference_image_url = '' } = req.body;
         if (!project_id) return res.status(400).json({ error: 'Missing project_id' });
         if (!shots?.length) return res.status(400).json({ error: 'Missing or empty shots array' });
 
@@ -2083,6 +2109,12 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
 
         sendSSE('progress', { job, items, range_label: rangeLabel });
 
+        // ★ FLUX REDUX ANCHORING — Use anchor from previous batch or reference image
+        let anchorImageUrl: string | null = anchor_image_url || reference_image_url || null;
+        if (anchorImageUrl) {
+            console.log(`[Batch Continue] ★ Using anchor image: ${anchorImageUrl.substring(0, 80)}...`);
+        }
+
         let cancelled = false;
         req.on('close', () => { cancelled = true; });
 
@@ -2097,9 +2129,14 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
                 const shotData = nextBatch.find((s: any) => s.shot_id === item.shot_id);
                 if (!shotData) throw new Error('Shot data not found');
                 const finalPrompt = buildFinalPrompt({ basePrompt: shotData.image_prompt || '', characterAnchor: character_anchor, style, referencePolicy: shotData.reference_policy || 'anchor' });
-                const result = await callReplicateImage({ prompt: finalPrompt, model: replicatePath, aspectRatio: aspect_ratio, seed: shotData.seed_hint ?? projectSeed });
+                const result = await callReplicateImage({ prompt: finalPrompt, model: replicatePath, aspectRatio: aspect_ratio, seed: shotData.seed_hint ?? projectSeed, imagePrompt: anchorImageUrl || undefined });
                 item.status = 'succeeded'; item.image_id = crypto.randomUUID(); item.image_url = result.url;
                 item.completed_at = new Date().toISOString(); job.succeeded += 1;
+                // ★ First successful image becomes anchor if none was provided
+                if (!anchorImageUrl && result.url) {
+                    anchorImageUrl = result.url;
+                    console.log(`[Batch Continue] ★ First-image anchor set: ${result.url.substring(0, 80)}...`);
+                }
             } catch (err: any) {
                 item.status = 'failed'; item.error = err.message || 'Unknown error';
                 item.completed_at = new Date().toISOString(); job.failed += 1;
@@ -2120,7 +2157,7 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
             try { await supabaseUser.rpc('finalize_reserve', { ref_type: 'batch-image-continue', ref_id: batchRef }); } catch(e) {}
         }
 
-        sendSSE('done', { job, items, range_label: rangeLabel, remaining_count: remainingAfter, all_done: remainingAfter === 0 });
+        sendSSE('done', { job, items, range_label: rangeLabel, remaining_count: remainingAfter, all_done: remainingAfter === 0, anchor_image_url: anchorImageUrl });
         res.end();
     } catch (error: any) {
         console.error('[Batch Continue] Error:', error.message);
