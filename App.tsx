@@ -106,6 +106,7 @@ const MainLayout: React.FC = () => {
     setProject(null);
 
     try {
+      console.log(`[App] Generating with extractedAnchor: "${extractedAnchor?.substring(0, 80) || 'EMPTY'}..." (length: ${extractedAnchor?.length || 0})`);
       const data = await generateStoryboard(storyIdea, settings.videoStyle, settings.lang, settings.generationMode, extractedAnchor, sceneCount);
       setProject(data);
       setWorkflowStage('scripting');

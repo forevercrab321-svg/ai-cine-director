@@ -909,6 +909,9 @@ app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
     try {
         const { storyIdea, visualStyle, language, identityAnchor, sceneCount } = req.body;
         const targetScenes = Math.min(Math.max(Number(sceneCount) || 5, 1), 50);
+        
+        console.log(`[Gemini Generate] identityAnchor present: ${!!identityAnchor}, length: ${identityAnchor?.length || 0}, first100: ${identityAnchor?.substring(0, 100) || 'NONE'}`);
+        
         const authHeader = `Bearer ${req.accessToken}`;
         const userId = req.user?.id;
         const userEmail = req.user?.email;
@@ -1095,8 +1098,25 @@ app.post('/api/gemini/analyze', async (req: any, res: any) => {
         const { base64Data } = req.body;
         if (!base64Data) return res.status(400).json({ error: 'Missing base64Data' });
         const ai = getGeminiAI();
-        const cleanBase64 = base64Data.split(',')[1] || base64Data;
-        const mimeType = base64Data.match(/:(.*?);/)?.[1] || 'image/png';
+        
+        // ★ 从 data URL 或 base64 魔术字节检测 MIME 类型
+        const cleanBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
+        let mimeType = 'image/jpeg'; // 默认 JPEG（照片最常见）
+        
+        // 优先从 data URL 前缀提取
+        const prefixMatch = base64Data.match(/^data:(image\/[a-zA-Z+]+);base64,/);
+        if (prefixMatch) {
+            mimeType = prefixMatch[1];
+        } else {
+            // 从 base64 魔术字节检测
+            if (cleanBase64.startsWith('/9j/')) mimeType = 'image/jpeg';
+            else if (cleanBase64.startsWith('iVBOR')) mimeType = 'image/png';
+            else if (cleanBase64.startsWith('UklGR')) mimeType = 'image/webp';
+            else if (cleanBase64.startsWith('R0lGO')) mimeType = 'image/gif';
+        }
+        
+        console.log(`[Gemini Analyze] MIME: ${mimeType}, base64 length: ${cleanBase64.length}, hasPrefix: ${base64Data.startsWith('data:')}`);
+        
         const analyzePrompt = `You are a professional character designer. Analyze this image and produce an EXACT visual identity description for AI image generation.
 
 **CRITICAL: OBSERVE THE ACTUAL IMAGE. DO NOT GUESS OR ASSUME.**
@@ -1116,10 +1136,19 @@ A [age]-year-old [ethnicity] [female/male] with [face shape] face, [skin tone] s
             model: 'gemini-2.0-flash',
             contents: { parts: [{ inlineData: { mimeType, data: cleanBase64 } }, { text: analyzePrompt }] },
         });
-        res.json({ anchor: (response.text || 'A cinematic character').trim() });
+        
+        const result = (response.text || '').trim();
+        console.log(`[Gemini Analyze] ✅ Result: ${result.substring(0, 120)}...`);
+        
+        if (!result || result.length < 20) {
+            console.error('[Gemini Analyze] ⚠️ Empty or too-short result from Gemini Vision');
+            return res.status(500).json({ error: 'Gemini Vision returned empty result', anchor: 'A cinematic character' });
+        }
+        
+        res.json({ anchor: result });
     } catch (error: any) {
-        console.error('[Gemini Analyze] Error:', error.message);
-        res.json({ anchor: 'A cinematic character' });
+        console.error('[Gemini Analyze] ❌ Error:', error.message);
+        res.status(500).json({ error: error.message || 'Analyze failed', anchor: 'A cinematic character' });
     }
 });
 

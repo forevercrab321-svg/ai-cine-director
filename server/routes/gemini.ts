@@ -71,6 +71,8 @@ geminiRouter.post('/generate', async (req, res) => {
     try {
         const { storyIdea, visualStyle, language, mode, identityAnchor, sceneCount } = req.body;
         const targetScenes = Math.min(Math.max(Number(sceneCount) || 5, 1), 50);
+        
+        console.log(`[Gemini Generate] identityAnchor present: ${!!identityAnchor}, length: ${identityAnchor?.length || 0}, first100: ${identityAnchor?.substring(0, 100) || 'NONE'}`);
 
         // ★ 1. Auth & Credit Check
         const authHeader = req.headers.authorization;
@@ -231,21 +233,7 @@ The character_anchor is stored ONCE at the top level. Each scene's visual_descri
             const setting = s.scene_setting || '';
             let rawDesc = (s.visual_description || '').trim();
 
-            // ★ METHOD 1: Direct similarity check
-            // If visual_description is essentially a copy of character_anchor (>80% similarity),
-            // it means Gemini ignored our instructions. Use a fallback generic description.
-            if (anchorLower.length > 20 && rawDesc.length > 0) {
-                const descLower = rawDesc.toLowerCase();
-                const commonChars = [...anchorLower].filter(c => descLower.includes(c)).length;
-                const similarity = commonChars / anchorLower.length;
-                
-                if (similarity > 0.8 || descLower.includes(anchorLower.slice(0, 50))) {
-                    // High similarity → Gemini copied the anchor. Strip it.
-                    rawDesc = `Scene ${idx + 1} action`;
-                }
-            }
-
-            // ★ METHOD 2: Strip character_anchor prefix if Gemini repeated it
+            // ★ Strip character_anchor prefix from visual_description if Gemini repeated it
             if (anchorLower.length > 20) {
                 const descLower = rawDesc.toLowerCase();
                 // Try exact prefix match
@@ -375,8 +363,24 @@ geminiRouter.post('/analyze', async (req, res) => {
         }
 
         const ai = getAI();
-        const cleanBase64 = base64Data.split(',')[1] || base64Data;
-        const mimeType = base64Data.match(/:(.*?);/)?.[1] || 'image/png';
+        
+        // ★ 从 data URL 或 base64 魔术字节检测 MIME 类型
+        const cleanBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
+        let mimeType = 'image/jpeg'; // 默认 JPEG（照片最常见）
+        
+        // 优先从 data URL 前缀提取
+        const prefixMatch = base64Data.match(/^data:(image\/[a-zA-Z+]+);base64,/);
+        if (prefixMatch) {
+            mimeType = prefixMatch[1];
+        } else {
+            // 从 base64 魔术字节检测
+            if (cleanBase64.startsWith('/9j/')) mimeType = 'image/jpeg';
+            else if (cleanBase64.startsWith('iVBOR')) mimeType = 'image/png';
+            else if (cleanBase64.startsWith('UklGR')) mimeType = 'image/webp';
+            else if (cleanBase64.startsWith('R0lGO')) mimeType = 'image/gif';
+        }
+        
+        console.log(`[Gemini Analyze] MIME: ${mimeType}, base64 length: ${cleanBase64.length}, hasPrefix: ${base64Data.startsWith('data:')}`);
 
         const response = await ai.models.generateContent({
             model: 'gemini-2.0-flash',
@@ -402,10 +406,18 @@ A [age]-year-old [ethnicity] [female/male] with [face shape] face, [skin tone] s
             },
         });
 
-        const result = (response.text || 'A cinematic character').trim();
+        const result = (response.text || '').trim();
+        console.log(`[Gemini Analyze] ✅ Result: ${result.substring(0, 120)}...`);
+        
+        if (!result || result.length < 20) {
+            console.error('[Gemini Analyze] ⚠️ Empty or too-short result from Gemini Vision');
+            return res.status(500).json({ error: 'Gemini Vision returned empty result', anchor: 'A cinematic character' });
+        }
+        
         res.json({ anchor: result });
     } catch (error: any) {
-        console.error('[Gemini Analyze] Error:', error.message);
-        res.json({ anchor: 'A cinematic character' });
+        console.error('[Gemini Analyze] ❌ Error:', error.message);
+        // ★ 返回 500 状态码让前端知道分析失败了，而非静默返回 fallback
+        res.status(500).json({ error: error.message || 'Analyze failed', anchor: 'A cinematic character' });
     }
 });

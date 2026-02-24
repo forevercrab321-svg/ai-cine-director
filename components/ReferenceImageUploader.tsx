@@ -47,14 +47,14 @@ const ReferenceImageUploader: React.FC<ReferenceImageUploaderProps> = ({
             };
             reader.readAsDataURL(file);
 
-            // 转换为 base64 用于分析
+            // 转换为 base64 用于分析 — 保留完整 data URL 前缀以正确识别 MIME 类型
             const base64 = await new Promise<string>((resolve, reject) => {
                 const r = new FileReader();
                 r.onload = () => {
                     const result = r.result as string;
-                    // 移除 data:image/...;base64, 前缀
-                    const base64Data = result.split(',')[1];
-                    resolve(base64Data);
+                    // ★ 保留完整 data URL (data:image/jpeg;base64,...) 
+                    // 用于 compressBase64Image 正确加载图片 + 服务端正确识别 MIME 类型
+                    resolve(result);
                 };
                 r.onerror = reject;
                 r.readAsDataURL(file);
