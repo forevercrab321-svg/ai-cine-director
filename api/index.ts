@@ -1816,7 +1816,9 @@ app.post('/api/shot-images/:imageId/edit', async (req: any, res: any) => {
 });
 
 // ───────────────────────────────────────────────────────────────
-// POST /api/batch/gen-images — Start batch image generation
+// POST /api/batch/gen-images — Synchronous batch image generation with SSE streaming
+// On Vercel serverless, in-memory state doesn't persist across requests.
+// This endpoint processes all images within a single request and streams progress via SSE.
 // ───────────────────────────────────────────────────────────────
 app.post('/api/batch/gen-images', async (req: any, res: any) => {
     try {
@@ -1864,43 +1866,113 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
             logDeveloperAccess(userEmail, `batch:gen-images:count=${sortedShots.length}:totalCost=${totalCost}`);
         }
 
-        const jobId = crypto.randomUUID();
-        // ★ CONSISTENCY SEED: All shots in the same project share a seed for visual style consistency
-        const projectSeed = Math.abs([...project_id].reduce((hash: number, c: string) => ((hash << 5) - hash + c.charCodeAt(0)) | 0, 0)) % 1000000 || 142857;
-        const executor: TaskExecutor = async (item) => {
-            const shotData = sortedShots.find((s: any) => s.shot_id === item.shot_id);
-            if (!shotData) throw new Error('Shot data not found');
-            const finalPrompt = buildFinalPrompt({ basePrompt: shotData.image_prompt || '', characterAnchor: character_anchor, style, referencePolicy: shotData.reference_policy || 'anchor' });
-            const result = await callReplicateImage({ prompt: finalPrompt, model: replicatePath, aspectRatio: aspect_ratio, seed: shotData.seed_hint ?? projectSeed });
-            return { image_id: crypto.randomUUID(), image_url: result.url };
-        };
-
-        const job = createBatchJob({
-            jobId, projectId: project_id, userId: '', concurrency: 1, executor,
-            items: sortedShots.map((s: any) => ({ shotId: s.shot_id, shotNumber: s.shot_number, sceneNumber: s.scene_number })),
+        // ★ SSE: Set up Server-Sent Events streaming
+        res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no',
         });
 
-        // Async credit finalization
-        if (!skipCreditCheck) {
-            (async () => {
-                for (let a = 0; a < 600; a++) {
-                    await new Promise(r => setTimeout(r, 3000));
-                    const st = getBatchJobStatus(jobId);
-                    if (!st) break;
-                    if (['completed', 'failed', 'cancelled'].includes(st.job.status)) {
-                        const notOk = st.job.total - st.job.succeeded;
-                        if (notOk > 0) { try { await supabaseUser.rpc('refund_reserve', { amount: notOk * costPerImage, ref_type: 'batch-image-partial', ref_id: batchRef }); } catch(e) {} }
-                        try { await supabaseUser.rpc('finalize_reserve', { ref_type: 'batch-image', ref_id: batchRef }); } catch(e) {}
-                        break;
-                    }
-                }
-            })().catch(e => console.error('[Batch] Credit finalization error:', e));
+        const sendSSE = (event: string, data: any) => {
+            res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        };
+
+        const jobId = crypto.randomUUID();
+        const projectSeed = Math.abs([...project_id].reduce((hash: number, c: string) => ((hash << 5) - hash + c.charCodeAt(0)) | 0, 0)) % 1000000 || 142857;
+
+        const items: BatchJobItem[] = sortedShots.map((s: any) => ({
+            id: crypto.randomUUID(), job_id: jobId, shot_id: s.shot_id,
+            shot_number: s.shot_number, scene_number: s.scene_number, status: 'queued' as BatchItemStatus,
+        }));
+
+        const job: BatchJob = {
+            id: jobId, project_id, user_id: userId, type: 'gen_images',
+            total: items.length, done: 0, succeeded: 0, failed: 0, status: 'running',
+            created_at: new Date().toISOString(), updated_at: new Date().toISOString(), concurrency: 1,
+        };
+
+        // Send initial progress
+        sendSSE('progress', { job, items });
+
+        // ★ Process each image sequentially
+        let cancelled = false;
+        req.on('close', () => { cancelled = true; });
+
+        for (const item of items) {
+            if (cancelled) {
+                item.status = 'cancelled';
+                continue;
+            }
+
+            item.status = 'running';
+            item.started_at = new Date().toISOString();
+            job.updated_at = new Date().toISOString();
+            sendSSE('progress', { job, items });
+
+            try {
+                const shotData = sortedShots.find((s: any) => s.shot_id === item.shot_id);
+                if (!shotData) throw new Error('Shot data not found');
+                
+                const finalPrompt = buildFinalPrompt({ 
+                    basePrompt: shotData.image_prompt || '', 
+                    characterAnchor: character_anchor, 
+                    style, 
+                    referencePolicy: shotData.reference_policy || 'anchor' 
+                });
+                
+                const result = await callReplicateImage({ 
+                    prompt: finalPrompt, model: replicatePath, 
+                    aspectRatio: aspect_ratio, seed: shotData.seed_hint ?? projectSeed 
+                });
+
+                item.status = 'succeeded';
+                item.image_id = crypto.randomUUID();
+                item.image_url = result.url;
+                item.completed_at = new Date().toISOString();
+                job.succeeded += 1;
+            } catch (err: any) {
+                item.status = 'failed';
+                item.error = err.message || 'Unknown error';
+                item.completed_at = new Date().toISOString();
+                job.failed += 1;
+                console.error(`[Batch] Shot ${item.shot_id} failed:`, err.message);
+            }
+
+            job.done += 1;
+            job.updated_at = new Date().toISOString();
+            sendSSE('progress', { job, items });
         }
 
-        res.json({ job_id: jobId, status: job.status, total: job.total, cost_per_image: costPerImage, total_cost: totalCost });
+        // Finalize
+        if (cancelled) {
+            job.status = 'cancelled';
+        } else if (job.failed > 0 && job.succeeded === 0) {
+            job.status = 'failed';
+        } else {
+            job.status = 'completed';
+        }
+        job.updated_at = new Date().toISOString();
+
+        // ★ Credit finalization
+        if (!skipCreditCheck) {
+            const notOk = job.total - job.succeeded;
+            if (notOk > 0) { 
+                try { await supabaseUser.rpc('refund_reserve', { amount: notOk * costPerImage, ref_type: 'batch-image-partial', ref_id: batchRef }); } catch(e) {} 
+            }
+            try { await supabaseUser.rpc('finalize_reserve', { ref_type: 'batch-image', ref_id: batchRef }); } catch(e) {}
+        }
+
+        sendSSE('done', { job, items });
+        res.end();
     } catch (error: any) {
         console.error('[Batch GenImages] Error:', error.message);
-        res.status(500).json({ error: error.message || 'Failed to start batch job' });
+        if (!res.headersSent) {
+            res.status(500).json({ error: error.message || 'Failed to start batch job' });
+        } else {
+            res.write(`event: error\ndata: ${JSON.stringify({ error: error.message })}\n\n`);
+            res.end();
+        }
     }
 });
 
@@ -1978,54 +2050,82 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
             logDeveloperAccess(userEmail, `batch:gen-images:continue:count=${nextBatch.length}:totalCost=${totalCost}`);
         }
 
-        const jobId = crypto.randomUUID();
-        // ★ CONSISTENCY SEED: Same project-based seed as initial batch
-        const projectSeed = Math.abs([...project_id].reduce((hash: number, c: string) => ((hash << 5) - hash + c.charCodeAt(0)) | 0, 0)) % 1000000 || 142857;
-        const executor: TaskExecutor = async (item) => {
-            const shotData = nextBatch.find((s: any) => s.shot_id === item.shot_id);
-            if (!shotData) throw new Error('Shot data not found');
-            const finalPrompt = buildFinalPrompt({ basePrompt: shotData.image_prompt || '', characterAnchor: character_anchor, style, referencePolicy: shotData.reference_policy || 'anchor' });
-            const result = await callReplicateImage({ prompt: finalPrompt, model: replicatePath, aspectRatio: aspect_ratio, seed: shotData.seed_hint ?? projectSeed });
-            return { image_id: crypto.randomUUID(), image_url: result.url };
-        };
-
-        const job = createBatchJob({
-            jobId, projectId: project_id, userId: '', concurrency: 1, executor,
-            items: nextBatch.map((s: any) => ({ shotId: s.shot_id, shotNumber: s.shot_number, sceneNumber: s.scene_number })),
+        // ★ SSE: Set up Server-Sent Events streaming
+        res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no',
         });
 
-        const jobState = getBatchJobStatus(jobId);
-        if (jobState) {
-            const raw = batchJobs.get(jobId);
-            if (raw) {
-                raw.job.type = 'gen_images_continue'; raw.job.strategy = strategy;
-                raw.job.range_start_scene = nextBatch[0].scene_number; raw.job.range_start_shot = nextBatch[0].shot_number;
-                raw.job.range_end_scene = nextBatch[nextBatch.length - 1].scene_number; raw.job.range_end_shot = nextBatch[nextBatch.length - 1].shot_number;
-                raw.job.remaining_count = remainingAfter; raw.job.all_done = remainingAfter === 0;
+        const sendSSE = (event: string, data: any) => {
+            res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        };
+
+        const jobId = crypto.randomUUID();
+        const projectSeed = Math.abs([...project_id].reduce((hash: number, c: string) => ((hash << 5) - hash + c.charCodeAt(0)) | 0, 0)) % 1000000 || 142857;
+        const rangeLabel = `S${nextBatch[0].scene_number}.${nextBatch[0].shot_number} → S${nextBatch[nextBatch.length - 1].scene_number}.${nextBatch[nextBatch.length - 1].shot_number}`;
+
+        const items: BatchJobItem[] = nextBatch.map((s: any) => ({
+            id: crypto.randomUUID(), job_id: jobId, shot_id: s.shot_id,
+            shot_number: s.shot_number, scene_number: s.scene_number, status: 'queued' as BatchItemStatus,
+        }));
+
+        const job: BatchJob = {
+            id: jobId, project_id, user_id: userId, type: 'gen_images_continue',
+            total: items.length, done: 0, succeeded: 0, failed: 0, status: 'running',
+            created_at: new Date().toISOString(), updated_at: new Date().toISOString(), concurrency: 1,
+        };
+
+        sendSSE('progress', { job, items, range_label: rangeLabel });
+
+        let cancelled = false;
+        req.on('close', () => { cancelled = true; });
+
+        for (const item of items) {
+            if (cancelled) { item.status = 'cancelled'; continue; }
+            item.status = 'running';
+            item.started_at = new Date().toISOString();
+            job.updated_at = new Date().toISOString();
+            sendSSE('progress', { job, items });
+
+            try {
+                const shotData = nextBatch.find((s: any) => s.shot_id === item.shot_id);
+                if (!shotData) throw new Error('Shot data not found');
+                const finalPrompt = buildFinalPrompt({ basePrompt: shotData.image_prompt || '', characterAnchor: character_anchor, style, referencePolicy: shotData.reference_policy || 'anchor' });
+                const result = await callReplicateImage({ prompt: finalPrompt, model: replicatePath, aspectRatio: aspect_ratio, seed: shotData.seed_hint ?? projectSeed });
+                item.status = 'succeeded'; item.image_id = crypto.randomUUID(); item.image_url = result.url;
+                item.completed_at = new Date().toISOString(); job.succeeded += 1;
+            } catch (err: any) {
+                item.status = 'failed'; item.error = err.message || 'Unknown error';
+                item.completed_at = new Date().toISOString(); job.failed += 1;
+                console.error(`[Batch Continue] Shot ${item.shot_id} failed:`, err.message);
             }
+            job.done += 1; job.updated_at = new Date().toISOString();
+            sendSSE('progress', { job, items });
         }
+
+        if (cancelled) { job.status = 'cancelled'; }
+        else if (job.failed > 0 && job.succeeded === 0) { job.status = 'failed'; }
+        else { job.status = 'completed'; }
+        job.updated_at = new Date().toISOString();
 
         if (!skipCreditCheck) {
-            (async () => {
-                for (let a = 0; a < 600; a++) {
-                    await new Promise(r => setTimeout(r, 3000));
-                    const st = getBatchJobStatus(jobId);
-                    if (!st) break;
-                    if (['completed', 'failed', 'cancelled'].includes(st.job.status)) {
-                        const notOk = st.job.total - st.job.succeeded;
-                        if (notOk > 0) { try { await supabaseUser.rpc('refund_reserve', { amount: notOk * costPerImage, ref_type: 'batch-continue-partial', ref_id: batchRef }); } catch(e) {} }
-                        try { await supabaseUser.rpc('finalize_reserve', { ref_type: 'batch-image-continue', ref_id: batchRef }); } catch(e) {}
-                        break;
-                    }
-                }
-            })().catch(e => console.error('[Batch Continue] Credit error:', e));
+            const notOk = job.total - job.succeeded;
+            if (notOk > 0) { try { await supabaseUser.rpc('refund_reserve', { amount: notOk * costPerImage, ref_type: 'batch-continue-partial', ref_id: batchRef }); } catch(e) {} }
+            try { await supabaseUser.rpc('finalize_reserve', { ref_type: 'batch-image-continue', ref_id: batchRef }); } catch(e) {}
         }
 
-        const rangeLabel = `S${nextBatch[0].scene_number}.${nextBatch[0].shot_number} → S${nextBatch[nextBatch.length - 1].scene_number}.${nextBatch[nextBatch.length - 1].shot_number}`;
-        res.json({ job_id: jobId, status: job.status, total: job.total, cost_per_image: costPerImage, total_cost: totalCost, range_label: rangeLabel, remaining_count: remainingAfter, all_done: remainingAfter === 0, strategy });
+        sendSSE('done', { job, items, range_label: rangeLabel, remaining_count: remainingAfter, all_done: remainingAfter === 0 });
+        res.end();
     } catch (error: any) {
         console.error('[Batch Continue] Error:', error.message);
-        res.status(500).json({ error: error.message || 'Failed to start continue batch job' });
+        if (!res.headersSent) {
+            res.status(500).json({ error: error.message || 'Failed to start continue batch job' });
+        } else {
+            res.write(`event: error\ndata: ${JSON.stringify({ error: error.message })}\n\n`);
+            res.end();
+        }
     }
 });
 

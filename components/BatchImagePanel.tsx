@@ -13,14 +13,14 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Shot, ShotImage, BatchJob, BatchJobItem, ImageModel, ContinueStrategy } from '../types';
 import {
-    startBatchGenImages,
-    continueBatchGenImages,
-    getBatchProgress,
+    startBatchGenImagesSSE,
+    continueBatchGenImagesSSE,
     cancelBatchJob,
     retryBatchJob,
     getBatchCost,
     computeShotImageStatus,
     type ShotForBatch,
+    type BatchProgressResult,
 } from '../services/batchService';
 import { useAppContext } from '../context/AppContext';
 import { LoaderIcon } from './IconComponents';
@@ -154,7 +154,7 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
     const [items, setItems] = useState<BatchJobItem[]>([]);
     const [isStarting, setIsStarting] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const abortRef = useRef<AbortController | null>(null);
 
     // Continue state
     const [rangeLabel, setRangeLabel] = useState<string | null>(null);
@@ -174,47 +174,38 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
         (a.scene_id === b.scene_id ? a.shot_number - b.shot_number : a.scene_id.localeCompare(b.scene_id))
     );
 
-    // ── Polling ──
-    const startPolling = useCallback((jId: string) => {
-        if (pollRef.current) clearInterval(pollRef.current);
-        pollRef.current = setInterval(async () => {
-            try {
-                const progress = await getBatchProgress(jId);
-                setJob(progress.job);
-                setItems(progress.items);
-
-                if (['completed', 'failed', 'cancelled'].includes(progress.job.status)) {
-                    if (pollRef.current) clearInterval(pollRef.current);
-                    pollRef.current = null;
-
-                    const results = progress.items
-                        .filter(i => i.status === 'succeeded' && i.image_url)
-                        .map(i => ({
-                            shot_id: i.shot_id,
-                            image_id: i.image_id!,
-                            image_url: i.image_url!,
-                        }));
-                    if (results.length > 0) {
-                        onImagesGenerated(results);
-                    }
-                    refreshBalance().catch(() => {});
-                }
-            } catch (err) {
-                console.error('[BatchPanel] Poll error:', err);
+    // ── SSE Progress handler ──
+    const handleSSEProgress = useCallback((data: BatchProgressResult) => {
+        setJob(data.job);
+        setItems(data.items);
+        
+        // Emit partial results immediately as images complete
+        if (data.job.status === 'completed' || data.job.status === 'failed' || data.job.status === 'cancelled') {
+            const results = data.items
+                .filter(i => i.status === 'succeeded' && i.image_url)
+                .map(i => ({
+                    shot_id: i.shot_id,
+                    image_id: i.image_id!,
+                    image_url: i.image_url!,
+                }));
+            if (results.length > 0) {
+                onImagesGenerated(results);
             }
-        }, 2000);
+            refreshBalance().catch(() => {});
+        }
     }, [onImagesGenerated, refreshBalance]);
 
     useEffect(() => {
         return () => {
-            if (pollRef.current) clearInterval(pollRef.current);
+            // Cleanup: abort any running SSE stream
+            if (abortRef.current) {
+                abortRef.current.abort();
+            }
         };
     }, []);
 
     // ── Build ShotForBatch from shot ──
-    // 注意: scene_id 是 UUID，使用 allShots 中的索引或传入的 scene_number
     const toShotForBatch = useCallback((s: Shot, idx: number): ShotForBatch => {
-        // 尝试从 scene_id 中提取数字（如果是数字字符串），否则用索引+1
         const sceneNum = /^\d+$/.test(s.scene_id) ? parseInt(s.scene_id, 10) : (idx + 1);
         return {
             shot_id: s.shot_id,
@@ -226,7 +217,7 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
         };
     }, []);
 
-    // ── Start initial batch ──
+    // ── Start initial batch (SSE) ──
     const handleStart = async () => {
         if (!isAuthenticated) return alert('请先登录');
         if (!hasEnoughCredits(estimatedCost)) return openPricingModal();
@@ -235,9 +226,10 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
         setIsStarting(true);
         setError(null);
         setRangeLabel(null);
+        setJobId('streaming');
 
         try {
-            const result = await startBatchGenImages({
+            const result = await startBatchGenImagesSSE({
                 project_id: projectId || '',
                 shots: sortedShots.map(toShotForBatch),
                 count,
@@ -245,11 +237,11 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                 aspect_ratio: '16:9',
                 style: 'none',
                 character_anchor: characterAnchor,
-                concurrency: 3,
-            });
+                concurrency: 1,
+            }, handleSSEProgress);
 
-            setJobId(result.job_id);
-            startPolling(result.job_id);
+            // SSE stream completed — final results already handled in handleSSEProgress
+            setJobId(result.job.id);
         } catch (err: any) {
             console.error('[BatchPanel] Start error:', err);
             setError(err.message || 'Failed to start batch job');
@@ -259,7 +251,7 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
         }
     };
 
-    // ── Continue next batch ──
+    // ── Continue next batch (SSE) ──
     const handleContinue = (strategy: ContinueStrategy) => {
         setShowStrategyDialog(false);
         startContinueBatch(strategy);
@@ -273,9 +265,10 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
 
         setIsStarting(true);
         setError(null);
+        setJobId('streaming');
 
         try {
-            const result = await continueBatchGenImages({
+            const result = await continueBatchGenImagesSSE({
                 project_id: projectId || '',
                 shots: sortedShots.map(toShotForBatch),
                 shots_with_images: imageStatus.shotsWithImages,
@@ -285,18 +278,11 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                 aspect_ratio: '16:9',
                 style: 'none',
                 character_anchor: characterAnchor,
-                concurrency: 3,
-            });
+                concurrency: 1,
+            }, handleSSEProgress);
 
-            if (result.all_done && !result.job_id) {
-                return; // All shots already have images
-            }
-
-            setJobId(result.job_id);
-            setRangeLabel(result.range_label || null);
-            if (result.job_id) {
-                startPolling(result.job_id);
-            }
+            setJobId(result.job?.id || null);
+            setRangeLabel((result as any).range_label || null);
         } catch (err: any) {
             console.error('[BatchPanel] Continue error:', err);
             setError(err.message || 'Failed to continue batch job');
@@ -308,34 +294,35 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
 
     // ── Cancel ──
     const handleCancel = async () => {
-        if (!jobId) return;
-        try {
-            await cancelBatchJob(jobId);
-        } catch (err: any) {
-            setError(err.message || 'Failed to cancel');
+        // For SSE mode, abort the fetch request
+        if (abortRef.current) {
+            abortRef.current.abort();
+            abortRef.current = null;
+        }
+        if (jobId && jobId !== 'streaming') {
+            try {
+                await cancelBatchJob(jobId);
+            } catch (err: any) {
+                // Don't show error if job was already completed
+                if (!err.message?.includes('404')) {
+                    setError(err.message || 'Failed to cancel');
+                }
+            }
         }
     };
 
-    // ── Retry ──
+    // ── Retry (not available in SSE mode — user should restart batch) ──
     const handleRetry = async () => {
-        if (!jobId) return;
-        try {
-            await retryBatchJob(jobId, {
-                model,
-                aspect_ratio: '16:9',
-                style: 'none',
-                character_anchor: characterAnchor,
-                shots: sortedShots.map(toShotForBatch),
-            });
-            startPolling(jobId);
-        } catch (err: any) {
-            setError(err.message || 'Failed to retry');
-        }
+        // In SSE mode, retry = start a new batch with the failed shots
+        handleStart();
     };
 
     // ── Reset (close progress panel, keep continue state) ──
     const handleReset = () => {
-        if (pollRef.current) clearInterval(pollRef.current);
+        if (abortRef.current) {
+            abortRef.current.abort();
+            abortRef.current = null;
+        }
         setJobId(null);
         setJob(null);
         setItems([]);
