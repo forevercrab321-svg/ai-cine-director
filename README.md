@@ -3,7 +3,7 @@
 > Press a button. Make your own movies.  
 > An AI-powered tool that turns your ideas into scripts, scenes, and cinematic videos — no filmmaking skills required.
 
-🌐 **Live Demo:** https://ai-cine-director-2jx4.vercel.app
+🌐 **Live Demo:** https://aidirector.business/
 
 ---
 
@@ -50,8 +50,7 @@ That’s it.
 ---
 
 ## 🌐 Try It Online
-
-👉 https://ai-cine-director-2jx4.vercel.app
+https://aidirector.business/
 
 ---
 
