@@ -480,46 +480,51 @@ const checkEntitlement = async (
     
     let { data: profile, error: profileErr } = await supabaseAdmin
         .from('profiles')
-        .select('id, credits, plan, is_paid')
+        .select('id, credits, is_pro, is_admin')
         .eq('id', userId)
         .single();
     
     // ★ AUTO-CREATE PROFILE if not exists (fix for new user signup)
     if (profileErr || !profile) {
-        console.log(`[Profile] Creating new profile for user ${userId} (${email})`);
+        console.log(`[Entitlement] Profile not found for ${userId} (${email}), upserting...`);
         
-        // Insert new profile with 50 initial credits
-        const { data: newProfile, error: insertErr } = await supabaseAdmin
+        // Use UPSERT to handle race conditions (profile may already exist)
+        const { data: newProfile, error: upsertErr } = await supabaseAdmin
             .from('profiles')
-            .insert({
+            .upsert({
                 id: userId,
                 name: email.split('@')[0],
-                credits: 50,  // Initial free credits
+                credits: 50,
                 is_admin: false,
                 is_pro: false,
-            })
-            .select('id, credits, plan, is_paid')
+            }, { onConflict: 'id', ignoreDuplicates: true })
+            .select('id, credits, is_pro, is_admin')
             .single();
         
-        if (insertErr) {
-            console.error('[Profile] Failed to create profile:', insertErr.message);
-            return {
-                allowed: false,
-                mode: 'free',
-                unlimited: false,
-                credits: 0,
-                plan: 'free',
-                reason: 'Failed to create user profile. Please try again.',
-                errorCode: 'UNAUTHORIZED',
-            };
+        if (upsertErr) {
+            console.error('[Entitlement] Profile upsert failed:', upsertErr.message);
+            // Last resort: try SELECT again (profile might exist but upsert had column issues)
+            const { data: retryProfile } = await supabaseAdmin
+                .from('profiles')
+                .select('id, credits, is_pro, is_admin')
+                .eq('id', userId)
+                .single();
+            if (retryProfile) {
+                profile = retryProfile;
+                console.log(`[Entitlement] Retry SELECT succeeded, credits=${retryProfile.credits}`);
+            } else {
+                console.error('[Entitlement] Retry SELECT also failed — allowing with 0 credits');
+                // Don't block the user — allow with 0 credits, they'll hit NEED_PAYMENT naturally
+                profile = { id: userId, credits: 0, is_pro: false, is_admin: false };
+            }
+        } else {
+            profile = newProfile;
+            console.log(`[Entitlement] Upserted profile for ${email}, credits=${newProfile?.credits}`);
         }
-        
-        profile = newProfile;
-        console.log(`[Profile] Created new profile for ${email} with 50 credits`);
     }
     
-    const userCredits = profile.credits ?? 0;
-    const isPaid = profile.is_paid === true || profile.plan === 'paid';
+    const userCredits = profile?.credits ?? 0;
+    const isPaid = profile?.is_pro === true;
     const plan: UserPlan = isPaid ? 'paid' : 'free';
     
     // 3. Free user with no credits → NEED_PAYMENT
@@ -603,12 +608,12 @@ app.get('/api/entitlement', requireAuth, async (req: any, res: any) => {
         
         const { data: profile } = await supabaseAdmin
             .from('profiles')
-            .select('id, credits, plan, is_paid, is_admin')
+            .select('id, credits, is_pro, is_admin')
             .eq('id', userId)
             .single();
         
         const credits = profile?.credits ?? 0;
-        const isPaid = profile?.is_paid === true || profile?.plan === 'paid';
+        const isPaid = profile?.is_pro === true;
         const plan: UserPlan = isPaid ? 'paid' : 'free';
         const canGenerate = credits > 0 || isPaid;
         
