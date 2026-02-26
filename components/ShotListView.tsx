@@ -11,7 +11,9 @@ import ShotEditDrawer from './ShotEditDrawer';
 import ShotImageGrid from './ShotImageGrid';
 import BatchImagePanel from './BatchImagePanel';
 import { t } from '../i18n';
-
+// ★ 1. 新增：引入 Replicate API 接口 和 尾帧截取工具
+import { startVideoTask, generateImage, checkPredictionStatus } from '../services/replicateService';
+import { extractLastFrameFromVideo } from '../utils/video-helpers';
 interface ShotListViewProps {
     project: StoryboardProject;
     referenceImageDataUrl?: string;  // ★ Compressed base64 for Flux Redux consistency
@@ -48,6 +50,8 @@ const movementBadge: Record<string, string> = {
 // ── Shot card (compact view) ──
 const ShotCard: React.FC<{
     shot: Shot;
+    shotIndex: number; // ★ Added shotIndex
+    videoUrl?: string; // ★ 加入 videoUrl 属性
     isExpanded: boolean;
     onToggle: () => void;
     onEdit: () => void;
@@ -57,7 +61,7 @@ const ShotCard: React.FC<{
     characterAnchor: string;
     visualStyle: string;
     projectId?: string;
-}> = ({ shot, isExpanded, onToggle, onEdit, onLockToggle, images, onImagesChange, characterAnchor, visualStyle, projectId }) => {
+}> = ({ shot, shotIndex, videoUrl, isExpanded, onToggle, onEdit, onLockToggle, images, onImagesChange, characterAnchor, visualStyle, projectId }) => {
     const camClass = cameraBadgeColor[shot.camera] || 'bg-slate-500/20 text-slate-300 border-slate-500/30';
     const moveEmoji = movementBadge[shot.movement] || '🎬';
 
@@ -69,7 +73,17 @@ const ShotCard: React.FC<{
                 onClick={onToggle}
             >
                 {/* Thumbnail */}
+                {/* Thumbnail / Indicator */}
                 {(() => {
+                    // 对于延续镜头，强制显示锁链图标
+                    if (shotIndex > 0) {
+                        return (
+                            <div className="w-10 h-10 rounded-lg bg-slate-800/50 border border-slate-700 flex items-center justify-center text-slate-500 font-bold text-sm shrink-0" title="延续镜头 (使用上一帧)">
+                                🔗
+                            </div>
+                        );
+                    }
+
                     const primary = images.find(i => i.is_primary) || images[0];
                     return primary ? (
                         <img src={primary.url} alt="" className="w-10 h-10 rounded-lg object-cover border border-slate-700 shrink-0" />
@@ -197,26 +211,58 @@ const ShotCard: React.FC<{
                         </div>
                     </div>
 
-                    {/* Image prompt preview */}
-                    <div className="text-xs">
-                        <span className="text-slate-500 uppercase tracking-wider text-[10px] font-bold">Image Prompt</span>
-                        <p className="text-slate-400 font-mono text-[11px] bg-slate-950 rounded p-2 mt-1 leading-relaxed max-h-20 overflow-y-auto">
-                            {shot.image_prompt || '—'}
-                        </p>
-                    </div>
+                    {/* ★ 核心拦截器：判断是不是第一镜 */}
+                    {shotIndex === 0 ? (
+                        <>
+                            {/* 第一镜：显示图片提示词和生图网格 */}
+                            <div className="text-xs mt-4">
+                                <span className="text-slate-500 uppercase tracking-wider text-[10px] font-bold">Image Prompt (第一镜源头)</span>
+                                <p className="text-slate-400 font-mono text-[11px] bg-slate-950 rounded p-2 mt-1 leading-relaxed max-h-20 overflow-y-auto">
+                                    {shot.image_prompt || '—'}
+                                </p>
+                            </div>
+                            <div className="mt-3 pt-3 border-t border-slate-800/50">
+                                <span className="text-slate-500 uppercase tracking-wider text-[10px] font-bold mb-2 block">🖼 首镜原画设置</span>
+                                <ShotImageGrid
+                                    shot={shot}
+                                    images={images}
+                                    onImagesChange={onImagesChange}
+                                    characterAnchor={characterAnchor}
+                                    visualStyle={visualStyle}
+                                    projectId={projectId}
+                                />
+                            </div>
+                        </>
+                    ) : (
+                        /* 后续镜头：物理阉割生图 UI，显示硬核锁链提示 */
+                        <div className="mt-4 p-4 bg-indigo-900/20 border border-indigo-500/30 rounded-lg flex items-start gap-3">
+                            <span className="text-indigo-400 text-xl">🔗</span>
+                            <div>
+                                <p className="text-xs text-indigo-300 font-bold tracking-widest uppercase mb-1">物理延续镜头：强制死锁尾帧</p>
+                                <p className="text-[10px] text-indigo-400/80 leading-relaxed">
+                                    系统将在后台自动提取上一段视频最后0.1秒的高清画面作为此镜头的绝对起点。<br />
+                                    <span className="text-rose-400 font-bold">已彻底禁止重新生成图片</span>，以确保动作、服装、光影 100% 物理连贯。
+                                </p>
+                            </div>
+                        </div>
+                    )}
 
-                    {/* ★ Shot Image Grid — generate / edit / manage images */}
-                    <div className="mt-3 pt-3 border-t border-slate-800/50">
-                        <span className="text-slate-500 uppercase tracking-wider text-[10px] font-bold mb-2 block">🖼 Images</span>
-                        <ShotImageGrid
-                            shot={shot}
-                            images={images}
-                            onImagesChange={onImagesChange}
-                            characterAnchor={characterAnchor}
-                            visualStyle={visualStyle}
-                            projectId={projectId}
-                        />
-                    </div>
+                    {/* 这是展示视频的地方，只要有了 URL 就立刻播放 */}
+                    {videoUrl && (
+                        <div className="mt-4 pt-4 border-t border-slate-800/50">
+                            <span className="text-slate-500 uppercase tracking-wider text-[10px] font-bold mb-2 block flex items-center gap-2">
+                                <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span> 最终动态出片
+                            </span>
+                            <video
+                                src={videoUrl}
+                                controls
+                                autoPlay
+                                loop
+                                playsInline
+                                className="w-full aspect-video object-cover rounded-lg border border-slate-700 shadow-2xl"
+                            />
+                        </div>
+                    )}
                 </div>
             )}
         </div>
@@ -236,7 +282,8 @@ const SceneSection: React.FC<{
     imagesByShot: Record<string, ShotImage[]>;
     onImagesChange: (shotId: string, images: ShotImage[]) => void;
     effectiveProjectId: string;  // ★ 添加 projectId prop
-}> = ({ scene, sceneIndex, shots, isGenerating, onGenerateShots, onUpdateShot, onRewriteShot, project, imagesByShot, onImagesChange, effectiveProjectId }) => {
+    shotVideos: Record<string, string>; // ★ 提升至全局的视频存取状态
+}> = ({ scene, sceneIndex, shots, isGenerating, onGenerateShots, onUpdateShot, onRewriteShot, project, imagesByShot, onImagesChange, effectiveProjectId, shotVideos }) => {
     const [expandedShots, setExpandedShots] = useState<Set<string>>(new Set());
     const [editingShot, setEditingShot] = useState<Shot | null>(null);
 
@@ -270,7 +317,8 @@ const SceneSection: React.FC<{
                     <p className="text-xs text-slate-500 mt-1 max-w-xl truncate">{scene.visual_description}</p>
                 </div>
 
-                <div className="flex gap-2">
+                <div className="flex gap-2 items-center">
+                    {/* 下面是你原来的折叠和拆分按钮... */}
                     {shots.length > 0 && (
                         <>
                             <button onClick={expandAll} className="text-[10px] text-slate-500 hover:text-slate-300 px-2 py-1 rounded hover:bg-slate-800">展开全部</button>
@@ -297,10 +345,12 @@ const SceneSection: React.FC<{
             {/* Shot list */}
             {shots.length > 0 ? (
                 <div className="p-3 space-y-2">
-                    {shots.map(shot => (
+                    {shots.map((shot, index) => (
                         <ShotCard
                             key={shot.shot_id}
                             shot={shot}
+                            shotIndex={index} // ★ Inject shotIndex mapping
+                            videoUrl={shotVideos[shot.shot_id]} // ★ 新增：传入刚才生成的视频 URL
                             isExpanded={expandedShots.has(shot.shot_id)}
                             onToggle={() => toggleShot(shot.shot_id)}
                             onEdit={() => setEditingShot(shot)}
@@ -371,6 +421,11 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
     // ★ Images indexed by shot_id
     const [imagesByShot, setImagesByShot] = useState<Record<string, ShotImage[]>>({});
 
+    // ★ 全局物理引擎锁链状态
+    const [isChainRunning, setIsChainRunning] = useState(false);
+    const [chainLog, setChainLog] = useState('');
+    const [shotVideos, setShotVideos] = useState<Record<string, string>>({});
+
     const handleImagesChange = useCallback((shotId: string, images: ShotImage[]) => {
         setImagesByShot(prev => ({ ...prev, [shotId]: images }));
 
@@ -415,7 +470,7 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
             });
 
             setShotsByScene(prev => ({ ...prev, [sNum]: result.shots }));
-            refreshBalance().catch(() => {});
+            refreshBalance().catch(() => { });
         } catch (e: any) {
             console.error('[ShotListView] Generate failed:', e);
             setError(e.message || 'Shot generation failed');
@@ -487,7 +542,7 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
 
             // Apply rewritten fields
             handleUpdateShot(sceneNum, shot.shot_id, result.rewritten_fields);
-            refreshBalance().catch(() => {});
+            refreshBalance().catch(() => { });
         } catch (e: any) {
             console.error('[ShotListView] Rewrite failed:', e);
             setError(e.message || 'Rewrite failed');
@@ -498,6 +553,102 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
         for (const scene of project.scenes) {
             if (shotsByScene[scene.scene_number]?.length) continue; // Skip already generated
             await handleGenerateShots(scene);
+        }
+    };
+
+    // ★ 核心多米诺骨牌引擎 (Global Level)
+    const handleRunGlobalDominoChain = async () => {
+        if (!project.character_anchor) return alert("请先在左侧设定【角色一致性锚点】！");
+        if (project.scenes.length === 0) return alert("当前剧本没有任何场景，请先拆分场景。");
+
+        // Step 1: 自动验证是否所有场景都已生成拆分镜头
+        let hasMissingShots = false;
+        for (const scene of project.scenes) {
+            if (!shotsByScene[scene.scene_number] || shotsByScene[scene.scene_number].length === 0) {
+                hasMissingShots = true;
+                break;
+            }
+        }
+
+        if (hasMissingShots) {
+            setChainLog("检测到未拆分镜头的场景，正在为您自动执行全场预拆分...");
+            setIsChainRunning(true);
+            await handleGenerateAll(); // Will await internally all the generation loops
+        }
+
+        setIsChainRunning(true);
+        let globalTailFrameBase64: string | null = null;
+
+        try {
+            // Step 2: 遍历大循环 (All Scenes -> All Shots)
+            for (let sIdx = 0; sIdx < project.scenes.length; sIdx++) {
+                const scene = project.scenes[sIdx];
+                const sceneShots = shotsByScene[scene.scene_number] || [];
+
+                for (let i = 0; i < sceneShots.length; i++) {
+                    const shot = sceneShots[i];
+                    console.log(`\n🎬 [Global Chain] Scene ${scene.scene_number} --- 开始制作第 ${i + 1} 镜 ---`);
+                    let currentStartImage: string;
+
+                    // 全剧【唯一奇点】：第一场戏的第一个镜头
+                    if (sIdx === 0 && i === 0) {
+                        const existingImages = imagesByShot[shot.shot_id];
+                        if (existingImages && existingImages.length > 0 && existingImages[0].url) {
+                            currentStartImage = existingImages[0].url;
+                            setChainLog(`全片首镜：已读取首镜原画作为世界奇点源头...`);
+                        } else {
+                            setChainLog(`全片首镜：正在为您生成唯一世界源头原画...`);
+                            currentStartImage = await generateImage(
+                                shot.image_prompt || scene.visual_description,
+                                'flux_schnell', 'none', '16:9', project.character_anchor
+                            );
+                        }
+                    } else {
+                        // 包含同一Scene的后续镜头，以及其他所有Scene的第一个镜头 => 必须吸纳全局尾帧
+                        setChainLog(`场 ${scene.scene_number} 镜 ${i + 1}：正在强行拾取上一镜视频尾帧...`);
+                        if (!globalTailFrameBase64) throw new Error("链条断裂：未能获取到上一全局镜头尾帧，请检查是否有超时中断");
+                        currentStartImage = globalTailFrameBase64;
+                    }
+
+                    setChainLog(`场 ${scene.scene_number} 镜 ${i + 1}：正在基于海螺物理引擎渲染动态视频...`);
+                    // 发送视频请求
+                    const videoRes = await startVideoTask(
+                        shot.video_prompt, currentStartImage, 'hailuo_02_fast', 'none', 'storyboard', 'standard', 6, 24, '720p', project.character_anchor, '16:9'
+                    );
+
+                    // 轮询等待视频完成
+                    let videoUrl = "";
+                    let status = "processing";
+                    while (status === "processing" || status === "starting") {
+                        await new Promise(r => setTimeout(r, 3000));
+                        const check = await checkPredictionStatus(videoRes.id);
+                        status = check.status;
+                        if (status === "succeeded") {
+                            videoUrl = Array.isArray(check.output) ? check.output[0] : check.output;
+                        } else if (status === "failed" || status === "canceled") {
+                            throw new Error(`视频生成失败: ${check.error}`);
+                        }
+                    }
+
+                    // 立即将结果上屏给外层状态树
+                    setShotVideos(prev => ({ ...prev, [shot.shot_id]: videoUrl }));
+
+                    // 为下一次循环准备血脉！(哪怕是下一个scene，它也会在下一次被吸纳)
+                    const isVeryLastShotInWholeMovie = (sIdx === project.scenes.length - 1) && (i === sceneShots.length - 1);
+                    if (!isVeryLastShotInWholeMovie) {
+                        setChainLog(`当前镜头渲染完毕，正在静默截取最后 0.1s 绝对尾帧准备跨域接力...`);
+                        globalTailFrameBase64 = await extractLastFrameFromVideo(videoUrl);
+                    }
+                }
+            }
+            setChainLog('🎉 全片物理大一统串联完成，真正的电影级“一镜到底”已出炉！');
+            setTimeout(() => setChainLog(''), 8000);
+        } catch (error: any) {
+            console.error(error);
+            alert(`生成中断: ${error.message}`);
+            setChainLog('❌ 生成过程失败中止');
+        } finally {
+            setIsChainRunning(false);
         }
     };
 
@@ -518,7 +669,21 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                             <span>{project.visual_style}</span>
                         </div>
                     </div>
-                    <div className="flex gap-3">
+                    <div className="flex gap-3 items-center">
+                        {chainLog && <span className="text-xs font-mono text-amber-400 mr-2 animate-pulse whitespace-nowrap hidden lg:block">{chainLog}</span>}
+                        {totalShots > 0 && (
+                            <button
+                                onClick={handleRunGlobalDominoChain}
+                                disabled={isChainRunning}
+                                className={`px-4 py-3 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2
+                                    ${isChainRunning
+                                        ? 'bg-indigo-900/50 text-indigo-300 cursor-not-allowed'
+                                        : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg shadow-purple-500/20'}`}
+                            >
+                                {isChainRunning ? <LoaderIcon className="w-4 h-4 animate-spin" /> : '🚀'}
+                                <span className="hidden sm:inline">{isChainRunning ? '锁链执行中...' : '一键跑通全片物理锁链'}</span>
+                            </button>
+                        )}
                         <button
                             onClick={onBack}
                             className="px-4 py-2 text-sm text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-all"
@@ -527,9 +692,9 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                         </button>
                         <button
                             onClick={handleGenerateAll}
-                            disabled={generatingScenes.size > 0}
+                            disabled={generatingScenes.size > 0 || isChainRunning}
                             className={`px-6 py-3 rounded-lg text-sm font-bold transition-all flex items-center gap-2
-                                ${generatingScenes.size > 0
+                                ${generatingScenes.size > 0 || isChainRunning
                                     ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
                                     : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20'
                                 }`}
@@ -614,6 +779,7 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                         imagesByShot={imagesByShot}
                         onImagesChange={handleImagesChange}
                         effectiveProjectId={effectiveProjectId}
+                        shotVideos={shotVideos}
                     />
                 ))}
             </div>

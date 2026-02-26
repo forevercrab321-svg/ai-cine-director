@@ -962,23 +962,33 @@ const geminiResponseSchema = {
     properties: {
         project_title: { type: Type.STRING },
         visual_style: { type: Type.STRING },
-        character_anchor: { type: Type.STRING },
+        characterAnchor: { type: Type.STRING },
         scenes: {
             type: Type.ARRAY,
             items: {
                 type: Type.OBJECT,
                 properties: {
-                    scene_number: { type: Type.INTEGER },
-                    scene_setting: { type: Type.STRING },
-                    visual_description: { type: Type.STRING },
-                    audio_description: { type: Type.STRING },
-                    shot_type: { type: Type.STRING },
+                    scene_id: { type: Type.INTEGER },
+                    location: { type: Type.STRING },
+                    shots: {
+                        type: Type.ARRAY,
+                        items: {
+                            type: Type.OBJECT,
+                            properties: {
+                                shot_index: { type: Type.INTEGER },
+                                image_prompt: { type: Type.STRING },
+                                video_prompt: { type: Type.STRING },
+                                audio_description: { type: Type.STRING },
+                            },
+                            required: ['shot_index', 'image_prompt', 'video_prompt'],
+                        }
+                    }
                 },
-                required: ['scene_number', 'scene_setting', 'visual_description', 'audio_description', 'shot_type'],
+                required: ['scene_id', 'location', 'shots'],
             },
         },
     },
-    required: ['project_title', 'visual_style', 'character_anchor', 'scenes'],
+    required: ['project_title', 'visual_style', 'characterAnchor', 'scenes'],
 };
 
 app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
@@ -1032,63 +1042,32 @@ app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
         const systemInstruction = `
 **Role:** Professional Short Drama Screenwriter & Director of Photography.
 
-**★★★ CORE CONCEPT — SHORT DRAMA CONTINUITY ★★★**
-You are writing a SHORT DRAMA (短剧). The ${targetScenes} scenes are like TRAIN CARRIAGES — they connect end-to-end into ONE continuous story.
+**★★★ CORE CONCEPT — SCENE & SHOT CONTINUITY ★★★**
+You are writing a SHORT DRAMA (短剧) broken into SCENES. Each scene contains multiple SHOTS.
+The story must flow seamlessly. DO NOT waste shots on preparation or backstory. Start with ACTION.
 
-**★★★ IN MEDIAS RES — START WITH ACTION ★★★**
-Scene 1 MUST open with the character ALREADY doing the core activity described in the story idea.
-DO NOT waste scenes on preparation, travel, arrival, or backstory.
-If the story is about snowboarding → Scene 1 = character IS snowboarding.
-If the story is about cooking → Scene 1 = character IS cooking.
-The audience should see the MAIN ACTIVITY from the very first scene.
+**★★★ MANDATORY RULES FOR SHOTS ★★★**
+1. **shot_index === 0 (First Shot of a Scene):**
+   - \`image_prompt\`: 【必须详细填写】Describe the environment, character appearance, clothing, lighting, and action vividly. (e.g. "A girl in a red ski suit and goggles stands at the snowy mountain peak ready to sprint.")
+   - \`video_prompt\`: Describe the cinematic motion and physics. (e.g. "The girl pushes hard on her ski poles and glides forward, camera follows.")
+   
+2. **shot_index > 0 (Continuation Shots):**
+   - \`image_prompt\`: 【必须为空字符串 ""】The system will strictly reuse the last frame of the previous video. DO NOT output any image prompt here!
+   - \`video_prompt\`: 【必须是物理延续动作】Describe ONLY the continuation of the motion from the previous shot. (e.g. "The girl accelerates down a steep slope, kicking up massive snow, camera zooms to mid-shot.")
 
-**ANTI-PADDING RULES (MANDATORY):**
-❌ NO scenes of "waking up", "packing gear", "traveling to location", "setting up camp"
-❌ NO scenes that don't involve the core activity mentioned in the story idea
-❌ NO generic "looking at scenery" filler scenes
-✅ Every single scene must show a DIFFERENT moment of the core activity
-✅ Vary the action: different moves, different terrain, different challenges, different emotions
-✅ Example for snowboarding: carving powder, jumping, navigating moguls, riding through trees, wiping out, celebrating
-
-**CONTINUITY RULES (MANDATORY):**
-1. **One Continuous Story:** All ${targetScenes} scenes tell a SINGLE coherent story from start to finish. They are NOT independent vignettes.
-2. **Scene Transitions:** The END of each scene must naturally connect to the BEGINNING of the next scene.
-3. **Action-Driven Plot:** The story progresses through DIFFERENT MOMENTS of the core activity. Think of it as a highlight reel with narrative flow — each scene showcases a new aspect of the activity.
-4. **Same World:** Scenes can share locations if the story calls for it. Settings should evolve naturally within the activity context.
-5. **Cause & Effect:** What happens in Scene N should have consequences visible in Scene N+1.
-
-**★ SCENE_SETTING FIELD:**
-Describe WHERE and WHEN this scene takes place. Settings can recur or evolve naturally (e.g., "Same café, 10 minutes later" or "The park from Scene 1, now at sunset"). The goal is story logic, not forced variety.
-
-**★ VISUAL_DESCRIPTION FIELD:**
-This field describes what the character is DOING in this specific moment — their action, expression, body language, and how they interact with the environment.
-
-**FORMAT REQUIREMENT:**
-visual_description must START with an ACTION VERB or descriptive phrase of the scene:
-✅ GOOD: "stands at the mountain peak, gazing at the sunrise with determination"
-✅ GOOD: "carves through fresh powder, spraying snow behind"
-✅ GOOD: "crashes into a snowdrift, laughing and struggling to stand up"
-❌ BAD: "A 25-year-old Han Chinese man with... [repeating character_anchor]"
-❌ BAD: Starting with character appearance description
-
-**CRITICAL RULE: DO NOT COPY character_anchor INTO visual_description.**
-The character_anchor is ALREADY stored separately at the top level.
-Each scene's visual_description shows ONLY the unique action/moment that advances the plot.
-
-Each scene must show a DIFFERENT moment in the story — the character doing something new that advances the plot.
-This should read like a movie shot description focusing on ACTION and EMOTION.
+**ANTI-PADDING RULES:**
+❌ NO generic "looking at scenery" filler shots.
+✅ Every shot must physically advance the action of the scene.
 
 **★ CHARACTER CONSISTENCY:**
-The "character_anchor" is the protagonist's frozen visual identity — same face, same outfit, same person across all scenes.
+The "characterAnchor" is the protagonist's frozen visual identity.
 ${identityAnchor
-                ? `Character is LOCKED to: "${identityAnchor}". Copy this EXACTLY into character_anchor.`
-                : `Invent a detailed character_anchor: ethnicity, age, face shape, eye color, hair (color/length/style), outfit (colors/materials), body type. Must match the "${visualStyle}" art style.`}
-The character_anchor is stored ONCE at the top level. Each scene's visual_description should focus on what the character is DOING, not re-describe their appearance.
-
-**Technical Precision:** Specify camera work (dolly, tracking, crane, handheld, pan), lighting, and composition per scene.
+                ? `Character is LOCKED to: "${identityAnchor}". Copy this EXACTLY into characterAnchor.`
+                : `Invent a detailed characterAnchor: ethnicity, age, face shape, eye color, hair, outfit, body type. Must match the "${visualStyle}" art style.`}
+Do NOT copy characterAnchor into the image_prompt. The image_prompt should focus on action and environment.
 
 **Language Rule:**
-* **visual_description**, **scene_setting** & **shot_type**: ALWAYS in English.
+* **image_prompt**, **video_prompt** & **location**: ALWAYS in English.
 * **audio_description** & **project_title**: ${language === 'zh' ? "Chinese (Simplified)" : "English"}.
 
 **Output Format:** JSON strictly following the provided schema.
@@ -1096,20 +1075,22 @@ The character_anchor is stored ONCE at the top level. Each scene's visual_descri
 
         let response;
         try {
+            const promptContent = `Write a SHORT DRAMA (短剧) broken down into SCENES and SHOTS for: ${storyIdea}. Style: ${visualStyle}. Total expected shots: ~${targetScenes}.
+★ CRITICAL: Scene 1 must START with the character ALREADY doing the core activity ("${storyIdea}"). Every shot must showcase a PHYSICAL CONTINUATION or a DIFFERENT moment of the activity.`;
+
             response = await ai.models.generateContent({
                 model: 'gemini-2.0-flash',
-                contents: `Write a ${targetScenes}-scene SHORT DRAMA (短剧) for: ${storyIdea}. Style: ${visualStyle}.
-
-★ CRITICAL: Scene 1 must START with the character ALREADY doing the core activity ("${storyIdea}"). Do NOT show preparation, travel, or arrival. Every scene must showcase a DIFFERENT moment of the activity itself. Think of it as a cinematic highlight reel with narrative flow.`,
+                contents: promptContent,
                 config: { systemInstruction, responseMimeType: 'application/json', responseSchema: geminiResponseSchema, temperature: 0.7 },
             });
         } catch (initialError: any) {
             if (initialError.message?.includes('429') || initialError.message?.includes('Resource exhausted')) {
+                const promptContent = `Write a SHORT DRAMA (短剧) broken down into SCENES and SHOTS for: ${storyIdea}. Style: ${visualStyle}. Total expected shots: ~${targetScenes}.
+★ CRITICAL: Scene 1 must START with the character ALREADY doing the core activity ("${storyIdea}"). Every shot must showcase a PHYSICAL CONTINUATION or a DIFFERENT moment of the activity.`;
+
                 response = await ai.models.generateContent({
                     model: 'gemini-1.5-flash',
-                    contents: `Write a ${targetScenes}-scene SHORT DRAMA (短剧) for: ${storyIdea}. Style: ${visualStyle}.
-
-★ CRITICAL: Scene 1 must START with the character ALREADY doing the core activity ("${storyIdea}"). Do NOT show preparation, travel, or arrival. Every scene must showcase a DIFFERENT moment of the activity itself. Think of it as a cinematic highlight reel with narrative flow.`,
+                    contents: promptContent,
                     config: { systemInstruction, responseMimeType: 'application/json', responseSchema: geminiResponseSchema, temperature: 0.7 },
                 });
             } else {
@@ -1119,54 +1100,71 @@ The character_anchor is stored ONCE at the top level. Each scene's visual_descri
 
         const text = response.text;
         if (!text) throw new Error('No response from AI Director.');
-        const project = JSON.parse(text);
+        const parsedData = JSON.parse(text);
 
-        // ★ Generate unique project ID for batch operations
-        project.id = crypto.randomUUID();
+        // Extract and map the top-level project data
+        const project: any = {
+            id: crypto.randomUUID(),
+            project_title: parsedData.project_title,
+            visual_style: parsedData.visual_style,
+            character_anchor: parsedData.characterAnchor || parsedData.character_anchor || '',
+        };
 
         // ★ CRITICAL: Force character_anchor to match identityAnchor if provided
-        // Gemini sometimes rewrites/changes the locked identity (e.g., changing gender).
-        // We override at the code level to guarantee consistency.
         if (identityAnchor && identityAnchor.trim().length > 10) {
             project.character_anchor = identityAnchor.trim();
         }
 
-        const anchor = project.character_anchor || '';
+        const anchor = project.character_anchor;
         const anchorLower = anchor.toLowerCase().trim();
 
-        project.scenes = project.scenes.map((s: any, idx: number) => {
-            const setting = s.scene_setting || '';
-            let rawDesc = (s.visual_description || '').trim();
+        // 核心目标：将嵌套的场景（Scene > Shots）展平为前端/DB所需的一维数组（project.scenes）
+        // 从而兼容当前的前端架构，确保“首镜才能生图，延续镜不能生图”的前后端规约
+        const flattenedShots: any[] = [];
+        let globalShotIndex = 1;
 
-            // ★ Strip character_anchor prefix from visual_description if Gemini repeated it
-            if (anchorLower.length > 20 && rawDesc.length > 0) {
-                const descLower = rawDesc.toLowerCase();
-                if (descLower.startsWith(anchorLower)) {
-                    rawDesc = rawDesc.slice(anchor.length).replace(/^[,;.:\s]+/, '').trim();
-                } else {
-                    const anchorStart = anchorLower.slice(0, Math.min(50, anchorLower.length));
-                    if (descLower.startsWith(anchorStart)) {
-                        const actionMarkers = /\b(is |are |was |stands |standing |walks |walking |runs |running |sits |sitting |looks |looking |holds |holding |reaches |reaching |turns |turning |steps |stepping |enters |entering |exits |leaving |opens |opening |closes |fights |fighting |rides |riding |drives |driving |picks |picking |carries |carrying |gazes |gazing |smiles |smiling |cries |crying |laughs |laughing |struggles |struggling |discovers |examining |the camera |camera |she |he |they |who |while |battling |climbing |grappling |pulling |pushing |throwing )/.exec(descLower);
-                        if (actionMarkers && actionMarkers.index > 20) {
-                            rawDesc = rawDesc.slice(actionMarkers.index).trim();
-                            rawDesc = rawDesc.charAt(0).toUpperCase() + rawDesc.slice(1);
-                        }
+        if (Array.isArray(parsedData.scenes)) {
+            for (const scn of parsedData.scenes) {
+                const setting = scn.location || '';
+                const shots = Array.isArray(scn.shots) ? scn.shots : [];
+
+                for (let i = 0; i < shots.length; i++) {
+                    const shot = shots[i];
+
+                    // 仅首镜可能包含 image_prompt；如果为空且是首镜，进行补偿提示词
+                    let rawImagePrompt = (shot.image_prompt || '').trim();
+                    if (i === 0 && rawImagePrompt.length < 5) {
+                        rawImagePrompt = shot.video_prompt || `Scene ${scn.scene_id} start`;
                     }
+
+                    // 结合 Anchor 和 Setting 生成完整首镜 prompt
+                    let finalImagePrompt = '';
+                    if (i === 0) {
+                        // Strip repeated character anchor
+                        if (anchorLower.length > 20 && rawImagePrompt.toLowerCase().startsWith(anchorLower)) {
+                            rawImagePrompt = rawImagePrompt.slice(anchor.length).replace(/^[,;.:\s]+/, '').trim();
+                        }
+                        finalImagePrompt = anchor
+                            ? `${anchor}. ${setting ? 'Setting: ' + setting + '. ' : ''}${rawImagePrompt}. Single cinematic frame.`
+                            : `${rawImagePrompt}, ${setting}, cinematic shot`;
+                    }
+
+                    flattenedShots.push({
+                        scene_number: globalShotIndex++,
+                        scene_setting: setting,
+                        // 复用 visual_description 承载前端的原画说明要求，这里直接给动作和环境
+                        visual_description: (i === 0 ? rawImagePrompt : shot.video_prompt) || `Action ${globalShotIndex}`,
+                        audio_description: shot.audio_description || "",
+                        shot_type: shot.video_prompt || "cinematic action", // 兼容旧 pipeline
+                        // 最核心改动：非零的索引严格留空
+                        image_prompt: finalImagePrompt,
+                        video_motion_prompt: shot.video_prompt || "smooth motion",
+                    });
                 }
             }
-            if (rawDesc.length < 10) rawDesc = s.visual_description || `Scene ${idx + 1}`;
+        }
 
-            const prompt = anchor
-                ? `${anchor}. ${setting ? 'Setting: ' + setting + '. ' : ''}${rawDesc}. ${s.shot_type}. Single cinematic frame.`
-                : `${s.visual_description}, ${setting}, ${s.shot_type}`;
-
-            return {
-                ...s,
-                visual_description: rawDesc,
-                image_prompt: prompt,
-                video_motion_prompt: s.shot_type,
-            };
-        });
+        project.scenes = flattenedShots;
 
         if (!skipCreditCheck) {
             await supabaseUser.rpc('finalize_reserve', { ref_type: 'gemini', ref_id: jobRef });

@@ -31,6 +31,7 @@ interface SceneCardProps {
   predictionId?: string;
   errorDetails?: string;
   characterAnchor?: string;
+  sceneIndex: number;
 }
 
 const RefreshIcon = () => (
@@ -139,7 +140,8 @@ const SceneCard: React.FC<SceneCardProps> = ({
   characterAnchor,
   onDeductCredits,
   userCredits,
-  isAuthenticated
+  isAuthenticated,
+  sceneIndex
 }) => {
   const { openPricingModal, userState, hasEnoughCredits } = useAppContext();
   const [isImageLoading, setIsImageLoading] = useState(false);
@@ -251,7 +253,14 @@ const SceneCard: React.FC<SceneCardProps> = ({
           </div>
 
           <div className="aspect-video bg-black rounded-lg border border-slate-800 flex items-center justify-center overflow-hidden relative shadow-inner">
-            {isImageLoading ? (
+            {sceneIndex > 0 ? (
+              <div className="flex flex-col items-center justify-center h-full w-full text-slate-500 opacity-80 gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8 text-indigo-500/50">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" />
+                </svg>
+                <span className="text-xs font-medium tracking-widest">🔗 延续镜头：将自动使用上一镜尾帧</span>
+              </div>
+            ) : isImageLoading ? (
               <TerminalLoader />
             ) : imageUrl ? (
               <>
@@ -316,20 +325,20 @@ const SceneCard: React.FC<SceneCardProps> = ({
             ) : externalVideoUrl ? (
               <>
                 {/* Video preview - clicking opens modal */}
-                <div 
+                <div
                   className="relative w-full h-full group/vidplay cursor-pointer"
                   onClick={() => setIsVideoModalOpen(true)}
                 >
                   {/* Video preview with custom overlay instead of native controls */}
-                  <video 
-                    src={externalVideoUrl} 
-                    className="w-full h-full object-cover pointer-events-none" 
-                    muted 
-                    loop 
-                    autoPlay 
+                  <video
+                    src={externalVideoUrl}
+                    className="w-full h-full object-cover pointer-events-none"
+                    muted
+                    loop
+                    autoPlay
                     playsInline
                   />
-                  
+
                   {/* Play overlay - indicates clickable */}
                   <div className="absolute inset-0 flex items-center justify-center bg-black/20 hover:bg-black/30 transition-colors">
                     <div className="w-16 h-16 rounded-full bg-white/30 backdrop-blur-sm flex items-center justify-center border-2 border-white/50">
@@ -338,7 +347,7 @@ const SceneCard: React.FC<SceneCardProps> = ({
                       </svg>
                     </div>
                   </div>
-                  
+
                   {/* Action buttons overlay */}
                   <div className="absolute top-3 right-3 flex gap-2" onClick={(e) => e.stopPropagation()}>
                     <button
@@ -363,7 +372,7 @@ const SceneCard: React.FC<SceneCardProps> = ({
                       <span className="text-xs font-bold pr-1">下载</span>
                     </button>
                   </div>
-                  
+
                   {/* Bottom hint */}
                   <div className="absolute bottom-2 left-0 right-0 text-center">
                     <span className="text-xs text-white/70 bg-black/50 px-3 py-1 rounded-full backdrop-blur-sm">
@@ -374,7 +383,7 @@ const SceneCard: React.FC<SceneCardProps> = ({
 
                 {/* Video Fullscreen Modal */}
                 {isVideoModalOpen && (
-                  <div 
+                  <div
                     className="fixed inset-0 z-[9999] bg-black/95 flex items-center justify-center"
                     onClick={() => setIsVideoModalOpen(false)}
                   >
@@ -423,9 +432,9 @@ const SceneCard: React.FC<SceneCardProps> = ({
                     </div>
 
                     {/* Video player */}
-                    <video 
-                      src={externalVideoUrl} 
-                      controls 
+                    <video
+                      src={externalVideoUrl}
+                      controls
                       autoPlay
                       className="max-w-[90vw] max-h-[80vh] rounded-lg shadow-2xl"
                       onClick={(e) => e.stopPropagation()}

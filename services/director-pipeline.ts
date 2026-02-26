@@ -17,6 +17,7 @@ import type {
 export interface StoryboardShot {
   image_prompt: string;
   video_prompt: string;
+  transition?: "hard_cut" | "seamless";
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -56,92 +57,89 @@ async function waitForVideoCompletion(predictionId: string): Promise<string> {
  * @param characterAnchor 角色特征锚点
  * @returns 包含所有生成的连续视频 URL 数组
  */
-export async function runSeamlessStoryboard(
-  storyboard: StoryboardShot[],
-  characterAnchor: string,
-): Promise<string[]> {
+export const generateSceneChain = async (
+  sceneId: string,
+  storyboard: any[],
+  extractedAnchor: string,
+  onProgress?: (data: {
+    index: number;
+    stage: string;
+    imageUrl?: string;
+    videoUrl?: string;
+    predictionId?: string;
+  }) => void
+) => {
+  let tailFrameBase64: string | null = null;
   const videoUrls: string[] = [];
-
-  // 声明接力棒：保存上一个视频提取出的最后一帧（Base64 URL）
-  let previousVideoLastFrame: string | null = null;
 
   for (let i = 0; i < storyboard.length; i++) {
     const shot = storyboard[i];
     let currentStartImage: string;
 
-    try {
-      console.log(
-        `[Director Pipeline] 🎬 开始处理镜头 ${i + 1}/${storyboard.length}...`,
+    console.log(`\n🎬 --- 开始制作第 ${i + 1} 镜 ---`);
+    if (i === 0) {
+      console.log("🎨 [阶段 1] 第一镜：使用 Flux 生成世界源头图...");
+      const imgPrompt = shot.image_prompt || shot.visual_description || `Cinematic shot, Scene ${i + 1}`;
+      currentStartImage = await generateImage(
+        imgPrompt,
+        "flux_schnell",
+        "none",
+        "16:9",
+        extractedAnchor
       );
-
-      // 当 i === 0 (第一镜) 时
-      if (i === 0) {
-        console.log(`[Director Pipeline] 🖼️ (镜头 1) 正在生成初始图像...`);
-        // 调用 generateImage，模型强制选择 'flux_schnell'，传入 characterAnchor
-        currentStartImage = await generateImage(
-          shot.image_prompt,
-          "flux_schnell",
-          "none", // videoStyle
-          "16:9", // aspectRatio
-          characterAnchor,
-        );
-      } else {
-        // 当 i > 0 (后续镜头) 时
-        console.log(
-          `[Director Pipeline] 🔄 (镜头 ${i + 1}) 跳过生图步骤，复用上一镜头的最后一帧...`,
-        );
-        if (!previousVideoLastFrame) {
-          throw new Error("上一镜头最后一帧提取失败或为空，无法进行无缝衔接。");
-        }
-        currentStartImage = previousVideoLastFrame;
+      if (onProgress) {
+        onProgress({ index: i, stage: "image_done", imageUrl: currentStartImage });
       }
-
-      // 紧接着调用 startVideoTask 生成视频
-      console.log(`[Director Pipeline] 🎥 (镜头 ${i + 1}) 正在请求生成视频...`);
-
-      const videoPrediction = await startVideoTask(
-        shot.video_prompt,
-        currentStartImage,
-        "hailuo_02_fast" as VideoModel, // 模型强制锁定为 'hailuo_02_fast'
-        "none" as VideoStyle, // 默认参数
-        "fast" as GenerationMode, // 默认模式
-        "standard" as VideoQuality, // 默认质量
-        "6s" as VideoDuration, // 默认时长 (可以是 4, 6 或 8, 需视你的类型而定)
-        "24fps" as VideoFps, // 默认帧率
-        "720p" as VideoResolution, // 默认分辨率
-        characterAnchor, // 必须传入 characterAnchor 确保角色一致
-        "16:9", // 约束画幅比例
-      );
-
-      // 这里 startVideoTask 只返回了任务的状态信息，我们需要轮询查询获得最终视频 URL
-      const finalVideoUrl = await waitForVideoCompletion(videoPrediction.id);
-      videoUrls.push(finalVideoUrl);
-      console.log(
-        `[Director Pipeline] ✅ 镜头 ${i + 1} 视频生成完毕: ${finalVideoUrl}`,
-      );
-
-      // 当前不是最后一个镜头时，使用 Canvas 提取最后一帧
-      if (i < storyboard.length - 1) {
-        console.log(
-          `[Director Pipeline] ✂️ 正在提取当前视频的最后一帧用于下一个镜头的起始帧...`,
-        );
-        // 提取返回 base64
-        previousVideoLastFrame = await extractLastFrameFromVideo(finalVideoUrl);
-        console.log(
-          `[Director Pipeline] ✔️ 最后一帧提取成功，接力棒交接完毕！`,
-        );
+    } else {
+      console.log("🔗 [阶段 1] 延续镜头：跳过生图，强行读取上一段视频尾帧...");
+      if (!tailFrameBase64) throw new Error("链条断裂：未能获取到上一镜尾帧");
+      currentStartImage = tailFrameBase64;
+      if (onProgress) {
+        onProgress({ index: i, stage: "image_done", imageUrl: currentStartImage });
       }
-    } catch (error) {
-      console.error(
-        `[Director Pipeline] ❌ 镜头 ${i + 1} 工作流中断执行抛错:`,
-        error,
-      );
-      throw error; // 直接抛出以便前端 catch 报错给用户
+    }
+
+    console.log(`🎥 [阶段 2] 发送视频生成请求: ${shot.video_prompt}`);
+    if (onProgress) {
+      onProgress({ index: i, stage: "video_starting" });
+    }
+
+    // 注意：这里所有的视频都统一锁定同一个模型（例如 hailuo_02_fast），保证运动物理引擎一致
+    const videoPrediction = await startVideoTask(
+      shot.video_prompt,
+      currentStartImage,
+      "hailuo_02_fast" as VideoModel,
+      "none" as VideoStyle,
+      "fast" as GenerationMode,
+      "standard" as VideoQuality,
+      "6s" as unknown as VideoDuration,
+      "24fps" as unknown as VideoFps,
+      "720p" as VideoResolution,
+      extractedAnchor,
+      "16:9"
+    );
+
+    if (onProgress) {
+      onProgress({ index: i, stage: "video_polling", predictionId: videoPrediction.id });
+    }
+
+    // 这里 startVideoTask 只返回了任务的状态信息，我们需要轮询查询获得最终视频 URL
+    const videoUrl = await waitForVideoCompletion(videoPrediction.id);
+    videoUrls.push(videoUrl);
+    console.log(`✅ [阶段 3] 第 ${i + 1} 镜视频生成完毕: ${videoUrl}`);
+
+    if (onProgress) {
+      onProgress({ index: i, stage: "video_done", videoUrl });
+    }
+
+    // 只要不是最后一个镜头，就死等截取尾帧
+    if (i < storyboard.length - 1) {
+      console.log(`📸 [阶段 4] 正在静默截取当前视频最后 0.1 秒的画面，制作接力棒...`);
+      tailFrameBase64 = await extractLastFrameFromVideo(videoUrl);
+      console.log(`✅ 尾帧接力棒制作成功，准备进入下一镜。\n`);
     }
   }
 
-  console.log(
-    `[Director Pipeline] 🎉 导演模式短剧串联工作流执行完毕！共生成 ${videoUrls.length} 个镜头。`,
-  );
+  console.log("🎉 全部锁链生成完毕，真正的一镜到底！");
   return videoUrls;
-}
+};
