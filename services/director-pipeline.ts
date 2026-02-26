@@ -69,7 +69,7 @@ export const generateSceneChain = async (
     predictionId?: string;
   }) => void
 ) => {
-  let tailFrameBase64: string | null = null;
+  let previousVideoLastFrame: string | null = null;
   const videoUrls: string[] = [];
 
   for (let i = 0; i < storyboard.length; i++) {
@@ -78,7 +78,7 @@ export const generateSceneChain = async (
 
     console.log(`\n🎬 --- 开始制作第 ${i + 1} 镜 ---`);
     if (i === 0) {
-      console.log("🎨 [阶段 1] 第一镜：使用 Flux 生成世界源头图...");
+      console.log("🚀 [第一镜] 强制使用 Flux 引擎生成初始起步图...");
       const imgPrompt = shot.image_prompt || shot.visual_description || `Cinematic shot, Scene ${i + 1}`;
       currentStartImage = await generateImage(
         imgPrompt,
@@ -91,9 +91,13 @@ export const generateSceneChain = async (
         onProgress({ index: i, stage: "image_done", imageUrl: currentStartImage });
       }
     } else {
-      console.log("🔗 [阶段 1] 延续镜头：跳过生图，强行读取上一段视频尾帧...");
-      if (!tailFrameBase64) throw new Error("链条断裂：未能获取到上一镜尾帧");
-      currentStartImage = tailFrameBase64;
+      console.log(`🚀 [第 ${i + 1} 镜] 强制拦截！拒绝重新生图，直接读取上一镜的尾帧作为起步图！`);
+      if (!previousVideoLastFrame) {
+        console.error("❌ 严重错误：尾帧接力棒丢失！");
+        throw new Error("无法获取上一镜头的尾帧，连续生成被迫终止。");
+      }
+      // 【强制写死】：绝对不允许在 i > 0 时调用 generateImage。必须使用 Base64 尾帧。
+      currentStartImage = previousVideoLastFrame;
       if (onProgress) {
         onProgress({ index: i, stage: "image_done", imageUrl: currentStartImage });
       }
@@ -110,7 +114,7 @@ export const generateSceneChain = async (
       currentStartImage,
       "hailuo_02_fast" as VideoModel,
       "none" as VideoStyle,
-      "fast" as GenerationMode,
+      "storyboard" as GenerationMode,
       "standard" as VideoQuality,
       "6s" as unknown as VideoDuration,
       "24fps" as unknown as VideoFps,
@@ -124,19 +128,19 @@ export const generateSceneChain = async (
     }
 
     // 这里 startVideoTask 只返回了任务的状态信息，我们需要轮询查询获得最终视频 URL
-    const videoUrl = await waitForVideoCompletion(videoPrediction.id);
-    videoUrls.push(videoUrl);
-    console.log(`✅ [阶段 3] 第 ${i + 1} 镜视频生成完毕: ${videoUrl}`);
+    const generatedVideoUrl = await waitForVideoCompletion(videoPrediction.id);
+    videoUrls.push(generatedVideoUrl);
+    console.log(`✅ [第 ${i + 1} 镜] 视频生成成功: ${generatedVideoUrl}`);
 
     if (onProgress) {
-      onProgress({ index: i, stage: "video_done", videoUrl });
+      onProgress({ index: i, stage: "video_done", videoUrl: generatedVideoUrl });
     }
 
-    // 只要不是最后一个镜头，就死等截取尾帧
+    // 【强制写死】：只要当前不是最后一个镜头，死等截帧完成！
     if (i < storyboard.length - 1) {
-      console.log(`📸 [阶段 4] 正在静默截取当前视频最后 0.1 秒的画面，制作接力棒...`);
-      tailFrameBase64 = await extractLastFrameFromVideo(videoUrl);
-      console.log(`✅ 尾帧接力棒制作成功，准备进入下一镜。\n`);
+      console.log(`📸 正在强行提取当前视频最后一帧，为下一镜做准备...`);
+      previousVideoLastFrame = await extractLastFrameFromVideo(generatedVideoUrl);
+      console.log(`✅ 尾帧提取成功，Base64 已就绪。`);
     }
   }
 

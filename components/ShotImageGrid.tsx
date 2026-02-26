@@ -31,16 +31,17 @@ interface ShotImageGridProps {
     characterAnchor: string;
     visualStyle: string;
     projectId?: string;
+    referenceImageDataUrl?: string; // ★ 新增：接收大哥照片的管道
 }
 
 const ShotImageGrid: React.FC<ShotImageGridProps> = ({
-    shot, images, onImagesChange, characterAnchor, visualStyle, projectId,
+    shot, images, onImagesChange, characterAnchor, visualStyle, projectId, referenceImageDataUrl
 }) => {
     const { settings, userState, isAuthenticated, hasEnoughCredits, openPricingModal, refreshBalance, deductCredits } = useAppContext();
     const [isGenerating, setIsGenerating] = useState(false);
     const [editingImage, setEditingImage] = useState<ShotImage | null>(null);
     const [error, setError] = useState<string | null>(null);
-    
+
     // Video generation state
     const [generatingVideoForImage, setGeneratingVideoForImage] = useState<string | null>(null);
     const [videoUrl, setVideoUrl] = useState<string | null>(shot.video_url || null);
@@ -114,7 +115,7 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
                 throw new Error(result.error || 'Video generation failed');
             }
 
-            refreshBalance().catch(() => {});
+            refreshBalance().catch(() => { });
         } catch (e: any) {
             await refreshBalance();
             if (e.code === 'INSUFFICIENT_CREDITS') {
@@ -150,6 +151,7 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
                 character_anchor: characterAnchor,
                 reference_policy: shot.reference_policy,
                 project_id: projectId,
+                referenceImageDataUrl: referenceImageDataUrl, // ★ 把照片正式递给中间商！
             });
 
             const newImage: ShotImage = {
@@ -159,7 +161,7 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
             };
 
             onImagesChange([...images, newImage]);
-            refreshBalance().catch(() => {});
+            refreshBalance().catch(() => { });
         } catch (e: any) {
             await refreshBalance();
             if (e.code === 'INSUFFICIENT_CREDITS') {
@@ -204,7 +206,7 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
             };
 
             onImagesChange([...images, newImage]);
-            refreshBalance().catch(() => {});
+            refreshBalance().catch(() => { });
         } catch (e: any) {
             await refreshBalance();
             if (e.code === 'INSUFFICIENT_CREDITS') openPricingModal();
@@ -342,7 +344,7 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
                             <DownloadIcon /> 下载视频
                         </a>
                     </div>
-                    <div 
+                    <div
                         className="relative cursor-pointer group"
                         onClick={() => setIsVideoModalOpen(true)}
                     >
@@ -363,7 +365,7 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
 
             {/* Video fullscreen modal */}
             {isVideoModalOpen && videoUrl && (
-                <div 
+                <div
                     className="fixed inset-0 bg-black/95 z-[9999] flex flex-col"
                     onClick={() => setIsVideoModalOpen(false)}
                 >
@@ -391,9 +393,9 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
                             <DownloadIcon /> 下载
                         </a>
                     </div>
-                    
+
                     {/* Video player */}
-                    <div 
+                    <div
                         className="flex-1 flex items-center justify-center p-4"
                         onClick={(e) => e.stopPropagation()}
                     >
