@@ -140,10 +140,9 @@ const SceneCard: React.FC<SceneCardProps> = ({
   characterAnchor,
   onDeductCredits,
   userCredits,
-  isAuthenticated,
   sceneIndex
 }) => {
-  const { openPricingModal, userState, hasEnoughCredits } = useAppContext();
+  const { openPricingModal, userState, hasEnoughCredits, isAuthenticated } = useAppContext();
   const [isImageLoading, setIsImageLoading] = useState(false);
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
 

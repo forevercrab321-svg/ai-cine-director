@@ -504,7 +504,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
               videoStyle={settings.videoStyle}
               aspectRatio={settings.aspectRatio}
               userCredits={userState.balance}
-              onDeductCredits={async () => true}
+              onDeductCredits={() => true}
               generationMode={settings.generationMode}
               globalVideoQuality={settings.videoQuality}
               globalVideoDuration={settings.videoDuration}
@@ -533,7 +533,6 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
               predictionId={scenePredictionIds[scene.scene_number]}
               errorDetails={sceneStatus[scene.scene_number]?.error}
               characterAnchor={project.character_anchor}
-              isAuthenticated={isAuthenticated}
             />
           </div>
         ))}

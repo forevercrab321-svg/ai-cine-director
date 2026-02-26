@@ -175,7 +175,7 @@ const SceneSection: React.FC<{
 
                 setChainLog(`[第 ${i + 1} 镜] 正在生成视频动态...`);
                 const videoRes = await startVideoTask(
-                    shot.video_prompt, currentStartImage, 'hailuo_02_fast', 'none', 'storyboard', 'standard', 6, 24, '720p', project.character_anchor, '16:9'
+                    shot.action || "", currentStartImage, 'hailuo_02_fast', 'none', 'storyboard', 'standard', 6, 24, '720p', project.character_anchor, '16:9'
                 );
 
                 let videoUrl = "";
@@ -469,7 +469,7 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                     setChainLog(`场 ${scene.scene_number} 镜 ${i + 1}：正在基于海螺物理引擎渲染动态视频...`);
                     // 发送视频请求
                     const videoRes = await startVideoTask(
-                        shot.video_prompt, currentStartImage, 'hailuo_02_fast', 'none', 'storyboard', 'standard', 6, 24, '720p', project.character_anchor, '16:9'
+                        shot.action || "", currentStartImage, 'hailuo_02_fast', 'none', 'storyboard', 'standard', 6, 24, '720p', project.character_anchor, '16:9'
                     );
 
                     // 轮询等待视频完成
