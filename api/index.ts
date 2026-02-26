@@ -6,6 +6,7 @@ import fetch from 'node-fetch';
 import { createClient } from '@supabase/supabase-js';
 import Stripe from 'stripe';
 
+
 // ═══════════════════════════════════════════════════════════════
 // INLINED TYPES FROM types.ts (Vercel cannot resolve ../types)
 // ═══════════════════════════════════════════════════════════════
@@ -16,75 +17,75 @@ type BatchJobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelle
 type BatchItemStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
 interface BatchJob {
-  id: string;
-  project_id: string;
-  user_id?: string;
-  type: 'gen_images' | 'gen_images_continue';
-  total: number;
-  done: number;
-  succeeded: number;
-  failed: number;
-  status: BatchJobStatus;
-  created_at: string;
-  updated_at: string;
-  concurrency: number;
-  range_start_scene?: number;
-  range_start_shot?: number;
-  range_end_scene?: number;
-  range_end_shot?: number;
-  strategy?: 'strict' | 'skip_failed';
-  all_done?: boolean;
-  remaining_count?: number;
+    id: string;
+    project_id: string;
+    user_id?: string;
+    type: 'gen_images' | 'gen_images_continue';
+    total: number;
+    done: number;
+    succeeded: number;
+    failed: number;
+    status: BatchJobStatus;
+    created_at: string;
+    updated_at: string;
+    concurrency: number;
+    range_start_scene?: number;
+    range_start_shot?: number;
+    range_end_scene?: number;
+    range_end_shot?: number;
+    strategy?: 'strict' | 'skip_failed';
+    all_done?: boolean;
+    remaining_count?: number;
 }
 
 interface BatchJobItem {
-  id: string;
-  job_id: string;
-  shot_id: string;
-  shot_number: number;
-  scene_number: number;
-  status: BatchItemStatus;
-  image_id?: string;
-  image_url?: string;
-  error?: string;
-  started_at?: string;
-  completed_at?: string;
+    id: string;
+    job_id: string;
+    shot_id: string;
+    shot_number: number;
+    scene_number: number;
+    status: BatchItemStatus;
+    image_id?: string;
+    image_url?: string;
+    error?: string;
+    started_at?: string;
+    completed_at?: string;
 }
 
 const REPLICATE_MODEL_PATHS: Record<VideoModel | ImageModel, string> = {
-  wan_2_2_fast: "wan-video/wan-2.2-i2v-fast",
-  hailuo_02_fast: "minimax/hailuo-02-fast",
-  seedance_lite: "bytedance/seedance-1-lite",
-  kling_2_5: "kwaivgi/kling-v2.5-turbo-pro",
-  hailuo_live: "minimax/video-01-live",
-  google_gemini_nano_banana: "google/gemini-nano-banana",
-  flux: "black-forest-labs/flux-1.1-pro",
-  flux_schnell: "black-forest-labs/flux-schnell",
-  nano_banana: "google/gemini-nano-banana"
+    wan_2_2_fast: "wan-video/wan-2.2-i2v-fast",
+    hailuo_02_fast: "minimax/hailuo-02-fast",
+    seedance_lite: "bytedance/seedance-1-lite",
+    kling_2_5: "kwaivgi/kling-v2.5-turbo-pro",
+    hailuo_live: "minimax/video-01-live",
+    google_gemini_nano_banana: "google/gemini-nano-banana",
+    flux: "black-forest-labs/flux-1.1-pro",
+    flux_schnell: "black-forest-labs/flux-schnell",
+    nano_banana: "google/gemini-nano-banana"
 };
 
 const IMAGE_MODEL_COSTS: Record<ImageModel, number> = {
-  flux: 6,
-  flux_schnell: 1,
-  nano_banana: 2
+    flux: 6,
+    flux_schnell: 1,
+    nano_banana: 2
 };
 
 interface StylePreset {
-  id: string;
-  label: string;
-  category: string;
-  promptModifier: string;
+    id: string;
+    label: string;
+    category: string;
+    promptModifier: string;
 }
 
 const STYLE_PRESETS: StylePreset[] = [
-  { id: 'chinese_3d', label: 'Chinese 3D Anime (国漫)', category: '🇨🇳 Chinese Aesthetics', promptModifier: ', 3D donghua style, Light Chaser Animation aesthetic, White Snake inspired, oriental fantasy, highly detailed 3D render, blind box texture, 8k, ethereal lighting, martial arts vibe, consistent character features' },
-  { id: 'chinese_ink', label: 'Chinese Ink Wash (水墨)', category: '🇨🇳 Chinese Aesthetics', promptModifier: ', traditional Chinese ink wash painting, shuimo style, watercolor texture, flowing ink, negative space, oriental landscape, artistic, Shanghai Animation Film Studio style, masterpiece' },
-  { id: 'pop_mart', label: 'Pop Mart 3D (盲盒)', category: '🇨🇳 Chinese Aesthetics', promptModifier: ', Pop Mart style, blind box toy, C4D render, clay material, cute proportions, studio lighting, clean background, 3D character design, plastic texture' },
-  { id: 'realism', label: 'Hyper Realism (4K ARRI)', category: '🎥 Cinema & Realism', promptModifier: ', photorealistic, shot on ARRI Alexa, 35mm lens, cinematic lighting, depth of field, hyper-realistic, live action footage, raytracing, 8k, raw photo' },
-  { id: 'blockbuster_3d', label: 'Hollywood Blockbuster', category: '🎥 Cinema & Realism', promptModifier: ', hollywood blockbuster style, Unreal Engine 5 render, IMAX quality, cinematic composition, dramatic lighting, highly detailed VFX, transformers style, sci-fi masterpiece' },
-  { id: 'cyberpunk', label: 'Cinematic Cyberpunk', category: '🎥 Cinema & Realism', promptModifier: ', futuristic sci-fi masterpiece, neon lights, high tech, cybernetic atmosphere, blade runner style, night city, volumetric fog, cinematic' },
-  { id: 'ghibli', label: 'Studio Ghibli (吉卜力)', category: '🎨 Art & Anime', promptModifier: ', Studio Ghibli style, Hayao Miyazaki, hand drawn anime, cel shading, vibrant colors, picturesque scenery, 2D animation, cinematic' },
-  { id: 'shinkai', label: 'Makoto Shinkai (新海诚)', category: '🎨 Art & Anime', promptModifier: ', Makoto Shinkai style, Your Name style, vibrant vivid colors, highly detailed background art, lens flare, emotional lighting, anime masterpiece, 8k wallpaper' }
+    { id: 'chinese_3d', label: 'Chinese 3D Anime (国漫)', category: '🇨🇳 Chinese Aesthetics', promptModifier: ', 3D donghua style, Light Chaser Animation aesthetic, White Snake inspired, oriental fantasy, highly detailed 3D render, blind box texture, 8k, ethereal lighting, martial arts vibe, consistent character features' },
+    { id: 'chinese_ink', label: 'Chinese Ink Wash (水墨)', category: '🇨🇳 Chinese Aesthetics', promptModifier: ', traditional Chinese ink wash painting, shuimo style, watercolor texture, flowing ink, negative space, oriental landscape, artistic, Shanghai Animation Film Studio style, masterpiece' },
+    { id: 'pop_mart', label: 'Pop Mart 3D (盲盒)', category: '🇨🇳 Chinese Aesthetics', promptModifier: ', Pop Mart style, blind box toy, C4D render, clay material, cute proportions, studio lighting, clean background, 3D character design, plastic texture' },
+    { id: 'realism', label: 'Hyper Realism (4K ARRI)', category: '🎥 Cinema & Realism', promptModifier: ', photorealistic, shot on ARRI Alexa, 35mm lens, cinematic lighting, depth of field, hyper-realistic, live action footage, raytracing, 8k, raw photo' },
+    { id: 'blockbuster_3d', label: 'Hollywood Blockbuster', category: '🎥 Cinema & Realism', promptModifier: ', hollywood blockbuster style, Unreal Engine 5 render, IMAX quality, cinematic composition, dramatic lighting, highly detailed VFX, transformers style, sci-fi masterpiece' },
+    { id: 'cyberpunk', label: 'Cinematic Cyberpunk', category: '🎥 Cinema & Realism', promptModifier: ', futuristic sci-fi masterpiece, neon lights, high tech, cybernetic atmosphere, blade runner style, night city, volumetric fog, cinematic' },
+    { id: 'ghibli', label: 'Studio Ghibli (吉卜力)', category: '🎨 Art & Anime', promptModifier: ', Studio Ghibli style, Hayao Miyazaki, hand drawn anime, cel shading, vibrant colors, picturesque scenery, 2D animation, cinematic' },
+    { id: 'shinkai', label: 'Makoto Shinkai (新海诚)', category: '🎨 Art & Anime', promptModifier: ', Makoto Shinkai style, Your Name style, vibrant vivid colors, highly detailed background art, lens flare, emotional lighting, anime masterpiece, 8k wallpaper' }
 ];
 
 // --- Types ---
@@ -100,8 +101,79 @@ dotenv.config({ path: '.env.local' });
 const app = express();
 
 app.use(cors({ origin: true, credentials: true }));
-app.use('/api/billing/webhook', express.raw({ type: 'application/json' }));
+// Stripe webhook必须用raw body，不能用json parser
+app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+    const stripeKey = process.env.STRIPE_SECRET_KEY || '';
+    const stripe = new Stripe(stripeKey, { apiVersion: '2026-01-28.clover' });
+    const sig = req.headers['stripe-signature'];
+    let event;
+    try {
+        const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
+        event = stripe.webhooks.constructEvent(req.body, sig as string, webhookSecret);
+    } catch (err: any) {
+        console.error('[Stripe Webhook] Signature verification failed:', err.message);
+        return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+
+    if (event.type === 'checkout.session.completed' || event.type === 'invoice.paid') {
+        const obj = event.data.object as any;
+        let userId = '';
+        let creditsToGrant = 0;
+        let isSubscription = false;
+        let planTier = '';
+
+        if (event.type === 'checkout.session.completed' && obj.mode === 'payment') {
+            userId = obj.client_reference_id || obj.metadata?.user_id;
+            creditsToGrant = Number(obj.metadata?.credits || 0);
+        } else if (event.type === 'invoice.paid' && obj.subscription) {
+            try {
+                const subscription = await stripe.subscriptions.retrieve(obj.subscription as string);
+                userId = subscription.metadata?.user_id || '';
+                planTier = subscription.metadata?.tier || '';
+                if (planTier === 'creator') creditsToGrant = 1000;
+                if (planTier === 'director') creditsToGrant = 3500;
+                isSubscription = true;
+            } catch (err) {
+                console.error('[Stripe Webhook] Fetch subscription error:', err);
+            }
+        }
+
+        if (userId && creditsToGrant > 0) {
+            const supabaseUrl = (process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim();
+            const supabaseKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+            if (supabaseUrl && supabaseKey) {
+                const supabase = createClient(supabaseUrl, supabaseKey);
+
+                const { data: profile } = await supabase.from('profiles').select('credits').eq('id', userId).single();
+                const newBalance = (profile?.credits || 0) + creditsToGrant;
+
+                let updateData: any = { credits: newBalance };
+                if (isSubscription && planTier) {
+                    updateData.is_pro = true;
+                    // Update schema column if it exists in profiles, otherwise just is_pro
+                    // updateData.plan_type = planTier; 
+                }
+
+                await supabase.from('profiles').update(updateData).eq('id', userId);
+
+                await supabase.from('credits_ledger').insert({
+                    user_id: userId,
+                    delta: creditsToGrant,
+                    kind: isSubscription ? 'subscription_renewal' : 'purchase',
+                    ref_type: 'stripe',
+                    ref_id: String(obj.id),
+                    status: 'settled'
+                });
+                console.log(`[Billing] Granted ${creditsToGrant} credits to user ${userId} (Sub: ${isSubscription})`);
+            }
+        }
+    }
+    res.json({ received: true });
+});
+
+// 其它路由用json parser
 app.use(express.json({ limit: '10mb' }));
+// Stripe订阅checkout
 
 const getReplicateToken = () => {
     const raw = process.env.REPLICATE_API_TOKEN;
@@ -435,7 +507,7 @@ const isAdminUser = (email: string | undefined): boolean => {
 // ═══════════════════════════════════════════════════════════════
 // Entitlement Types
 // ═══════════════════════════════════════════════════════════════
-type EntitlementAction = 
+type EntitlementAction =
     | 'generate_script' | 'generate_shots' | 'generate_image'
     | 'generate_video' | 'edit_image' | 'batch_images' | 'analyze_image';
 
@@ -471,23 +543,23 @@ const checkEntitlement = async (
             plan: 'developer',
         };
     }
-    
+
     // 2. Get user profile + credits (using service role for admin access)
     const supabaseAdmin = createClient(
-        process.env.VITE_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!
+        (process.env.VITE_SUPABASE_URL || '').trim(),
+        (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim()
     );
-    
+
     let { data: profile, error: profileErr } = await supabaseAdmin
         .from('profiles')
         .select('id, credits, is_pro, is_admin')
         .eq('id', userId)
         .single();
-    
+
     // ★ AUTO-CREATE PROFILE if not exists (fix for new user signup)
     if (profileErr || !profile) {
         console.log(`[Entitlement] Profile not found for ${userId} (${email}), upserting...`);
-        
+
         // Use UPSERT to handle race conditions (profile may already exist)
         const { data: newProfile, error: upsertErr } = await supabaseAdmin
             .from('profiles')
@@ -500,7 +572,7 @@ const checkEntitlement = async (
             }, { onConflict: 'id', ignoreDuplicates: true })
             .select('id, credits, is_pro, is_admin')
             .single();
-        
+
         if (upsertErr) {
             console.error('[Entitlement] Profile upsert failed:', upsertErr.message);
             // Last resort: try SELECT again (profile might exist but upsert had column issues)
@@ -522,11 +594,11 @@ const checkEntitlement = async (
             console.log(`[Entitlement] Upserted profile for ${email}, credits=${newProfile?.credits}`);
         }
     }
-    
+
     const userCredits = profile?.credits ?? 0;
     const isPaid = profile?.is_pro === true;
     const plan: UserPlan = isPaid ? 'paid' : 'free';
-    
+
     // 3. Free user with no credits → NEED_PAYMENT
     if (!isPaid && userCredits <= 0) {
         return {
@@ -539,7 +611,7 @@ const checkEntitlement = async (
             errorCode: 'NEED_PAYMENT',
         };
     }
-    
+
     // 4. Insufficient credits for this action
     if (cost > 0 && userCredits < cost) {
         return {
@@ -552,7 +624,7 @@ const checkEntitlement = async (
             errorCode: 'INSUFFICIENT_CREDITS',
         };
     }
-    
+
     // 5. Allowed
     return {
         allowed: true,
@@ -579,14 +651,14 @@ app.get('/api/entitlement', requireAuth, async (req: any, res: any) => {
     try {
         const userId = req.user?.id;
         const userEmail = req.user?.email;
-        
+
         if (!userId || !userEmail) {
             return res.status(401).json({ error: 'Unauthorized' });
         }
-        
+
         // Check GOD MODE first
         const isDevMode = isDeveloper(userEmail);
-        
+
         if (isDevMode) {
             logDeveloperAccess(userEmail, 'entitlement_check');
             return res.json({
@@ -599,24 +671,24 @@ app.get('/api/entitlement', requireAuth, async (req: any, res: any) => {
                 reasonIfBlocked: null,
             });
         }
-        
+
         // Get profile for regular users
         const supabaseAdmin = createClient(
-            process.env.VITE_SUPABASE_URL!,
-            process.env.SUPABASE_SERVICE_ROLE_KEY!
+            (process.env.VITE_SUPABASE_URL || '').trim(),
+            (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim()
         );
-        
+
         const { data: profile } = await supabaseAdmin
             .from('profiles')
             .select('id, credits, is_pro, is_admin')
             .eq('id', userId)
             .single();
-        
+
         const credits = profile?.credits ?? 0;
         const isPaid = profile?.is_pro === true;
         const plan: UserPlan = isPaid ? 'paid' : 'free';
         const canGenerate = credits > 0 || isPaid;
-        
+
         res.json({
             isDeveloper: false,
             isAdmin: profile?.is_admin === true,
@@ -626,7 +698,7 @@ app.get('/api/entitlement', requireAuth, async (req: any, res: any) => {
             mode: plan,
             reasonIfBlocked: canGenerate ? null : 'NEED_PAYMENT',
         });
-        
+
     } catch (err: any) {
         console.error('[/api/entitlement Error]', err);
         res.status(500).json({ error: err.message || 'Failed to check entitlement' });
@@ -650,23 +722,23 @@ function isVideoModelRequest(version: string): boolean {
 // Download image and convert to base64 data URL
 async function downloadImageAsBase64(url: string): Promise<string> {
     console.log('[ImageProxy] Downloading image:', url.substring(0, 80) + '...');
-    
+
     const response = await fetch(url, {
         headers: {
             'User-Agent': 'Mozilla/5.0 (compatible; AI-Cine-Director/1.0)'
         }
     });
-    
+
     if (!response.ok) {
         throw new Error(`Image download failed: ${response.status} ${response.statusText}`);
     }
-    
+
     const buffer = await response.buffer();
     const contentType = response.headers.get('content-type') || 'image/jpeg';
     const base64 = buffer.toString('base64');
-    
+
     console.log('[ImageProxy] Downloaded image, size:', buffer.length, 'bytes, type:', contentType);
-    
+
     return `data:${contentType};base64,${base64}`;
 }
 
@@ -674,7 +746,7 @@ async function downloadImageAsBase64(url: string): Promise<string> {
 async function preprocessVideoInput(input: Record<string, any>): Promise<Record<string, any>> {
     const imageFields = ['image', 'first_frame_image', 'start_frame', 'reference_image'];
     const result = { ...input };
-    
+
     for (const field of imageFields) {
         const url = input[field];
         if (url && typeof url === 'string' && url.startsWith('http')) {
@@ -690,7 +762,7 @@ async function preprocessVideoInput(input: Record<string, any>): Promise<Record<
             }
         }
     }
-    
+
     return result;
 }
 
@@ -707,8 +779,8 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
     // ★ GOD MODE: Check entitlement before proceeding
     const entitlement = await checkEntitlement(userId, userEmail, 'generate_image', estimatedCost);
     if (!entitlement.allowed) {
-        const status = entitlement.errorCode === 'NEED_PAYMENT' ? 402 
-                     : entitlement.errorCode === 'INSUFFICIENT_CREDITS' ? 402 : 403;
+        const status = entitlement.errorCode === 'NEED_PAYMENT' ? 402
+            : entitlement.errorCode === 'INSUFFICIENT_CREDITS' ? 402 : 403;
         return res.status(status).json({
             error: entitlement.reason,
             code: entitlement.errorCode,
@@ -716,7 +788,7 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
             plan: entitlement.plan,
         });
     }
-    
+
     // Skip credit operations for developers (GOD MODE)
     const skipCreditCheck = entitlement.mode === 'developer';
     if (skipCreditCheck) {
@@ -725,8 +797,8 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
 
     // User-context client for RPC
     const supabaseUser = createClient(
-        process.env.VITE_SUPABASE_URL!,
-        process.env.VITE_SUPABASE_ANON_KEY!,
+        (process.env.VITE_SUPABASE_URL || '').trim(),
+        (process.env.VITE_SUPABASE_ANON_KEY || '').trim(),
         { global: { headers: { Authorization: authHeader } } }
     );
 
@@ -773,7 +845,7 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
                         ref_id: jobRef
                     });
                 }
-                return res.status(400).json({ 
+                return res.status(400).json({
                     error: err.message,
                     code: 'IMAGE_EXPIRED'
                 });
@@ -914,34 +986,34 @@ app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
     try {
         const { storyIdea, visualStyle, language, identityAnchor, sceneCount } = req.body;
         const targetScenes = Math.min(Math.max(Number(sceneCount) || 5, 1), 50);
-        
+
         console.log(`[Gemini Generate] identityAnchor present: ${!!identityAnchor}, length: ${identityAnchor?.length || 0}, first100: ${identityAnchor?.substring(0, 100) || 'NONE'}`);
-        
+
         const authHeader = `Bearer ${req.accessToken}`;
         const userId = req.user?.id;
         const userEmail = req.user?.email;
-        
+
         // ★ GOD MODE: Check entitlement
         const COST = 1;
         const entitlement = await checkEntitlement(userId, userEmail, 'generate_script', COST);
         if (!entitlement.allowed) {
-            const status = entitlement.errorCode === 'NEED_PAYMENT' ? 402 
-                         : entitlement.errorCode === 'INSUFFICIENT_CREDITS' ? 402 : 403;
+            const status = entitlement.errorCode === 'NEED_PAYMENT' ? 402
+                : entitlement.errorCode === 'INSUFFICIENT_CREDITS' ? 402 : 403;
             return res.status(status).json({
                 error: entitlement.reason,
                 code: entitlement.errorCode,
                 credits: entitlement.credits,
             });
         }
-        
+
         const skipCreditCheck = entitlement.mode === 'developer';
         if (skipCreditCheck) {
             logDeveloperAccess(userEmail, `gemini:generate:cost=${COST}`);
         }
 
         const supabaseUser = createClient(
-            process.env.VITE_SUPABASE_URL!,
-            process.env.VITE_SUPABASE_ANON_KEY!,
+            (process.env.VITE_SUPABASE_URL || '').trim(),
+            (process.env.VITE_SUPABASE_ANON_KEY || '').trim(),
             { global: { headers: { Authorization: authHeader } } }
         );
 
@@ -1048,10 +1120,10 @@ The character_anchor is stored ONCE at the top level. Each scene's visual_descri
         const text = response.text;
         if (!text) throw new Error('No response from AI Director.');
         const project = JSON.parse(text);
-        
+
         // ★ Generate unique project ID for batch operations
         project.id = crypto.randomUUID();
-        
+
         // ★ CRITICAL: Force character_anchor to match identityAnchor if provided
         // Gemini sometimes rewrites/changes the locked identity (e.g., changing gender).
         // We override at the code level to guarantee consistency.
@@ -1104,7 +1176,7 @@ The character_anchor is stored ONCE at the top level. Each scene's visual_descri
         console.error('[Gemini] Error:', error);
         try {
             const supabaseRefund = createClient(
-                process.env.VITE_SUPABASE_URL!, process.env.VITE_SUPABASE_ANON_KEY!,
+                (process.env.VITE_SUPABASE_URL || '').trim(), (process.env.VITE_SUPABASE_ANON_KEY || '').trim(),
                 { global: { headers: { Authorization: `Bearer ${req.accessToken}` } } }
             );
             await supabaseRefund.rpc('refund_reserve', { amount: 1, ref_type: 'gemini', ref_id: jobRef });
@@ -1122,11 +1194,11 @@ app.post('/api/gemini/analyze', async (req: any, res: any) => {
         const { base64Data } = req.body;
         if (!base64Data) return res.status(400).json({ error: 'Missing base64Data' });
         const ai = getGeminiAI();
-        
+
         // ★ 从 data URL 或 base64 魔术字节检测 MIME 类型
         const cleanBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
         let mimeType = 'image/jpeg'; // 默认 JPEG（照片最常见）
-        
+
         // 优先从 data URL 前缀提取
         const prefixMatch = base64Data.match(/^data:(image\/[a-zA-Z+]+);base64,/);
         if (prefixMatch) {
@@ -1138,9 +1210,9 @@ app.post('/api/gemini/analyze', async (req: any, res: any) => {
             else if (cleanBase64.startsWith('UklGR')) mimeType = 'image/webp';
             else if (cleanBase64.startsWith('R0lGO')) mimeType = 'image/gif';
         }
-        
+
         console.log(`[Gemini Analyze] MIME: ${mimeType}, base64 length: ${cleanBase64.length}, hasPrefix: ${base64Data.startsWith('data:')}`);
-        
+
         const analyzePrompt = `You are a professional character designer. Analyze this image and produce an EXACT visual identity description for AI image generation.
 
 **CRITICAL: OBSERVE THE ACTUAL IMAGE. DO NOT GUESS OR ASSUME.**
@@ -1160,15 +1232,15 @@ A [age]-year-old [ethnicity] [female/male] with [face shape] face, [skin tone] s
             model: 'gemini-2.0-flash',
             contents: { parts: [{ inlineData: { mimeType, data: cleanBase64 } }, { text: analyzePrompt }] },
         });
-        
+
         const result = (response.text || '').trim();
         console.log(`[Gemini Analyze] ✅ Result: ${result.substring(0, 120)}...`);
-        
+
         if (!result || result.length < 20) {
             console.error('[Gemini Analyze] ⚠️ Empty or too-short result from Gemini Vision');
             return res.status(500).json({ error: 'Gemini Vision returned empty result', anchor: 'A cinematic character' });
         }
-        
+
         res.json({ anchor: result });
     } catch (error: any) {
         console.error('[Gemini Analyze] ❌ Error:', error.message);
@@ -1453,24 +1525,24 @@ app.post('/api/shots/generate', async (req: any, res: any) => {
         const supabaseUser = getUserClient(authHeader);
         const userId = await getUserId(supabaseUser);
         const userEmail = await getUserEmail(supabaseUser);
-        
+
         if (!userId || !userEmail) {
             return res.status(401).json({ error: 'Unauthorized' });
         }
-        
+
         // ★ GOD MODE: Check entitlement
         const COST = 1;
         const entitlement = await checkEntitlement(userId, userEmail, 'generate_shots', COST);
         if (!entitlement.allowed) {
-            const status = entitlement.errorCode === 'NEED_PAYMENT' ? 402 
-                         : entitlement.errorCode === 'INSUFFICIENT_CREDITS' ? 402 : 403;
+            const status = entitlement.errorCode === 'NEED_PAYMENT' ? 402
+                : entitlement.errorCode === 'INSUFFICIENT_CREDITS' ? 402 : 403;
             return res.status(status).json({
                 error: entitlement.reason,
                 code: entitlement.errorCode,
                 credits: entitlement.credits,
             });
         }
-        
+
         const skipCreditCheck = entitlement.mode === 'developer';
         const jobRef = `shots:${Date.now()}:${Math.random().toString(36).slice(2)}`;
 
@@ -1672,27 +1744,27 @@ app.post('/api/shot-images/:shotId/generate', async (req: any, res: any) => {
         const supabaseUser = getUserClient(authHeader);
         const userId = await getUserId(supabaseUser);
         const userEmail = await getUserEmail(supabaseUser);
-        
+
         if (!userId || !userEmail) {
             return res.status(401).json({ error: 'Unauthorized' });
         }
-        
+
         const imageModel = model || 'flux';
         const replicatePath = (REPLICATE_MODEL_PATHS as any)[imageModel] || REPLICATE_MODEL_PATHS['flux'];
         const cost = (IMAGE_MODEL_COSTS as any)[imageModel] ?? 6;
-        
+
         // ★ GOD MODE: Check entitlement
         const entitlement = await checkEntitlement(userId, userEmail, 'generate_image', cost);
         if (!entitlement.allowed) {
-            const status = entitlement.errorCode === 'NEED_PAYMENT' ? 402 
-                         : entitlement.errorCode === 'INSUFFICIENT_CREDITS' ? 402 : 403;
+            const status = entitlement.errorCode === 'NEED_PAYMENT' ? 402
+                : entitlement.errorCode === 'INSUFFICIENT_CREDITS' ? 402 : 403;
             return res.status(status).json({
                 error: entitlement.reason,
                 code: entitlement.errorCode,
                 credits: entitlement.credits,
             });
         }
-        
+
         const skipCreditCheck = entitlement.mode === 'developer';
 
         const jobRef = `shot-img:${Date.now()}:${Math.random().toString(36).slice(2)}`;
@@ -1715,7 +1787,7 @@ app.post('/api/shot-images/:shotId/generate', async (req: any, res: any) => {
         try {
             result = await callReplicateImage({ prompt: finalPrompt, model: replicatePath, aspectRatio: aspect_ratio || '16:9', seed: seed ?? 142857, imagePrompt: anchor_image_url || undefined });
         } catch (genErr: any) {
-            if (!skipCreditCheck) { try { await supabaseUser.rpc('refund_reserve', { amount: cost, ref_type: 'shot-image', ref_id: jobRef }); } catch (_) {} }
+            if (!skipCreditCheck) { try { await supabaseUser.rpc('refund_reserve', { amount: cost, ref_type: 'shot-image', ref_id: jobRef }); } catch (_) { } }
             throw genErr;
         }
 
@@ -1756,27 +1828,27 @@ app.post('/api/shot-images/:imageId/edit', async (req: any, res: any) => {
         const supabaseUser = getUserClient(authHeader);
         const userId = await getUserId(supabaseUser);
         const userEmail = await getUserEmail(supabaseUser);
-        
+
         if (!userId || !userEmail) {
             return res.status(401).json({ error: 'Unauthorized' });
         }
-        
+
         const imageModel = model || 'flux';
         const replicatePath = (REPLICATE_MODEL_PATHS as any)[imageModel] || REPLICATE_MODEL_PATHS['flux'];
         const cost = (IMAGE_MODEL_COSTS as any)[imageModel] ?? 6;
-        
+
         // ★ GOD MODE: Check entitlement
         const entitlement = await checkEntitlement(userId, userEmail, 'edit_image', cost);
         if (!entitlement.allowed) {
-            const status = entitlement.errorCode === 'NEED_PAYMENT' ? 402 
-                         : entitlement.errorCode === 'INSUFFICIENT_CREDITS' ? 402 : 403;
+            const status = entitlement.errorCode === 'NEED_PAYMENT' ? 402
+                : entitlement.errorCode === 'INSUFFICIENT_CREDITS' ? 402 : 403;
             return res.status(status).json({
                 error: entitlement.reason,
                 code: entitlement.errorCode,
                 credits: entitlement.credits,
             });
         }
-        
+
         const skipCreditCheck = entitlement.mode === 'developer';
 
         const jobRef = `shot-img-edit:${Date.now()}:${Math.random().toString(36).slice(2)}`;
@@ -1807,7 +1879,7 @@ app.post('/api/shot-images/:imageId/edit', async (req: any, res: any) => {
         try {
             result = await callReplicateImage({ prompt: finalPrompt, model: replicatePath, aspectRatio: aspect_ratio || '16:9', seed: editSeed });
         } catch (genErr: any) {
-            if (!skipCreditCheck) { try { await supabaseUser.rpc('refund_reserve', { amount: cost, ref_type: 'shot-image-edit', ref_id: jobRef }); } catch (_) {} }
+            if (!skipCreditCheck) { try { await supabaseUser.rpc('refund_reserve', { amount: cost, ref_type: 'shot-image-edit', ref_id: jobRef }); } catch (_) { } }
             throw genErr;
         }
 
@@ -1851,7 +1923,7 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
         const supabaseUser = getUserClient(authHeader);
         const userId = await getUserId(supabaseUser);
         const userEmail = await getUserEmail(supabaseUser);
-        
+
         if (!userId || !userEmail) {
             return res.status(401).json({ error: 'Unauthorized' });
         }
@@ -1864,8 +1936,8 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
         // ★ GOD MODE: Check entitlement
         const entitlement = await checkEntitlement(userId, userEmail, 'batch_images', totalCost);
         if (!entitlement.allowed) {
-            const status = entitlement.errorCode === 'NEED_PAYMENT' ? 402 
-                         : entitlement.errorCode === 'INSUFFICIENT_CREDITS' ? 402 : 403;
+            const status = entitlement.errorCode === 'NEED_PAYMENT' ? 402
+                : entitlement.errorCode === 'INSUFFICIENT_CREDITS' ? 402 : 403;
             return res.status(status).json({
                 error: entitlement.reason,
                 code: entitlement.errorCode,
@@ -1873,7 +1945,7 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
                 needed: totalCost,
             });
         }
-        
+
         const skipCreditCheck = entitlement.mode === 'developer';
 
         const batchRef = `batch-img:${Date.now()}:${Math.random().toString(36).slice(2)}`;
@@ -1941,16 +2013,16 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
             try {
                 const shotData = sortedShots.find((s: any) => s.shot_id === item.shot_id);
                 if (!shotData) throw new Error('Shot data not found');
-                
-                const finalPrompt = buildFinalPrompt({ 
-                    basePrompt: shotData.image_prompt || '', 
-                    characterAnchor: character_anchor, 
-                    style, 
-                    referencePolicy: shotData.reference_policy || 'anchor' 
+
+                const finalPrompt = buildFinalPrompt({
+                    basePrompt: shotData.image_prompt || '',
+                    characterAnchor: character_anchor,
+                    style,
+                    referencePolicy: shotData.reference_policy || 'anchor'
                 });
-                
-                const result = await callReplicateImage({ 
-                    prompt: finalPrompt, model: replicatePath, 
+
+                const result = await callReplicateImage({
+                    prompt: finalPrompt, model: replicatePath,
                     aspectRatio: aspect_ratio, seed: shotData.seed_hint ?? projectSeed,
                     imagePrompt: anchorImageUrl || undefined,
                 });
@@ -1992,10 +2064,10 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
         // ★ Credit finalization
         if (!skipCreditCheck) {
             const notOk = job.total - job.succeeded;
-            if (notOk > 0) { 
-                try { await supabaseUser.rpc('refund_reserve', { amount: notOk * costPerImage, ref_type: 'batch-image-partial', ref_id: batchRef }); } catch(e) {} 
+            if (notOk > 0) {
+                try { await supabaseUser.rpc('refund_reserve', { amount: notOk * costPerImage, ref_type: 'batch-image-partial', ref_id: batchRef }); } catch (e) { }
             }
-            try { await supabaseUser.rpc('finalize_reserve', { ref_type: 'batch-image', ref_id: batchRef }); } catch(e) {}
+            try { await supabaseUser.rpc('finalize_reserve', { ref_type: 'batch-image', ref_id: batchRef }); } catch (e) { }
         }
 
         sendSSE('done', { job, items, anchor_image_url: anchorImageUrl });
@@ -2026,7 +2098,7 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
         const supabaseUser = getUserClient(authHeader);
         const userId = await getUserId(supabaseUser);
         const userEmail = await getUserEmail(supabaseUser);
-        
+
         if (!userId || !userEmail) {
             return res.status(401).json({ error: 'Unauthorized' });
         }
@@ -2064,8 +2136,8 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
         // ★ GOD MODE: Check entitlement
         const entitlement = await checkEntitlement(userId, userEmail, 'batch_images', totalCost);
         if (!entitlement.allowed) {
-            const status = entitlement.errorCode === 'NEED_PAYMENT' ? 402 
-                         : entitlement.errorCode === 'INSUFFICIENT_CREDITS' ? 402 : 403;
+            const status = entitlement.errorCode === 'NEED_PAYMENT' ? 402
+                : entitlement.errorCode === 'INSUFFICIENT_CREDITS' ? 402 : 403;
             return res.status(status).json({
                 error: entitlement.reason,
                 code: entitlement.errorCode,
@@ -2073,7 +2145,7 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
                 needed: totalCost,
             });
         }
-        
+
         const skipCreditCheck = entitlement.mode === 'developer';
 
         const batchRef = `batch-continue:${Date.now()}:${Math.random().toString(36).slice(2)}`;
@@ -2158,8 +2230,8 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
 
         if (!skipCreditCheck) {
             const notOk = job.total - job.succeeded;
-            if (notOk > 0) { try { await supabaseUser.rpc('refund_reserve', { amount: notOk * costPerImage, ref_type: 'batch-continue-partial', ref_id: batchRef }); } catch(e) {} }
-            try { await supabaseUser.rpc('finalize_reserve', { ref_type: 'batch-image-continue', ref_id: batchRef }); } catch(e) {}
+            if (notOk > 0) { try { await supabaseUser.rpc('refund_reserve', { amount: notOk * costPerImage, ref_type: 'batch-continue-partial', ref_id: batchRef }); } catch (e) { } }
+            try { await supabaseUser.rpc('finalize_reserve', { ref_type: 'batch-image-continue', ref_id: batchRef }); } catch (e) { }
         }
 
         sendSSE('done', { job, items, range_label: rangeLabel, remaining_count: remainingAfter, all_done: remainingAfter === 0, anchor_image_url: anchorImageUrl });
@@ -2222,100 +2294,101 @@ app.post('/api/batch/:jobId/retry', async (req: any, res: any) => {
     } catch (error: any) { res.status(500).json({ error: error.message }); }
 });
 
-// Billing checkout
-app.post('/api/billing/checkout', requireAuth, async (req: any, res: any) => {
-    const { packageId } = req.body;
-    const userId = req.user.id;
-    const stripe = getStripe();
 
-    const PACKAGES: Record<string, { price: number, credits: number, name: string }> = {
-        'pack_small': { price: 500, credits: 500, name: 'Starter Pack (500 Credits)' },
-        'pack_medium': { price: 1000, credits: 1200, name: 'Value Pack (1200 Credits)' },
-        'pack_large': { price: 2500, credits: 3500, name: 'Pro Pack (3500 Credits)' },
-    };
-
-    const pkg = PACKAGES[packageId];
-    if (!pkg) return res.status(400).json({ error: 'Invalid package' });
-
-    const session = await stripe.checkout.sessions.create({
-        payment_method_types: ['card'],
-        line_items: [{
-            price_data: {
-                currency: 'usd',
-                product_data: { name: pkg.name },
-                unit_amount: pkg.price,
-            },
-            quantity: 1,
-        }],
-        mode: 'payment',
-        success_url: `${req.headers.origin}/?success=true`,
-        cancel_url: `${req.headers.origin}/?canceled=true`,
-        metadata: {
-            user_id: userId,
-            credits: pkg.credits.toString()
-        }
-    });
-
-    res.json({ url: session.url });
-});
-
-// Billing webhook → add credits directly to profiles + ledger
-app.post('/api/billing/webhook', async (req: any, res: any) => {
-    const sig = req.headers['stripe-signature'];
-    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-    const stripe = getStripe();
-
-    let event;
+// ───────────────────────────────────────────────────────────────
+// POST /api/billing/checkout — Create Stripe Checkout Session for Credits
+// ───────────────────────────────────────────────────────────────
+app.post('/api/billing/checkout', async (req: any, res: any) => {
     try {
-        if (!webhookSecret) throw new Error('STRIPE_WEBHOOK_SECRET missing');
-        event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
-    } catch (err: any) {
-        console.error('[Webhook Error]', err.message);
-        return res.status(400).send(`Webhook Error: ${err.message}`);
-    }
+        const authHeader = req.headers.authorization;
+        if (!authHeader) return res.status(401).json({ error: 'Missing Authorization header' });
+        const supabaseUser = getUserClient(authHeader);
+        const userId = await getUserId(supabaseUser);
+        if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-    if (event.type === 'checkout.session.completed') {
-        const session = event.data.object as Stripe.Checkout.Session;
+        const { packageId } = req.body;
+        const stripe = getStripe();
 
-        // Stripe Payment Links use client_reference_id, fallback to metadata for custom sessions
-        const userId = session.client_reference_id || session.metadata?.user_id;
+        // CREDIT_PACKS hardcoded here for simplicity or derived from types
+        const CREDIT_PACKS = [
+            { id: 'pack_small', price: 5, credits: 500, label: 'Starter Pack', priceId: 'price_1T4l2pJ3FWUBvlCmbdxyNavw' },
+            { id: 'pack_medium', price: 10, credits: 1200, label: 'Value Pack', popular: true, priceId: 'price_1T4l2pJ3FWUBvlCmS8qBhrW5' },
+            { id: 'pack_large', price: 25, credits: 3500, label: 'Pro Pack', priceId: 'price_1T4l2pJ3FWUBvlCmuM0Ki56j' }
+        ];
 
-        // Payment Link doesn't carry custom metadata by default, grant 1000 credits 
-        const credits = Number(session.metadata?.credits) || 1000;
+        const pack = CREDIT_PACKS.find(p => p.id === packageId);
+        if (!pack) return res.status(400).json({ error: 'Invalid package' });
 
-        if (userId && credits) {
-            const supabase = getSupabaseAdmin();
-
-            // 1) Fetch current balance, then update
-            const { data: profile } = await supabase
-                .from('profiles')
-                .select('credits')
-                .eq('id', userId)
-                .single();
-
-            const newBalance = (profile?.credits || 0) + credits;
-
-            await supabase
-                .from('profiles')
-                .update({ credits: newBalance })
-                .eq('id', userId);
-
-            // 2) Insert ledger record
-            await supabase.from('credits_ledger').insert({
+        const session = await stripe.checkout.sessions.create({
+            payment_method_types: ['card'],
+            line_items: [{ price: pack.priceId as string, quantity: 1 }],
+            mode: 'payment',
+            success_url: `${req.headers.origin || process.env.VITE_APP_URL || 'http://localhost:3000'}/?payment=success`,
+            cancel_url: `${req.headers.origin || process.env.VITE_APP_URL || 'http://localhost:3000'}/?payment=cancelled`,
+            client_reference_id: userId, // extremely important for webhook
+            metadata: {
                 user_id: userId,
-                delta: credits,
-                kind: 'purchase',
-                ref_type: 'stripe',
-                ref_id: String(session.id),
-                status: 'settled'
-            });
+                credits: pack.credits.toString()
+            }
+        });
 
-            console.log(`[Billing] Added ${credits} credits to user ${userId}`);
-        }
+        res.json({ url: session.url });
+    } catch (err: any) {
+        console.error('[Billing Checkout Error]', err);
+        res.status(500).json({ error: err.message });
     }
-
-    res.json({ received: true });
 });
+
+// ───────────────────────────────────────────────────────────────
+// POST /api/billing/subscribe — Create Stripe Checkout Session for Subscriptions
+// ───────────────────────────────────────────────────────────────
+app.post('/api/billing/subscribe', async (req: any, res: any) => {
+    try {
+        const authHeader = req.headers.authorization;
+        if (!authHeader) return res.status(401).json({ error: 'Missing Authorization header' });
+        const supabaseUser = getUserClient(authHeader);
+        const userId = await getUserId(supabaseUser);
+        if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+        const { tier, billingCycle } = req.body;
+        const stripe = getStripe();
+
+        const STRIPE_PRICES: any = {
+            monthly: { creator: 'price_1SykM5J3FWUBvlCmYotWtUGA', director: 'price_1SyknyJ3FWUBvlCmXPbBj3si' },
+            yearly: { creator: 'price_1SykwsJ3FWUBvlCmoNwqi0EY', director: 'price_1SykxoJ3FWUBvlCmZeIFDxFJ' }
+        };
+
+        const priceId = STRIPE_PRICES[billingCycle]?.[tier];
+        if (!priceId) return res.status(400).json({ error: 'Invalid subscription tier/cycle' });
+
+        const session = await stripe.checkout.sessions.create({
+            payment_method_types: ['card'],
+            line_items: [{ price: priceId, quantity: 1 }],
+            mode: 'subscription',
+            success_url: `${req.headers.origin || process.env.VITE_APP_URL || 'http://localhost:3000'}/?subscription=success`,
+            cancel_url: `${req.headers.origin || process.env.VITE_APP_URL || 'http://localhost:3000'}/?subscription=cancelled`,
+            client_reference_id: userId,
+            metadata: {
+                user_id: userId,
+                tier: tier
+            },
+            subscription_data: {
+                metadata: {
+                    user_id: userId,
+                    tier: tier
+                }
+            }
+        });
+
+        res.json({ url: session.url });
+    } catch (err: any) {
+        console.error('[Billing Subscribe Error]', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+
 
 // Health
 app.get('/api/health', (_req, res) => {

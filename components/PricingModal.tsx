@@ -24,9 +24,41 @@ const PricingModal: React.FC<PricingModalProps> = ({ isOpen, onClose, onUpgrade 
 
   if (!isOpen) return null;
 
-  const handleSubscribe = (tier: 'creator' | 'director') => {
-    // Placeholder for subscription logic
-    alert("订阅功能当前仅对受邀用户开放，请使用额度包。");
+  const handleSubscribe = async (tier: 'creator' | 'director') => {
+    try {
+      setIsProcessing(true);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        alert("请先登录以订阅。");
+        setIsProcessing(false);
+        return;
+      }
+      const billingCycleSafe = billingCycle;
+      const userId = session.user.id;
+      const email = session.user.email;
+      const response = await fetch('/api/billing/subscribe', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ tier, billingCycle: billingCycleSafe, userId, email }),
+      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+        throw new Error(errData.error || '创建订阅会话失败');
+      }
+      const { url } = await response.json();
+      if (url) {
+        window.location.href = url;
+      } else {
+        throw new Error('未获取到支付链接');
+      }
+    } catch (e: any) {
+      alert(`订阅跳转失败：${e.message}`);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleTopUp = async (pack: typeof CREDIT_PACKS[0]) => {

@@ -458,9 +458,9 @@ export const MODEL_MULTIPLIERS: Record<VideoModel, number> = {
 };
 
 export const CREDIT_PACKS = [
-  { id: 'pack_small', price: 5, credits: 500, label: 'Starter Pack' },
-  { id: 'pack_medium', price: 10, credits: 1200, label: 'Value Pack', popular: true },
-  { id: 'pack_large', price: 25, credits: 3500, label: 'Pro Pack' }
+  { id: 'pack_small', price: 5, credits: 500, label: 'Starter Pack', priceId: 'price_1T4l2pJ3FWUBvlCmbdxyNavw' },
+  { id: 'pack_medium', price: 10, credits: 1200, label: 'Value Pack', popular: true, priceId: 'price_1T4l2pJ3FWUBvlCmS8qBhrW5' },
+  { id: 'pack_large', price: 25, credits: 3500, label: 'Pro Pack', priceId: 'price_1T4l2pJ3FWUBvlCmuM0Ki56j' }
 ];
 
 export const PLAN_LIMITS = {
@@ -477,10 +477,10 @@ export interface UserCreditState {
 }
 
 export const STRIPE_PRICES = {
-  CREATOR_MONTHLY: 'price_mock_creator_monthly',
-  CREATOR_YEARLY: 'price_mock_creator_yearly',
-  DIRECTOR_MONTHLY: 'price_mock_director_monthly',
-  DIRECTOR_YEARLY: 'price_mock_director_yearly',
+  CREATOR_MONTHLY: 'price_1SykM5J3FWUBvlCmYotWtUGA',
+  CREATOR_YEARLY: 'price_1SykwsJ3FWUBvlCmoNwqi0EY',
+  DIRECTOR_MONTHLY: 'price_1SyknyJ3FWUBvlCmXPbBj3si',
+  DIRECTOR_YEARLY: 'price_1SykxoJ3FWUBvlCmZeIFDxFJ',
 };
 
 export const STRIPE_PUBLISHABLE_KEY = 'pk_test_mock_key';
