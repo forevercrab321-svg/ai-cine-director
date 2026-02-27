@@ -733,7 +733,9 @@ async function downloadImageAsBase64(url: string): Promise<string> {
         throw new Error(`Image download failed: ${response.status} ${response.statusText}`);
     }
 
-    const buffer = await response.buffer();
+    // node-fetch v3: use arrayBuffer() then Buffer.from() — .buffer() was removed in v3
+    const arrayBuf = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuf);
     const contentType = response.headers.get('content-type') || 'image/jpeg';
     const base64 = buffer.toString('base64');
 
@@ -2537,9 +2539,17 @@ app.get('/api/download', async (req: any, res: any) => {
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Cache-Control', 'no-cache');
 
-        // Stream the body directly to the response
-        const buffer = await upstream.buffer();
-        return res.send(buffer);
+        // node-fetch v3: use arrayBuffer() then Buffer.from() — .buffer() was removed in v3
+        const arrayBuf = await upstream.arrayBuffer();
+        const buffer = Buffer.from(arrayBuf);
+        res.writeHead(200, {
+            'Content-Type': contentType,
+            'Content-Disposition': `attachment; filename="${safeName}"`,
+            'Access-Control-Allow-Origin': '*',
+            'Cache-Control': 'no-cache',
+            'Content-Length': buffer.length,
+        });
+        return res.end(buffer);
     } catch (err: any) {
         console.error('[Download Proxy] Error:', err.message);
         return res.status(500).json({ error: err.message || 'Download proxy failed' });
