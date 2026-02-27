@@ -5,6 +5,7 @@ import { PhotoIcon, VideoCameraIcon, LoaderIcon } from './IconComponents';
 import { generateImage } from '../services/replicateService';
 import { useAppContext } from '../context/AppContext';
 import { t } from '../i18n';
+import { forceDownload } from '../utils/download';
 
 interface SceneCardProps {
   scene: Scene;
@@ -58,35 +59,7 @@ const ExpandIcon = () => (
   </svg>
 );
 
-const downloadFile = async (url: string, filename: string) => {
-  try {
-    const response = await fetch(url, { mode: 'cors' });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const blob = await response.blob();
-    const blobUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = blobUrl;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(blobUrl);
-  } catch {
-    // CORS blocked: open in new tab (never replace current page)
-    const newWin = window.open(url, '_blank', 'noopener,noreferrer');
-    if (!newWin) {
-      // Popup blocked: create a temporary link to download
-      const a = document.createElement('a');
-      a.href = url;
-      a.target = '_blank';
-      a.rel = 'noopener noreferrer';
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    }
-  }
-};
+
 
 // Simulated terminal output logs
 const LOADING_LOGS = [
@@ -267,7 +240,7 @@ const SceneCard: React.FC<SceneCardProps> = ({
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover/image:opacity-100 transition-opacity duration-300">
                   <div className="absolute top-3 right-3 flex gap-2">
                     <button
-                      onClick={() => downloadFile(imageUrl!, `scene-${scene.scene_number}-image.jpg`)}
+                      onClick={() => forceDownload(imageUrl!, `scene-${scene.scene_number}-image.jpg`)}
                       title="Download Image"
                       className="p-2 bg-black/60 hover:bg-emerald-500 hover:text-white text-white rounded-full backdrop-blur-md transition-all border border-white/10"
                     >
@@ -362,7 +335,7 @@ const SceneCard: React.FC<SceneCardProps> = ({
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        downloadFile(externalVideoUrl!, `scene-${scene.scene_number}-video.mp4`);
+                        forceDownload(externalVideoUrl!, `scene-${scene.scene_number}-video.mp4`);
                       }}
                       title="下载视频"
                       className="p-2.5 bg-emerald-600/90 hover:bg-emerald-500 text-white rounded-full backdrop-blur-md transition-all border border-white/20 shadow-lg flex items-center gap-1"
@@ -408,7 +381,7 @@ const SceneCard: React.FC<SceneCardProps> = ({
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            downloadFile(externalVideoUrl!, `scene-${scene.scene_number}-video.mp4`);
+                            forceDownload(externalVideoUrl!, `scene-${scene.scene_number}-video.mp4`);
                           }}
                           className="flex items-center gap-2 px-4 py-3 bg-emerald-600/90 hover:bg-emerald-500 text-white rounded-full backdrop-blur-md transition-all border border-white/20 shadow-xl"
                         >

@@ -16,6 +16,7 @@ import { generateSceneChain } from "../services/director-pipeline";
 import SceneCard from "./SceneCard";
 import { LoaderIcon, PhotoIcon, VideoCameraIcon } from "./IconComponents";
 import { t } from "../i18n";
+import { forceDownload } from "../utils/download";
 
 const DownloadIcon = () => (
   <svg
@@ -252,37 +253,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
     }
   };
 
-  // 下载文件辅助函数
-  const downloadFile = async (url: string, filename: string) => {
-    try {
-      const response = await fetch(url, { mode: "cors" });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const blob = await response.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(blobUrl);
-    } catch (error) {
-      console.error("Download failed:", error);
-      // CORS blocked: open in new tab (never replace current page)
-      const newWin = window.open(url, "_blank", "noopener,noreferrer");
-      if (!newWin) {
-        // Popup blocked: create a temporary link
-        const a = document.createElement("a");
-        a.href = url;
-        a.target = "_blank";
-        a.rel = "noopener noreferrer";
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-      }
-    }
-  };
+
 
   // 批量下载所有图片
   const handleDownloadAllImages = async () => {
@@ -293,7 +264,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
     }
 
     for (const [sceneNum, url] of imageEntries) {
-      await downloadFile(url as string, `scene-${sceneNum}-image.jpg`);
+      await forceDownload(url as string, `scene-${sceneNum}-image.jpg`);
       await new Promise((resolve) => setTimeout(resolve, 300)); // 避免过快下载
     }
   };
@@ -309,7 +280,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
     }
 
     for (const [sceneNum, url] of videoEntries) {
-      await downloadFile(url as string, `scene-${sceneNum}-video.mp4`);
+      await forceDownload(url as string, `scene-${sceneNum}-video.mp4`);
       await new Promise((resolve) => setTimeout(resolve, 500)); // 避免过快下载
     }
   };
