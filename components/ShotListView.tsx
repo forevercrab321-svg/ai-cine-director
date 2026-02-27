@@ -310,7 +310,7 @@ const SceneSection: React.FC<{
                         <ShotCard
                             key={shot.shot_id} shot={shot}
                             shotIndex={index} /* ★ 传序号 */
-                            videoUrl={shotVideos[shot.shot_id]} /* ★ 传视频 */
+                            videoUrl={shotVideos[shot.shot_id] || shot.video_url} /* ★ 优先session，回退DB */
                             isExpanded={expandedShots.has(shot.shot_id)} onToggle={() => toggleShot(shot.shot_id)}
                             onEdit={() => setEditingShot(shot)} onLockToggle={() => { }}
                             images={imagesByShot[shot.shot_id] || []} onImagesChange={(imgs) => onImagesChange(shot.shot_id, imgs)}

@@ -2498,60 +2498,46 @@ app.post('/api/billing/subscribe', async (req: any, res: any) => {
 
 
 // ═══════════════════════════════════════════════════════════════
-// GET /api/download — Server-side proxy download (bypass CORS)
-// 前端无法直接跨域下载 Replicate/Hailuo CDN 文件，通过此接口走服务器中转
+// GET /api/download — Server-side proxy download (bypasses CDN CORS)
 // ═══════════════════════════════════════════════════════════════
 app.get('/api/download', async (req: any, res: any) => {
-    const { url, filename } = req.query as { url?: string; filename?: string };
+    const rawUrl = req.query.url as string | undefined;
+    const rawName = req.query.filename as string | undefined;
 
-    if (!url) {
-        return res.status(400).json({ error: 'Missing url parameter' });
-    }
+    if (!rawUrl) return res.status(400).json({ error: 'Missing url' });
 
-    const safeName = filename || 'download.mp4';
+    const safeName = rawName || 'download.mp4';
+    const ext = safeName.split('.').pop()?.toLowerCase() || '';
+    const mimeMap: Record<string, string> = {
+        mp4: 'video/mp4', webm: 'video/webm',
+        jpg: 'image/jpeg', jpeg: 'image/jpeg',
+        png: 'image/png', gif: 'image/gif', webp: 'image/webp',
+    };
 
     try {
-        const upstream = await fetch(String(url), {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (compatible; AI-Cine-Director/1.0)',
-            },
+        const upstream = await fetch(rawUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AI-Cine-Director/1.0)' },
         });
-
         if (!upstream.ok) {
-            return res.status(upstream.status).json({ error: `Upstream error: ${upstream.status}` });
+            return res.status(502).send(`Upstream ${upstream.status}: ${upstream.statusText}`);
         }
 
-        // Determine MIME type from filename or upstream Content-Type
-        const ext = String(safeName).split('.').pop()?.toLowerCase();
-        const mimeMap: Record<string, string> = {
-            mp4: 'video/mp4',
-            webm: 'video/webm',
-            jpg: 'image/jpeg',
-            jpeg: 'image/jpeg',
-            png: 'image/png',
-            gif: 'image/gif',
-            webp: 'image/webp',
-        };
-        const contentType = (ext && mimeMap[ext]) || upstream.headers.get('content-type') || 'application/octet-stream';
+        const contentType = mimeMap[ext] || upstream.headers.get('content-type') || 'application/octet-stream';
 
-        res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
-        res.setHeader('Content-Type', contentType);
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Cache-Control', 'no-cache');
-
-        // node-fetch v3: use arrayBuffer() then Buffer.from() — .buffer() was removed in v3
+        // node-fetch v3: .buffer() removed, use arrayBuffer() + Buffer.from()
         const arrayBuf = await upstream.arrayBuffer();
         const buffer = Buffer.from(arrayBuf);
-        res.writeHead(200, {
-            'Content-Type': contentType,
-            'Content-Disposition': `attachment; filename="${safeName}"`,
-            'Access-Control-Allow-Origin': '*',
-            'Cache-Control': 'no-cache',
-            'Content-Length': buffer.length,
-        });
-        return res.end(buffer);
+
+        // Use Express chain — single, clean response commit (no writeHead conflict)
+        return res
+            .status(200)
+            .set('Content-Type', contentType)
+            .set('Content-Disposition', `attachment; filename="${safeName}"`)
+            .set('Content-Length', String(buffer.length))
+            .set('Cache-Control', 'no-cache')
+            .end(buffer);
     } catch (err: any) {
-        console.error('[Download Proxy] Error:', err.message);
+        console.error('[Download Proxy]', err.message);
         return res.status(500).json({ error: err.message || 'Download proxy failed' });
     }
 });
