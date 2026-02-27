@@ -55,7 +55,7 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
     const imageCost = getImageCost(settings.imageModel);
     const videoCost = MODEL_COSTS[settings.videoModel] || 28;
 
-    // Download image helper
+    // Download image helper (blob fetch - works cross-origin)
     const handleDownload = async (imageUrl: string, filename: string) => {
         try {
             const response = await fetch(imageUrl);
@@ -67,11 +67,38 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            setTimeout(() => URL.revokeObjectURL(url), 10000);
         } catch (e) {
             console.error('Download failed:', e);
-            // Fallback: open in new tab
             window.open(imageUrl, '_blank');
+        }
+    };
+
+    // Force download video with explicit video/mp4 MIME type (fixes cross-origin UUID filename bug)
+    const forceDownloadVideo = async (fileUrl: string, filename: string) => {
+        try {
+            const res = await fetch(fileUrl, { mode: 'cors' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const buf = await res.arrayBuffer();
+            const blob = new Blob([buf], { type: 'video/mp4' });
+            const objectUrl = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = objectUrl;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+        } catch (e) {
+            console.error('Video download failed, fallback:', e);
+            const a = document.createElement('a');
+            a.href = fileUrl;
+            a.download = filename;
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
         }
     };
 
@@ -335,14 +362,12 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
                 <div className="rounded-xl overflow-hidden border border-violet-500/30 bg-slate-900">
                     <div className="flex items-center justify-between px-3 py-2 bg-violet-600/20 border-b border-violet-500/20">
                         <span className="text-xs font-bold text-violet-300">🎬 生成的视频</span>
-                        <a
-                            href={videoUrl}
-                            download={`shot-${shot.shot_number}-video.mp4`}
-                            className="text-xs text-violet-400 hover:text-violet-300 flex items-center gap-1"
-                            onClick={(e) => e.stopPropagation()}
+                        <button
+                            onClick={(e) => { e.stopPropagation(); forceDownloadVideo(videoUrl, `shot-${shot.shot_number}-video.mp4`); }}
+                            className="text-xs text-violet-400 hover:text-violet-300 flex items-center gap-1 bg-transparent border-0 cursor-pointer"
                         >
                             <DownloadIcon /> 下载视频
-                        </a>
+                        </button>
                     </div>
                     <div
                         className="relative cursor-pointer group"
@@ -384,14 +409,12 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
                             <span>返回</span>
                         </button>
                         <span className="text-white font-medium">镜头 {shot.shot_number} - 视频</span>
-                        <a
-                            href={videoUrl}
-                            download={`shot-${shot.shot_number}-video.mp4`}
-                            onClick={(e) => e.stopPropagation()}
-                            className="flex items-center gap-2 text-white hover:text-violet-300 transition-colors bg-violet-600/30 px-4 py-2 rounded-lg"
+                        <button
+                            onClick={(e) => { e.stopPropagation(); forceDownloadVideo(videoUrl, `shot-${shot.shot_number}-video.mp4`); }}
+                            className="flex items-center gap-2 text-white hover:text-violet-300 transition-colors bg-violet-600/30 px-4 py-2 rounded-lg cursor-pointer border-0"
                         >
                             <DownloadIcon /> 下载
-                        </a>
+                        </button>
                     </div>
 
                     {/* Video player */}
