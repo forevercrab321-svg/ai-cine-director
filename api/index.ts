@@ -2495,6 +2495,57 @@ app.post('/api/billing/subscribe', async (req: any, res: any) => {
 
 
 
+// ═══════════════════════════════════════════════════════════════
+// GET /api/download — Server-side proxy download (bypass CORS)
+// 前端无法直接跨域下载 Replicate/Hailuo CDN 文件，通过此接口走服务器中转
+// ═══════════════════════════════════════════════════════════════
+app.get('/api/download', async (req: any, res: any) => {
+    const { url, filename } = req.query as { url?: string; filename?: string };
+
+    if (!url) {
+        return res.status(400).json({ error: 'Missing url parameter' });
+    }
+
+    const safeName = filename || 'download.mp4';
+
+    try {
+        const upstream = await fetch(String(url), {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (compatible; AI-Cine-Director/1.0)',
+            },
+        });
+
+        if (!upstream.ok) {
+            return res.status(upstream.status).json({ error: `Upstream error: ${upstream.status}` });
+        }
+
+        // Determine MIME type from filename or upstream Content-Type
+        const ext = String(safeName).split('.').pop()?.toLowerCase();
+        const mimeMap: Record<string, string> = {
+            mp4: 'video/mp4',
+            webm: 'video/webm',
+            jpg: 'image/jpeg',
+            jpeg: 'image/jpeg',
+            png: 'image/png',
+            gif: 'image/gif',
+            webp: 'image/webp',
+        };
+        const contentType = (ext && mimeMap[ext]) || upstream.headers.get('content-type') || 'application/octet-stream';
+
+        res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Cache-Control', 'no-cache');
+
+        // Stream the body directly to the response
+        const buffer = await upstream.buffer();
+        return res.send(buffer);
+    } catch (err: any) {
+        console.error('[Download Proxy] Error:', err.message);
+        return res.status(500).json({ error: err.message || 'Download proxy failed' });
+    }
+});
+
 // Health
 app.get('/api/health', (_req, res) => {
     const supabaseUrl = (process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim();

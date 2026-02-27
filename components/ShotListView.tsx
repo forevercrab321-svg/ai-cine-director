@@ -11,9 +11,9 @@ import ShotEditDrawer from './ShotEditDrawer';
 import ShotImageGrid from './ShotImageGrid';
 import BatchImagePanel from './BatchImagePanel';
 import { t } from '../i18n';
-// ★ 1. 新增：引入 Replicate API 接口 和 尾帧截取工具
 import { startVideoTask, generateImage, checkPredictionStatus } from '../services/replicateService';
 import { extractLastFrameFromVideo } from '../utils/video-helpers';
+import { forceDownload } from '../utils/download';
 interface ShotListViewProps {
     project: StoryboardProject;
     referenceImageDataUrl?: string;  // ★ Compressed base64 for Flux Redux consistency
@@ -123,36 +123,7 @@ const ShotCard: React.FC<{
                                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> 动态视频输出
                                 </span>
                                 <button
-                                    onClick={async () => {
-                                        const filename = `shot-${shot.shot_number}.mp4`;
-                                        try {
-                                            // fetch 成 ArrayBuffer → 强制指定 video/mp4 MIME 类型
-                                            // 这样无论 CDN 返回什么 Content-Type，保存的文件都是正确格式
-                                            const res = await fetch(videoUrl, { mode: 'cors' });
-                                            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                                            const buf = await res.arrayBuffer();
-                                            const blob = new Blob([buf], { type: 'video/mp4' });
-                                            const blobUrl = URL.createObjectURL(blob);
-                                            const a = document.createElement('a');
-                                            a.href = blobUrl;
-                                            a.download = filename;
-                                            document.body.appendChild(a);
-                                            a.click();
-                                            document.body.removeChild(a);
-                                            // 延迟释放，防止浏览器还未完成写入就 revoke
-                                            setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
-                                        } catch {
-                                            // CORS 被阻断时：fallback 仍然尝试强制下载而非仅开新标签
-                                            const a = document.createElement('a');
-                                            a.href = videoUrl;
-                                            a.download = filename;
-                                            a.target = '_blank';
-                                            a.rel = 'noopener noreferrer';
-                                            document.body.appendChild(a);
-                                            a.click();
-                                            document.body.removeChild(a);
-                                        }
-                                    }}
+                                    onClick={() => forceDownload(videoUrl, `shot-${shot.shot_number}.mp4`)}
                                     className="px-3 py-1 text-[10px] font-bold bg-emerald-900/40 border border-emerald-500/30 text-emerald-400 rounded-lg hover:bg-emerald-900/70 transition-colors flex items-center gap-1"
                                 >
                                     ⬇️ 下载 .mp4

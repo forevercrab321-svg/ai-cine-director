@@ -10,6 +10,7 @@ import { startVideoTask, checkPredictionStatus } from '../services/replicateServ
 import { useAppContext } from '../context/AppContext';
 import { LoaderIcon } from './IconComponents';
 import ShotImageEditor from './ShotImageEditor';
+import { forceDownload } from '../utils/download';
 
 // Icons
 const DownloadIcon = () => (
@@ -55,52 +56,8 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
     const imageCost = getImageCost(settings.imageModel);
     const videoCost = MODEL_COSTS[settings.videoModel] || 28;
 
-    // Download image helper (blob fetch - works cross-origin)
-    const handleDownload = async (imageUrl: string, filename: string) => {
-        try {
-            const response = await fetch(imageUrl);
-            const blob = await response.blob();
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            setTimeout(() => URL.revokeObjectURL(url), 10000);
-        } catch (e) {
-            console.error('Download failed:', e);
-            window.open(imageUrl, '_blank');
-        }
-    };
-
-    // Force download video with explicit video/mp4 MIME type (fixes cross-origin UUID filename bug)
-    const forceDownloadVideo = async (fileUrl: string, filename: string) => {
-        try {
-            const res = await fetch(fileUrl, { mode: 'cors' });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const buf = await res.arrayBuffer();
-            const blob = new Blob([buf], { type: 'video/mp4' });
-            const objectUrl = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = objectUrl;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
-        } catch (e) {
-            console.error('Video download failed, fallback:', e);
-            const a = document.createElement('a');
-            a.href = fileUrl;
-            a.download = filename;
-            a.target = '_blank';
-            a.rel = 'noopener noreferrer';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-        }
-    };
+    // Download helper — routes through server-side proxy to bypass CDN CORS
+    const handleDownload = (imageUrl: string, filename: string) => forceDownload(imageUrl, filename);
 
     // Generate video from image
     const handleGenerateVideo = async (img: ShotImage) => {
@@ -363,7 +320,7 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
                     <div className="flex items-center justify-between px-3 py-2 bg-violet-600/20 border-b border-violet-500/20">
                         <span className="text-xs font-bold text-violet-300">🎬 生成的视频</span>
                         <button
-                            onClick={(e) => { e.stopPropagation(); forceDownloadVideo(videoUrl, `shot-${shot.shot_number}-video.mp4`); }}
+                            onClick={(e) => { e.stopPropagation(); forceDownload(videoUrl, `shot-${shot.shot_number}-video.mp4`); }}
                             className="text-xs text-violet-400 hover:text-violet-300 flex items-center gap-1 bg-transparent border-0 cursor-pointer"
                         >
                             <DownloadIcon /> 下载视频
@@ -410,7 +367,7 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
                         </button>
                         <span className="text-white font-medium">镜头 {shot.shot_number} - 视频</span>
                         <button
-                            onClick={(e) => { e.stopPropagation(); forceDownloadVideo(videoUrl, `shot-${shot.shot_number}-video.mp4`); }}
+                            onClick={(e) => { e.stopPropagation(); forceDownload(videoUrl, `shot-${shot.shot_number}-video.mp4`); }}
                             className="flex items-center gap-2 text-white hover:text-violet-300 transition-colors bg-violet-600/30 px-4 py-2 rounded-lg cursor-pointer border-0"
                         >
                             <DownloadIcon /> 下载
