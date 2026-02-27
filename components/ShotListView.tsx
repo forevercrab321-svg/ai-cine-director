@@ -118,9 +118,46 @@ const ShotCard: React.FC<{
                     {/* ★ 视频播放器闭环 */}
                     {videoUrl && (
                         <div className="mt-4 pt-4 border-t border-slate-800/50">
-                            <span className="text-emerald-500 uppercase tracking-wider text-[10px] font-bold mb-2 flex items-center gap-2">
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> 动态视频输出
-                            </span>
+                            <div className="flex items-center justify-between mb-2">
+                                <span className="text-emerald-500 uppercase tracking-wider text-[10px] font-bold flex items-center gap-2">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> 动态视频输出
+                                </span>
+                                <button
+                                    onClick={async () => {
+                                        const filename = `shot-${shot.shot_number}.mp4`;
+                                        try {
+                                            // fetch 成 ArrayBuffer → 强制指定 video/mp4 MIME 类型
+                                            // 这样无论 CDN 返回什么 Content-Type，保存的文件都是正确格式
+                                            const res = await fetch(videoUrl, { mode: 'cors' });
+                                            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                                            const buf = await res.arrayBuffer();
+                                            const blob = new Blob([buf], { type: 'video/mp4' });
+                                            const blobUrl = URL.createObjectURL(blob);
+                                            const a = document.createElement('a');
+                                            a.href = blobUrl;
+                                            a.download = filename;
+                                            document.body.appendChild(a);
+                                            a.click();
+                                            document.body.removeChild(a);
+                                            // 延迟释放，防止浏览器还未完成写入就 revoke
+                                            setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+                                        } catch {
+                                            // CORS 被阻断时：fallback 仍然尝试强制下载而非仅开新标签
+                                            const a = document.createElement('a');
+                                            a.href = videoUrl;
+                                            a.download = filename;
+                                            a.target = '_blank';
+                                            a.rel = 'noopener noreferrer';
+                                            document.body.appendChild(a);
+                                            a.click();
+                                            document.body.removeChild(a);
+                                        }
+                                    }}
+                                    className="px-3 py-1 text-[10px] font-bold bg-emerald-900/40 border border-emerald-500/30 text-emerald-400 rounded-lg hover:bg-emerald-900/70 transition-colors flex items-center gap-1"
+                                >
+                                    ⬇️ 下载 .mp4
+                                </button>
+                            </div>
                             <video src={videoUrl} controls autoPlay loop playsInline className="w-full aspect-video object-cover rounded-lg border border-slate-700 shadow-xl" />
                         </div>
                     )}
@@ -135,26 +172,41 @@ const SceneSection: React.FC<{
     scene: Scene; sceneIndex: number; shots: Shot[]; isGenerating: boolean; onGenerateShots: () => void;
     onUpdateShot: (shotId: string, updates: Partial<Shot>) => void; onRewriteShot: (shot: Shot, fields: string[], instruction: string) => void;
     project: StoryboardProject; imagesByShot: Record<string, ShotImage[]>; onImagesChange: (shotId: string, images: ShotImage[]) => void; effectiveProjectId: string;
-    referenceImageDataUrl?: string; // ★ 1. 增加这一行，允许接收照片
-}> = ({ scene, sceneIndex, shots, isGenerating, onGenerateShots, onUpdateShot, onRewriteShot, project, imagesByShot, onImagesChange, effectiveProjectId, referenceImageDataUrl }) => {
+    referenceImageDataUrl?: string;
+    onUpdateScene: (updates: Partial<Scene>) => void; // ★ 新增：场次数据更新回调
+}> = ({ scene, sceneIndex, shots, isGenerating, onGenerateShots, onUpdateShot, onRewriteShot, project, imagesByShot, onImagesChange, effectiveProjectId, referenceImageDataUrl, onUpdateScene }) => {
     const [expandedShots, setExpandedShots] = useState<Set<string>>(new Set());
     const [editingShot, setEditingShot] = useState<Shot | null>(null);
+
+    // ★ 场基准锚点状态
+    const fileInputRef = React.useRef<HTMLInputElement>(null);
+    const [isUploadingAnchor, setIsUploadingAnchor] = useState(false);
+
+    const handleUploadSceneAnchor = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        setIsUploadingAnchor(true);
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            const dataUrl = ev.target?.result as string;
+            // ★ 通过正规回调更新层State，不再直接内存变调
+            onUpdateScene({ scene_reference_image_base64: dataUrl });
+            setChainLog('✅ 场次人物定妆图已锁定！');
+            setTimeout(() => setChainLog(''), 3000);
+            setIsUploadingAnchor(false);
+        };
+        reader.readAsDataURL(file);
+    };
 
     // ★ 锁链引擎状态
     const [isChainRunning, setIsChainRunning] = useState(false);
     const [chainLog, setChainLog] = useState('');
     const [shotVideos, setShotVideos] = useState<Record<string, string>>({});
 
-    // ★ 核心多米诺骨牌引擎
+    // ★ 核心多米诺骨牌引擎（场次级：硬切+软接）
     const handleRunDominoChain = async () => {
         if (!project.character_anchor) return alert("请先设定角色一致性锚点！");
         if (shots.length === 0) return alert("当前场景没有分镜。");
-
-        // 检查第一镜是否有图
-        const firstShotImages = imagesByShot[shots[0].shot_id];
-        if (!firstShotImages || firstShotImages.length === 0 || !firstShotImages[0].url) {
-            return alert("🚨 链条源头缺失！请先给第一镜（Shot 1）生成一张原画！");
-        }
 
         setIsChainRunning(true);
         let tailFrameBase64: string | null = null;
@@ -165,9 +217,28 @@ const SceneSection: React.FC<{
                 let currentStartImage = "";
 
                 if (i === 0) {
-                    currentStartImage = imagesByShot[shot.shot_id][0].url;
-                    setChainLog(`[第 1 镜] 已读取源头原画...`);
+                    // ★ 硬切：首镜必须重铸人物，拒绝用任何上一帧的污染模糊图
+                    // 最高优先级：当前场次人物定妆图 Base64
+                    const sceneAnchorRef = scene.scene_reference_image_base64 || referenceImageDataUrl;
+                    if (scene.scene_reference_image_base64) {
+                        currentStartImage = scene.scene_reference_image_base64;
+                        setChainLog(`[首镜] ★ 已读取场次专属人物定妆图！`);
+                    } else {
+                        const existingImg = imagesByShot[shot.shot_id]?.[0]?.url;
+                        if (existingImg) {
+                            currentStartImage = existingImg;
+                            setChainLog(`[首镜] 已读取预生成源头原画...`);
+                        } else {
+                            setChainLog(`[首镜] 正在强制生成绝对清晰首帧 (Hard Cut)...`);
+                            currentStartImage = await generateImage(
+                                shot.image_prompt || scene.visual_description,
+                                'flux_schnell', 'none', '16:9', project.character_anchor,
+                                sceneAnchorRef // ★ 场次定妆图优先，回退全局照片
+                            );
+                        }
+                    }
                 } else {
+                    // ★ 软接：同场内连续镜头，坚决吸纳上一镜尾帧
                     if (!tailFrameBase64) throw new Error("严重错误：上一镜尾帧提取失败，链条断裂！");
                     currentStartImage = tailFrameBase64;
                     setChainLog(`[第 ${i + 1} 镜] 已强行锁定上一镜尾帧...`);
@@ -193,6 +264,8 @@ const SceneSection: React.FC<{
 
                 // 立即在界面上显示视频
                 setShotVideos(prev => ({ ...prev, [shot.shot_id]: videoUrl }));
+                // ★ 永久写入数据库，防止刷新丢失
+                onUpdateShot(shot.shot_id, { video_url: videoUrl });
 
                 // 准备接力棒
                 if (i < shots.length - 1) {
@@ -223,6 +296,31 @@ const SceneSection: React.FC<{
                 </div>
 
                 <div className="flex gap-2 items-center">
+                    {/* ★ 场次人物定妆图锁定组件 */}
+                    <div className="flex items-center gap-2 mr-3 border-r border-slate-700 pr-3">
+                        <input type="file" ref={fileInputRef} accept="image/*" onChange={handleUploadSceneAnchor} className="hidden" />
+                        {scene.scene_reference_image_base64 ? (
+                            <div
+                                className="flex items-center gap-2 px-2.5 py-1.5 bg-green-900/30 border border-green-500/30 rounded-lg cursor-pointer hover:bg-green-900/50 transition-colors"
+                                onClick={() => fileInputRef.current?.click()}
+                                title="点击更换场次人物定妆图"
+                            >
+                                <img src={scene.scene_reference_image_base64} alt="Scene Anchor" className="w-5 h-5 object-cover rounded border border-green-500/50" />
+                                <span className="text-green-400 text-[10px] font-bold">✅ 定妆已锁定</span>
+                            </div>
+                        ) : (
+                            <button
+                                onClick={() => fileInputRef.current?.click()}
+                                disabled={isUploadingAnchor}
+                                className="px-2.5 py-1.5 rounded-lg text-[10px] font-bold text-slate-400 bg-slate-800/80 hover:bg-slate-700 border border-slate-700 hover:border-slate-500 transition-all flex items-center gap-1.5"
+                                title="上传此场次的人物定妆照，锁定特征一致性"
+                            >
+                                {isUploadingAnchor ? <LoaderIcon className="w-3 h-3 animate-spin" /> : '📸'}
+                                {isUploadingAnchor ? '处理中...' : '锁定场次人物'}
+                            </button>
+                        )}
+                    </div>
+
                     {/* ★ 新增的发射按钮 */}
                     {chainLog && <span className="text-xs font-mono text-amber-400 mr-2 animate-pulse">{chainLog}</span>}
                     {shots.length > 0 && (
@@ -280,6 +378,13 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
     const [isChainRunning, setIsChainRunning] = useState(false);
     const [chainLog, setChainLog] = useState('');
     const [shotVideos, setShotVideos] = useState<Record<string, string>>({});
+
+    // ★ 场次级颚外数据（scene_reference_image_base64 等）狠态存储
+    const [sceneDataMap, setSceneDataMap] = useState<Record<number, Partial<Scene>>>({});
+
+    const handleUpdateScene = useCallback((sceneNum: number, updates: Partial<Scene>) => {
+        setSceneDataMap(prev => ({ ...prev, [sceneNum]: { ...(prev[sceneNum] || {}), ...updates } }));
+    }, []);
 
     const handleImagesChange = useCallback((shotId: string, images: ShotImage[]) => {
         setImagesByShot(prev => ({ ...prev, [shotId]: images }));
@@ -437,7 +542,9 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
         try {
             // Step 2: 遍历大循环 (All Scenes -> All Shots)
             for (let sIdx = 0; sIdx < project.scenes.length; sIdx++) {
-                const scene = project.scenes[sIdx];
+                const rawScene = project.scenes[sIdx];
+                // ★ 合并场次外挂数据（包含用户上传的定妆图）
+                const scene = { ...rawScene, ...(sceneDataMap[rawScene.scene_number] || {}) };
                 const sceneShots = shotsByScene[scene.scene_number] || [];
 
                 for (let i = 0; i < sceneShots.length; i++) {
@@ -445,24 +552,34 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                     console.log(`\n🎬 [Global Chain] Scene ${scene.scene_number} --- 开始制作第 ${i + 1} 镜 ---`);
                     let currentStartImage: string;
 
-                    // 全剧【唯一奇点】：第一场戏的第一个镜头
-                    if (sIdx === 0 && i === 0) {
-                        const existingImages = imagesByShot[shot.shot_id];
-                        if (existingImages && existingImages.length > 0 && existingImages[0].url) {
-                            currentStartImage = existingImages[0].url;
-                            setChainLog(`全片首镜：已读取首镜原画作为世界奇点源头...`);
+                    // 全剧【唯一奇点】：第一场戏的第一个镜头，或者每个Scene的第一个镜头
+                    if (i === 0) {
+                        // ★ 硬切：每个场景的第一镜必须重铸人物，拒绝继承前一场的尾帧！
+                        // 最高优先级：当前场次专属定妆图 Base64 → 全局角色照片
+                        const sceneAnchorRef = scene.scene_reference_image_base64 || referenceImageDataUrl;
+                        if (scene.scene_reference_image_base64) {
+                            // 用户专门上传了定妆图，直接作为本场奇点
+                            currentStartImage = scene.scene_reference_image_base64;
+                            setChainLog(`场 ${scene.scene_number} 首镜：★ 已读取场次专属定妆图！`);
                         } else {
-                            setChainLog(`全片首镜：正在为您生成唯一世界源头原画...`);
+                            // 否则，强制生图模型重新生成一张干净的首帧，避免误差累积
+                            setChainLog(`场 ${scene.scene_number} 首镜：正在重新生成绝对清晰的首帧图 (Hard Cut)...`);
                             currentStartImage = await generateImage(
                                 shot.image_prompt || scene.visual_description,
                                 'flux_schnell', 'none', '16:9', project.character_anchor,
-                                referenceImageDataUrl // ★ 致命修复：把大哥的照片传进第 6 个通道！
+                                sceneAnchorRef // ★ 场次定妆图优先，回退全局照片
                             );
+                            // 保存这张生成的首帧留作纪念
+                            const newImageId = crypto.randomUUID();
+                            setImagesByShot(prev => ({
+                                ...prev,
+                                [shot.shot_id]: [{ id: newImageId, shot_id: shot.shot_id, url: currentStartImage, is_primary: true, status: 'succeeded', created_at: new Date().toISOString() }]
+                            }));
                         }
                     } else {
-                        // 包含同一Scene的后续镜头，以及其他所有Scene的第一个镜头 => 必须吸纳全局尾帧
-                        setChainLog(`场 ${scene.scene_number} 镜 ${i + 1}：正在强行拾取上一镜视频尾帧...`);
-                        if (!globalTailFrameBase64) throw new Error("链条断裂：未能获取到上一全局镜头尾帧，请检查是否有超时中断");
+                        // ★ 软接：同一个Scene内部的连续镜头，坚决使用尾帧锁链
+                        setChainLog(`场 ${scene.scene_number} 镜 ${i + 1}：(同一场内) 正在强行拾取上一镜视频尾帧...`);
+                        if (!globalTailFrameBase64) throw new Error("链条断裂：未能获取到上一镜头尾帧，请检查是否有超时中断");
                         currentStartImage = globalTailFrameBase64;
                     }
 
@@ -488,6 +605,9 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
 
                     // 立即将结果上屏给外层状态树
                     setShotVideos(prev => ({ ...prev, [shot.shot_id]: videoUrl }));
+
+                    // ★ 新增：将生成的视频 URL 永久保存到数据库中，防止刷新丢失！
+                    handleUpdateShot(scene.scene_number, shot.shot_id, { video_url: videoUrl });
 
                     // 为下一次循环准备血脉！(哪怕是下一个scene，它也会在下一次被吸纳)
                     const isVeryLastShotInWholeMovie = (sIdx === project.scenes.length - 1) && (i === sceneShots.length - 1);
@@ -621,23 +741,28 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
 
             {/* Scene sections */}
             <div className="space-y-6">
-                {project.scenes.map((scene, idx) => (
-                    <SceneSection
-                        key={scene.scene_number}
-                        scene={scene}
-                        sceneIndex={idx}
-                        shots={shotsByScene[scene.scene_number] || []}
-                        isGenerating={generatingScenes.has(scene.scene_number)}
-                        onGenerateShots={() => handleGenerateShots(scene)}
-                        onUpdateShot={(shotId, updates) => handleUpdateShot(scene.scene_number, shotId, updates)}
-                        onRewriteShot={(shot, fields, instruction) => handleRewriteShot(scene.scene_number, shot, fields, instruction)}
-                        project={project}
-                        imagesByShot={imagesByShot}
-                        onImagesChange={handleImagesChange}
-                        effectiveProjectId={effectiveProjectId}
-                        referenceImageDataUrl={referenceImageDataUrl}
-                    />
-                ))}
+                {project.scenes.map((scene, idx) => {
+                    // ★ 合并场次狠态数据（包含用户上传的定妆图）
+                    const mergedScene = { ...scene, ...(sceneDataMap[scene.scene_number] || {}) };
+                    return (
+                        <SceneSection
+                            key={scene.scene_number}
+                            scene={mergedScene}
+                            sceneIndex={idx}
+                            shots={shotsByScene[scene.scene_number] || []}
+                            isGenerating={generatingScenes.has(scene.scene_number)}
+                            onGenerateShots={() => handleGenerateShots(scene)}
+                            onUpdateShot={(shotId, updates) => handleUpdateShot(scene.scene_number, shotId, updates)}
+                            onRewriteShot={(shot, fields, instruction) => handleRewriteShot(scene.scene_number, shot, fields, instruction)}
+                            project={project}
+                            imagesByShot={imagesByShot}
+                            onImagesChange={handleImagesChange}
+                            effectiveProjectId={effectiveProjectId}
+                            referenceImageDataUrl={referenceImageDataUrl}
+                            onUpdateScene={(updates) => handleUpdateScene(scene.scene_number, updates)}
+                        />
+                    );
+                })}
             </div>
         </div>
     );

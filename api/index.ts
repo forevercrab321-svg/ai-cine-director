@@ -766,6 +766,73 @@ async function preprocessVideoInput(input: Record<string, any>): Promise<Record<
     return result;
 }
 
+// ───────────────────────────────────────────────────────────────
+// POST /api/replicate/generate-image — Dedicated endpoint for pure JS image gen with FaceID route
+// ───────────────────────────────────────────────────────────────
+app.post('/api/replicate/generate-image', requireAuth, async (req: any, res: any) => {
+    try {
+        const { prompt, imageModel, visualStyle, aspectRatio, characterAnchor, referenceImageDataUrl } = req.body;
+        const authHeader = `Bearer ${req.accessToken}`;
+        const userId = req.user?.id;
+        const userEmail = req.user?.email;
+
+        const cost = (IMAGE_MODEL_COSTS as any)[imageModel] ?? IMAGE_MODEL_COSTS['flux_schnell'] ?? 1;
+
+        const entitlement = await checkEntitlement(userId, userEmail, 'generate_image', cost);
+        if (!entitlement.allowed) {
+            const status = entitlement.errorCode === 'NEED_PAYMENT' ? 402 : (entitlement.errorCode === 'INSUFFICIENT_CREDITS' ? 402 : 403);
+            return res.status(status).json({
+                error: entitlement.reason,
+                code: entitlement.errorCode,
+                credits: entitlement.credits,
+            });
+        }
+
+        const skipCreditCheck = entitlement.mode === 'developer';
+        const jobRef = `replicate-img:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+
+        const supabaseUser = createClient(
+            (process.env.VITE_SUPABASE_URL || '').trim(),
+            (process.env.VITE_SUPABASE_ANON_KEY || '').trim(),
+            { global: { headers: { Authorization: authHeader } } }
+        );
+
+        if (!skipCreditCheck) {
+            const { data, error: reserveErr } = await supabaseUser.rpc('reserve_credits', {
+                amount: cost, ref_type: 'replicate-img', ref_id: jobRef
+            });
+            if (reserveErr || !data) return res.status(402).json({ error: 'INSUFFICIENT_CREDITS', code: 'INSUFFICIENT_CREDITS' });
+        } else {
+            logDeveloperAccess(userEmail, `replicate-img:generate:cost=${cost}`);
+        }
+
+        let resultUrl = '';
+        try {
+            const modelToRun = imageModel === 'flux_schnell' ? "black-forest-labs/flux-schnell" : "black-forest-labs/flux-dev";
+            const finalPrompt = characterAnchor ? `${prompt}, ${characterAnchor}` : prompt;
+
+            const result = await callReplicateImage({
+                prompt: finalPrompt,
+                model: modelToRun,
+                aspectRatio: aspectRatio || '16:9',
+                seed: null,
+                referenceImageDataUrl: referenceImageDataUrl
+            });
+            resultUrl = result.url;
+        } catch (genErr: any) {
+            if (!skipCreditCheck) { try { await supabaseUser.rpc('refund_reserve', { amount: cost, ref_type: 'replicate-img', ref_id: jobRef }); } catch (_) { } }
+            throw genErr;
+        }
+
+        if (!skipCreditCheck) { await supabaseUser.rpc('finalize_reserve', { ref_type: 'replicate-img', ref_id: jobRef }); }
+
+        res.json({ url: resultUrl });
+    } catch (err: any) {
+        console.error('[/api/replicate/generate-image Error]', err);
+        res.status(500).json({ error: err.message || 'Server error' });
+    }
+});
+
 // Replicate Predict with Reserve / Finalize / Refund
 app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
     const { version, input: rawInput } = req.body;
@@ -1293,37 +1360,69 @@ const REPLICATE_API_BASE = 'https://api.replicate.com/v1';
 async function callReplicateImage(params: {
     prompt: string; model: string; aspectRatio: string; seed: number | null;
     imagePrompt?: string; // ★ URL or data URL of reference image for Flux Redux — visual consistency anchor
+    referenceImageDataUrl?: string; // ★ Base64 of user photo for Face Cloning
 }): Promise<{ url: string; predictionId: string }> {
     const token = getReplicateToken();
-    const modelPath = params.model;
+    const isFaceCloning = !!params.referenceImageDataUrl;
+
+    // Switch to PuLID face-cloning model if requested
+    const modelPath = isFaceCloning
+        ? "zsxkib/flux-pulid:8baa21e4277a0609355ffc06a382be20eb6022c0ad7f457ff51bcf6a1ad13ec2"
+        : params.model;
+
     const isModelPath = modelPath.includes('/') && !modelPath.match(/^[a-f0-9]{64}$/);
     const targetUrl = isModelPath
         ? `${REPLICATE_API_BASE}/models/${modelPath}/predictions`
         : `${REPLICATE_API_BASE}/predictions`;
 
-    const input: Record<string, any> = {
+    // Calculate dimensions for PuLID based on aspect ratio
+    let width = 896;
+    let height = 1152;
+    if (isFaceCloning) {
+        if (params.aspectRatio === '16:9') { width = 1280; height = 720; }
+        else if (params.aspectRatio === '9:16') { width = 720; height = 1280; }
+        else if (params.aspectRatio === '1:1') { width = 1024; height = 1024; }
+        else if (params.aspectRatio === '3:4') { width = 768; height = 1024; }
+        else if (params.aspectRatio === '4:3') { width = 1024; height = 768; }
+    }
+
+    const input: Record<string, any> = isFaceCloning ? {
+        prompt: params.prompt,
+        main_face_image: params.referenceImageDataUrl, // PuLID uses main_face_image
+        width,
+        height,
+        num_steps: 20,
+        guidance_scale: 4,
+        id_weight: 1.0,
+        true_cfg: 1.0,
+    } : {
         prompt: params.prompt, aspect_ratio: params.aspectRatio, output_format: 'jpg',
         prompt_upsampling: false,  // ★ LOCK: Prevent Flux from rewriting prompts differently per image
         output_quality: 90,        // ★ LOCK: Consistent quality across all shots
     };
-    if (params.seed != null) input.seed = params.seed;
+
+    if (params.seed != null && !isFaceCloning) input.seed = params.seed;
 
     // ★ FLUX REDUX — Image-guided generation for extreme character/style consistency
-    // Only Flux 1.1 Pro and Pro Ultra support the image_prompt parameter.
-    // This conditions every generated image on the reference, preserving face, outfit, palette.
-    if (params.imagePrompt && (modelPath.includes('flux-1.1-pro') || modelPath.includes('flux-pro'))) {
+    if (params.imagePrompt && (modelPath.includes('flux-1.1-pro') || modelPath.includes('flux-pro')) && !isFaceCloning) {
         input.image_prompt = params.imagePrompt;
         console.log(`[Replicate] ★ Redux: image_prompt set (${params.imagePrompt.substring(0, 60)}...)`);
     }
 
-    const body = isModelPath ? { input } : { version: modelPath, input };
+    const body = isModelPath ? { input } : { version: modelPath.split(":")[1] || modelPath, input };
 
-    console.log(`[Replicate] Calling ${targetUrl} with model=${modelPath}`);
+    if (isFaceCloning) {
+        console.log(`\n🚀 [Face-Cloning Engine - Backend] ${modelPath}`);
+    } else {
+        console.log(`[Replicate] Calling ${targetUrl} with model=${modelPath}`);
+    }
+
     const response = await fetch(targetUrl, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Prefer: 'wait' },
         body: JSON.stringify(body),
     });
+
     if (!response.ok) {
         const errText = await response.text();
         if (response.status === 404) {
@@ -1340,6 +1439,7 @@ async function callReplicateImage(params: {
         });
         prediction = await pollRes.json();
     }
+
     if (prediction.status !== 'succeeded') throw new Error(prediction.error || 'Image generation failed');
     const output = prediction.output;
     return { url: Array.isArray(output) ? output[0] : output, predictionId: prediction.id };
@@ -1734,7 +1834,7 @@ app.post('/api/shot-images/:shotId/generate', async (req: any, res: any) => {
     const startTime = Date.now();
     try {
         const { shotId } = req.params;
-        const { prompt, negative_prompt, delta_instruction, model, aspect_ratio, style, seed, character_anchor, reference_policy, project_id, anchor_image_url } = req.body;
+        const { prompt, negative_prompt, delta_instruction, model, aspect_ratio, style, seed, character_anchor, reference_policy, project_id, anchor_image_url, referenceImageDataUrl } = req.body;
 
         const authHeader = req.headers.authorization;
         if (!authHeader) return res.status(401).json({ error: 'Missing Authorization header' });
@@ -1783,7 +1883,14 @@ app.post('/api/shot-images/:shotId/generate', async (req: any, res: any) => {
 
         let result: { url: string; predictionId: string };
         try {
-            result = await callReplicateImage({ prompt: finalPrompt, model: replicatePath, aspectRatio: aspect_ratio || '16:9', seed: seed ?? 142857, imagePrompt: anchor_image_url || undefined });
+            result = await callReplicateImage({
+                prompt: finalPrompt,
+                model: replicatePath,
+                aspectRatio: aspect_ratio || '16:9',
+                seed: seed ?? 142857,
+                imagePrompt: anchor_image_url || undefined,
+                referenceImageDataUrl: referenceImageDataUrl || undefined
+            });
         } catch (genErr: any) {
             if (!skipCreditCheck) { try { await supabaseUser.rpc('refund_reserve', { amount: cost, ref_type: 'shot-image', ref_id: jobRef }); } catch (_) { } }
             throw genErr;

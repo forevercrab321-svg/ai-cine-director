@@ -205,6 +205,9 @@ export interface Scene {
   audio_description: string;
   shot_type: string;
 
+  scene_reference_image_url?: string; // ★ 新增：场次基准锚点图 (URL)
+  scene_reference_image_base64?: string; // ★ 新增：场次人物定妆图 Base64（最高优先级）
+
   image_prompt?: string;
   video_motion_prompt?: string;
   image_url?: string;

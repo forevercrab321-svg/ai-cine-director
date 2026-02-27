@@ -3,7 +3,6 @@
 // ═══════════════════════════════════════════════════════════════
 import { VideoStyle, ImageModel, AspectRatio, GenerationMode, VideoQuality, VideoDuration, VideoFps, VideoResolution, VideoModel, REPLICATE_MODEL_PATHS } from '../types';
 import { supabase } from '../lib/supabaseClient';
-import Replicate from "replicate";
 
 export interface ReplicateResponse {
   id: string;
@@ -14,14 +13,6 @@ export interface ReplicateResponse {
 }
 
 const API_BASE = '/api/replicate';
-
-// Initialize Replicate client for direct face-cloning calls
-const replicate = new Replicate({
-  auth: process.env.NEXT_PUBLIC_REPLICATE_API_TOKEN,
-});
-
-// ★ 1. 核心模型锁定：从 Flux 切换为具备真·人脸复刻能力的高级 SDXL 模型
-const FACE_CLONING_MODEL = "adirik/faceswapper:160100742f5673a5a70c011e406f9d45a33c2a0d9275f101a1c93a0a3824b22c";
 
 // Helper: Get Auth Token
 const getAuthHeaders = async () => {
@@ -72,77 +63,43 @@ export const STYLE_PRESETS: Record<string, string> = {
  */
 export const generateImage = async (
   prompt: string,
-  imageModel: string, // 例如 'flux_schnell'
+  imageModel: string,
   visualStyle: string,
   aspectRatio: string = "16:9",
   characterAnchor: string = "",
-  referenceImageBase64?: string | null // ★ 新增：克隆人脸的专属通道（设为可选，保护老代码）
+  referenceImageBase64?: string | null
 ): Promise<string> => {
-  if (!process.env.NEXT_PUBLIC_REPLICATE_API_TOKEN) {
-    throw new Error("Missing Replicate API Token");
-  }
-
   try {
-    // -------------------------------------------------------------
-    // 【全新分支】：如果传了大哥的照片，启动工业级 FaceID 克隆
-    // -------------------------------------------------------------
-    if (referenceImageBase64) {
-      console.log(`\n🚀 [Face-Cloning Engine] 检测到用户照片，正在克隆人脸...`);
+    const headers = await getAuthHeaders();
 
-      const input = {
-        prompt: prompt,
-        target_image: referenceImageBase64, // 将照片丢给换脸模型
-        swap_image: referenceImageBase64
-      };
-
-      const prediction = await replicate.predictions.create({
-        version: FACE_CLONING_MODEL.split(":")[1],
-        input: input,
-      });
-
-      let poller = prediction;
-      while (poller.status !== "succeeded" && poller.status !== "failed" && poller.status !== "canceled") {
-        await new Promise(r => setTimeout(r, 2000));
-        poller = await replicate.predictions.get(prediction.id);
-      }
-
-      if (poller.status === "succeeded" && poller.output) {
-        const resultUrl = Array.isArray(poller.output) ? poller.output[0] : poller.output;
-        console.log(`✅ [Face-Cloning Succeeded] 人脸复刻成功！`);
-        return resultUrl;
-      } else {
-        console.warn("⚠️ 换脸模型失败，自动降级到常规模型...");
-      }
-    }
-
-    // -------------------------------------------------------------
-    // 【老代码分支】：如果没有传照片（或者老按钮调用），照常走 Flux
-    // -------------------------------------------------------------
-    console.log("🎨 运行常规生图模型:", imageModel);
-
-    // 这里保留你原本调用 Flux 或 SDXL 的逻辑（请确保与你原有的模型调用代码一致）
-    const modelToRun = imageModel === 'flux_schnell' ? "black-forest-labs/flux-schnell" : "black-forest-labs/flux-dev";
-
-    const prediction = await replicate.predictions.create({
-      model: modelToRun as `${string}/${string}`,
-      input: {
-        prompt: `${prompt}, ${characterAnchor}`,
-        aspect_ratio: aspectRatio,
-      }
+    const response = await fetch(`${API_BASE}/generate-image`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        prompt,
+        imageModel,
+        visualStyle,
+        aspectRatio,
+        characterAnchor,
+        referenceImageDataUrl: referenceImageBase64,
+      })
     });
 
-    let poller = prediction;
-    while (poller.status !== "succeeded" && poller.status !== "failed" && poller.status !== "canceled") {
-      await new Promise(r => setTimeout(r, 2000));
-      poller = await replicate.predictions.get(prediction.id);
+    if (response.status === 402) {
+      const data = await response.json();
+      const error: any = new Error("INSUFFICIENT_CREDITS");
+      error.code = "INSUFFICIENT_CREDITS";
+      error.details = data;
+      throw error;
     }
 
-    if (poller.status === "succeeded" && poller.output) {
-      return Array.isArray(poller.output) ? poller.output[0] : poller.output;
-    } else {
-      throw new Error(`Generation failed: ${poller.error}`);
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+      throw new Error(errData.error || `Generate image failed (${response.status})`);
     }
 
+    const data = await response.json();
+    return data.url;
   } catch (error: any) {
     console.error("[replicateService] GenerateImage Error:", error);
     throw error;
