@@ -121,14 +121,14 @@ function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string
   if (version === 'v2') {
     // v2: use Director Prompt Engine
     finalPrompt = buildVideoPrompt({ scene_text: prompt }, (options && typeof options === 'object' ? options : {}) as any);
-    if (process && process.env && process.env.NODE_ENV !== 'production') {
+    if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV !== 'production') {
       // 开发环境日志
       console.log(`[PromptEngine] Using v2, prompt:`, finalPrompt.slice(0, 500));
     }
   } else {
     // v1: legacy
     finalPrompt = `${STRICT_CONSISTENCY} ${prompt}`;
-    if (process && process.env && process.env.NODE_ENV !== 'production') {
+    if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV !== 'production') {
       console.log(`[PromptEngine] Using v1, prompt:`, finalPrompt.slice(0, 500));
     }
   }
