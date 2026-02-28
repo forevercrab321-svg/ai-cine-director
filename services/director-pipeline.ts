@@ -149,9 +149,18 @@ export const generateSceneChain = async (
       onProgress({ index: i, stage: "video_starting" });
     }
 
+    // ★ 双重死锁：1)视觉锁(尾帧图片) 2)文字锁(角色锚点注入 prompt)
+    // 不允许只发动作描述！锚点必须焊入每一镜的 prompt，防止大模型角色幻觉
+    const rawVideoPrompt = shot.video_prompt || shot.video_motion_prompt || `Cinematic motion, scene ${i + 1}`;
+    const lockedVideoPrompt = extractedAnchor
+      ? `${rawVideoPrompt}. IDENTITY LOCK: ${extractedAnchor}.`
+      : rawVideoPrompt;
+
+    console.log(`🔒 [Shot ${i + 1}] Locked prompt: ${lockedVideoPrompt.slice(0, 120)}...`);
+
     // 注意：这里所有的视频都统一锁定同一个模型（例如 hailuo_02_fast），保证运动物理引擎一致
     const videoPrediction = await startVideoTask(
-      shot.video_prompt,
+      lockedVideoPrompt,
       currentStartImage,
       "hailuo_02_fast" as VideoModel,
       "none" as VideoStyle,
@@ -160,7 +169,7 @@ export const generateSceneChain = async (
       "6s" as unknown as VideoDuration,
       "24fps" as unknown as VideoFps,
       "720p" as VideoResolution,
-      extractedAnchor,
+      extractedAnchor,   // Still passed here so buildVideoInput can also append it
       "16:9"
     );
 
