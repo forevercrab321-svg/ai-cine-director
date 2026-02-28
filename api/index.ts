@@ -1164,6 +1164,72 @@ const geminiResponseSchema = {
     required: ['project_title', 'visual_style', 'characterAnchor', 'scenes'],
 };
 
+// ═══════════════════════════════════════════════════════════════
+// POST /api/extract-frame — Server-side last-frame extraction
+// Bypasses browser CORS limitations for replicate.delivery URLs
+// ═══════════════════════════════════════════════════════════════
+app.post('/api/extract-frame', requireAuth, async (req: any, res: any) => {
+    try {
+        const { videoUrl } = req.body;
+        if (!videoUrl || typeof videoUrl !== 'string') {
+            return res.status(400).json({ error: 'videoUrl is required' });
+        }
+
+        console.log('[FrameExtract] Downloading video for frame extraction:', videoUrl.substring(0, 80));
+
+        // Try ffmpeg first (available on most Linux/Vercel environments)
+        const { exec } = await import('child_process');
+        const { promisify } = await import('util');
+        const execAsync = promisify(exec);
+        const os = await import('os');
+        const path = await import('path');
+        const fs = await import('fs');
+
+        const tmpDir = os.default.tmpdir();
+        const tmpVideo = path.default.join(tmpDir, `frame_vid_${Date.now()}.mp4`);
+        const tmpFrame = path.default.join(tmpDir, `frame_out_${Date.now()}.jpg`);
+
+        // 1) Download video server-side (no CORS issue)
+        const videoResp = await fetch(videoUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AI-Cine-Director/1.0)' }
+        });
+        if (!videoResp.ok) throw new Error(`Failed to download video: ${videoResp.status}`);
+        const videoBuffer = Buffer.from(await videoResp.arrayBuffer());
+        fs.default.writeFileSync(tmpVideo, videoBuffer);
+
+        // 2) Extract last frame via ffmpeg
+        // -sseof -0.5: seek to 0.5s before end; -vframes 1: one frame; -q:v 2: high JPEG quality
+        try {
+            await execAsync(`ffmpeg -y -sseof -0.5 -i "${tmpVideo}" -vframes 1 -q:v 2 "${tmpFrame}" 2>/dev/null`);
+            const frameBuffer = fs.default.readFileSync(tmpFrame);
+            const base64 = frameBuffer.toString('base64');
+
+            // Cleanup temp files
+            try { fs.default.unlinkSync(tmpVideo); } catch (_) { }
+            try { fs.default.unlinkSync(tmpFrame); } catch (_) { }
+
+            console.log('[FrameExtract] ffmpeg extraction success, frame size:', frameBuffer.length, 'bytes');
+            return res.json({ frame: `data:image/jpeg;base64,${base64}` });
+        } catch (ffmpegErr: any) {
+            // ffmpeg failed — clean up and fall back to returning the video URL itself
+            // (the backend's preprocessVideoInput will convert it to base64, losing frame precision
+            //  but at least the chain won't break)
+            console.error('[FrameExtract] ffmpeg failed:', ffmpegErr.message);
+            try { fs.default.unlinkSync(tmpVideo); } catch (_) { }
+            try { fs.default.unlinkSync(tmpFrame); } catch (_) { }
+
+            // Fallback: return the raw URL — backend preprocessVideoInput will handle the base64 conversion
+            console.warn('[FrameExtract] Falling back to raw video URL for backend processing');
+            return res.json({ frame: videoUrl, fallback: true });
+        }
+    } catch (err: any) {
+        console.error('[FrameExtract] Error:', err.message);
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+
+
 app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
     const jobRef = `gemini:${Date.now()}:${Math.random().toString(36).slice(2)}`;
     try {

@@ -3,7 +3,7 @@ import {
   startVideoTask,
   checkPredictionStatus,
 } from "./replicateService";
-import { extractLastFrameFromVideo } from "../utils/video-helpers";
+import { supabase } from '../lib/supabaseClient';
 import type {
   VideoModel,
   VideoStyle,
@@ -13,6 +13,47 @@ import type {
   VideoFps,
   VideoResolution,
 } from "../types";
+
+/**
+ * ★ SERVER-SIDE FRAME EXTRACTION — Replaces browser canvas approach
+ * The browser canvas method fails with CORS SecurityError on replicate.delivery URLs.
+ * This calls the backend API which downloads the video server-side (no CORS) and
+ * runs ffmpeg to extract the last frame as Base64 JPEG.
+ */
+async function extractLastFrameServerSide(videoUrl: string): Promise<string> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) throw new Error("Not authenticated");
+
+  console.log(`📸 [FrameExtract] Calling server-side frame extractor...`);
+
+  const response = await fetch('/api/extract-frame', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${session.access_token}`
+    },
+    body: JSON.stringify({ videoUrl })
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Frame extraction failed (${response.status}): ${errText}`);
+  }
+
+  const data = await response.json();
+  if (!data.frame) {
+    throw new Error('Frame extraction returned no frame data');
+  }
+
+  if (data.fallback) {
+    console.warn(`⚠️ [FrameExtract] ffmpeg unavailable, using raw URL fallback — backend will convert to Base64`);
+  } else {
+    console.log(`✅ [FrameExtract] Server-side frame extraction success`);
+  }
+
+  return data.frame;
+}
+
 
 export interface StoryboardShot {
   image_prompt: string;
@@ -138,9 +179,17 @@ export const generateSceneChain = async (
 
     // 【强制写死】：只要当前不是最后一个镜头，死等截帧完成！
     if (i < storyboard.length - 1) {
-      console.log(`📸 正在强行提取当前视频最后一帧，为下一镜做准备...`);
-      previousVideoLastFrame = await extractLastFrameFromVideo(generatedVideoUrl);
-      console.log(`✅ 尾帧提取成功，Base64 已就绪。`);
+      console.log(`📸 [Shot ${i + 1}] 正在调用服务端截帧（绕过 CORS）...`);
+      try {
+        previousVideoLastFrame = await extractLastFrameServerSide(generatedVideoUrl);
+        const frameType = previousVideoLastFrame.startsWith('data:') ? 'Base64' : 'URL';
+        console.log(`✅ [Shot ${i + 1}] 尾帧截取成功 (${frameType})，Base64 长度: ${previousVideoLastFrame.length}`);
+        console.log(`[Chain Check] Shot ${i + 2} will use tail frame: ${frameType}, size=${previousVideoLastFrame.length}, hasData=${previousVideoLastFrame.length > 100}`);
+      } catch (frameErr: any) {
+        console.error(`❌ [Shot ${i + 1}] 尾帧截取失败！错误: ${frameErr.message}`);
+        console.error(`❌ 锁链将在第 ${i + 2} 镜断裂 — 中止执行。`);
+        throw frameErr; // Propagate up — do NOT let chain continue silently
+      }
     }
   }
 
