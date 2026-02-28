@@ -322,6 +322,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
     deductCredits(baseCost);
 
     try {
+      const promptEngineVersion = ((typeof process !== 'undefined' && process.env && process.env.PROMPT_ENGINE_VERSION) || 'v1') as 'v1' | 'v2';
       const res = await startVideoTask(
         scene.shot_type || "cinematic motion",
         imgUrl,
@@ -333,7 +334,12 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
         settings.videoFps,
         settings.videoResolution,
         project.character_anchor,
-        settings.aspectRatio, // ★ Fix: Pass aspectRatio for Hailuo model
+        settings.aspectRatio,
+        // 传递 options 给新版 prompt engine
+        {
+          stylePreset: settings.videoStyle,
+        },
+        promptEngineVersion
       );
 
       setActiveVideoJobs((prev) => ({

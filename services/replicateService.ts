@@ -2,6 +2,7 @@
 // replicateService.ts — Enhanced with Real Face-Cloning (InstantID/Face-Adapter)
 // ═══════════════════════════════════════════════════════════════
 import { VideoStyle, ImageModel, AspectRatio, GenerationMode, VideoQuality, VideoDuration, VideoFps, VideoResolution, VideoModel, REPLICATE_MODEL_PATHS } from '../types';
+import { buildVideoPrompt } from '../lib/promptEngine/promptEngine';
 import { supabase } from '../lib/supabaseClient';
 
 export interface ReplicateResponse {
@@ -109,35 +110,46 @@ export const generateImage = async (
 interface VideoOptions {
   duration?: number;  // 4, 6, 8 秒
   aspectRatio?: string;  // "16:9" | "9:16"
+  [key: string]: any;
 }
 
-function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string, options: VideoOptions = {}): Record<string, any> {
+function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string, options: VideoOptions = {}, promptEngineVersion?: 'v1' | 'v2'): Record<string, any> {
   const STRICT_CONSISTENCY = "Strict visual consistency with the input image. Do NOT change the character's face, hair, skin tone, costume, or art style. The character must remain IDENTICAL across all frames. Maintain exact same proportions and appearance. Smooth natural motion only.";
-  const strictPrompt = `${STRICT_CONSISTENCY} ${prompt}`;
+  let finalPrompt = prompt;
+  // PROMPT ENGINE VERSION SWITCH
+  const version = promptEngineVersion || (typeof process !== 'undefined' && process.env && process.env.PROMPT_ENGINE_VERSION) || 'v1';
+  if (version === 'v2') {
+    // v2: use Director Prompt Engine
+    finalPrompt = buildVideoPrompt({ scene_text: prompt }, (options && typeof options === 'object' ? options : {}) as any);
+    if (process && process.env && process.env.NODE_ENV !== 'production') {
+      // 开发环境日志
+      console.log(`[PromptEngine] Using v2, prompt:`, finalPrompt.slice(0, 500));
+    }
+  } else {
+    // v1: legacy
+    finalPrompt = `${STRICT_CONSISTENCY} ${prompt}`;
+    if (process && process.env && process.env.NODE_ENV !== 'production') {
+      console.log(`[PromptEngine] Using v1, prompt:`, finalPrompt.slice(0, 500));
+    }
+  }
   const duration = options.duration || 6;
   const aspectRatio = options.aspectRatio || '16:9';
 
   switch (modelType) {
     case 'wan_2_2_fast':
-      // Wan 2.2: 使用 image 字段
-      return { prompt: strictPrompt, image: imageUrl, prompt_optimizer: true, seed: 142857 };
+      return { prompt: finalPrompt, image: imageUrl, prompt_optimizer: true, seed: 142857 };
     case 'hailuo_02_fast':
-      // Hailuo: resolution 必须是 "512P"，支持 aspect_ratio
-      return { prompt: strictPrompt, first_frame_image: imageUrl, duration, resolution: "512P", aspect_ratio: aspectRatio, prompt_optimizer: true, seed: 142857 };
+      return { prompt: finalPrompt, first_frame_image: imageUrl, duration, resolution: "512P", aspect_ratio: aspectRatio, prompt_optimizer: true, seed: 142857 };
     case 'seedance_lite':
-      // Seedance: resolution 是 "720p"（小写）
-      return { prompt: strictPrompt, image: imageUrl, duration, resolution: "720p", seed: 142857 };
+      return { prompt: finalPrompt, image: imageUrl, duration, resolution: "720p", seed: 142857 };
     case 'kling_2_5':
-      // Kling 2.5: 支持 duration 和 cfg_scale
-      return { prompt: strictPrompt, image: imageUrl, duration, cfg_scale: 0.8, seed: 142857 };
+      return { prompt: finalPrompt, image: imageUrl, duration, cfg_scale: 0.8, seed: 142857 };
     case 'hailuo_live':
-      // Hailuo Live: 用于 Live2D 风格动画
-      return { prompt: strictPrompt, first_frame_image: imageUrl, prompt_optimizer: true, seed: 142857 };
+      return { prompt: finalPrompt, first_frame_image: imageUrl, prompt_optimizer: true, seed: 142857 };
     case 'google_gemini_nano_banana':
-      // 实验性模型
-      return { prompt: strictPrompt, first_frame_image: imageUrl, prompt_optimizer: true, seed: 142857 };
+      return { prompt: finalPrompt, first_frame_image: imageUrl, prompt_optimizer: true, seed: 142857 };
     default:
-      return { prompt: strictPrompt, first_frame_image: imageUrl, prompt_optimizer: true, seed: 142857 };
+      return { prompt: finalPrompt, first_frame_image: imageUrl, prompt_optimizer: true, seed: 142857 };
   }
 }
 
@@ -152,22 +164,22 @@ export const startVideoTask = async (
   fps: VideoFps,
   resolution: VideoResolution,
   characterAnchor?: string,
-  aspectRatio?: string
+  aspectRatio?: string,
+  promptOptions?: any,
+  promptEngineVersion?: 'v1' | 'v2'
 ): Promise<ReplicateResponse> => {
   const finalPrompt = characterAnchor ? `${characterAnchor}, ${prompt}` : prompt;
 
-  // Logical Change: If modelType contains '/', treat it as a direct Replicate ID.
-  // Otherwise, look it up in the map.
   let modelIdentifier = modelType.includes('/')
     ? modelType
     : (REPLICATE_MODEL_MAP[modelType] || REPLICATE_MODEL_MAP['hailuo_02_fast']);
 
   const headers = await getAuthHeaders();
 
-  // 使用传入的 duration 和 aspectRatio 参数
   const videoOptions: VideoOptions = {
     duration: duration,
     aspectRatio: aspectRatio || '16:9',
+    ...(promptOptions || {})
   };
 
   const response = await fetch(`${API_BASE}/predict`, {
@@ -175,7 +187,7 @@ export const startVideoTask = async (
     headers,
     body: JSON.stringify({
       version: modelIdentifier,
-      input: buildVideoInput(modelType, finalPrompt, startImageUrl, videoOptions)
+      input: buildVideoInput(modelType, finalPrompt, startImageUrl, videoOptions, promptEngineVersion)
     })
   });
 

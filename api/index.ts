@@ -810,7 +810,7 @@ app.post('/api/replicate/generate-image', requireAuth, async (req: any, res: any
 
         let resultUrl = '';
         try {
-            const modelToRun = imageModel === 'flux_schnell' ? "black-forest-labs/flux-schnell" : "black-forest-labs/flux-dev";
+            const modelToRun = (REPLICATE_MODEL_PATHS as any)[imageModel] || REPLICATE_MODEL_PATHS['flux'];
             const finalPrompt = characterAnchor ? `${prompt}, ${characterAnchor}` : prompt;
 
             const result = await callReplicateImage({
@@ -837,7 +837,13 @@ app.post('/api/replicate/generate-image', requireAuth, async (req: any, res: any
 
 // Replicate Predict with Reserve / Finalize / Refund
 app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
-    const { version, input: rawInput } = req.body;
+    let { version, input: rawInput } = req.body;
+
+    // Map short format like 'hailuo_02_fast' to actual replicate model path
+    if (version && (REPLICATE_MODEL_PATHS as any)[version]) {
+        version = (REPLICATE_MODEL_PATHS as any)[version];
+    }
+
     const authHeader = `Bearer ${req.accessToken}`;
     const userId = req.user?.id;
     const userEmail = req.user?.email;
@@ -1012,6 +1018,81 @@ app.get('/api/replicate/status/:id', requireAuth, async (req: any, res: any) => 
 
         if (!response.ok) return res.status(response.status).json({ error: await response.text() });
         const prediction = await response.json() as ReplicateResponse;
+
+        // --- AUDIO ENGINE INTEGRATION (BYPASSABLE) ---
+        // Only run if the video prediction succeeded and Audio Engine is enabled
+        if (prediction.status === 'succeeded' && process.env.AUDIO_ENGINE_ENABLED === 'true') {
+            const mode = process.env.AUDIO_ENGINE_MODE || 'off';
+            if (mode !== 'off') {
+                try {
+                    // Lazy load the engine to avoid startup cost if disabled
+                    const { runAudioEnginePipeline } = await import('../src/lib/audioEngine');
+                    const supabaseAdmin = getSupabaseAdmin();
+
+                    // The prediction output for videos is usually a URL string or array of URLs
+                    let originalVideoUrl = '';
+                    if (Array.isArray(prediction.output)) {
+                        originalVideoUrl = prediction.output[0];
+                    } else if (typeof prediction.output === 'string') {
+                        originalVideoUrl = prediction.output;
+                    }
+
+                    if (originalVideoUrl) {
+                        console.log(`[AudioEngine] Intercepted succeeded video ${id}. Running pipeline mode: ${mode}...`);
+
+                        // Create a pending job record
+                        const { data: jobInfo } = await supabaseAdmin.from('audio_jobs').insert({
+                            video_job_id: id,
+                            status: 'processing',
+                            mode: mode
+                        }).select('id').single();
+
+                        const jobId = jobInfo?.id || 'unknown';
+
+                        try {
+                            // Extract prompt if available (Replicate predictions usually have it in input.prompt)
+                            const prompt = (prediction as any).input?.prompt || '';
+
+                            const audioMixedUrl = await runAudioEnginePipeline(
+                                id,
+                                originalVideoUrl,
+                                prompt,
+                                mode
+                            );
+
+                            // Success: Augment the prediction object
+                            (prediction as any).original_video_url = originalVideoUrl;
+                            (prediction as any).audio_url = audioMixedUrl;
+                            prediction.output = audioMixedUrl; // Overwrite default output so frontend plays it naturally!
+
+                            // Update DB job
+                            if (jobId !== 'unknown') {
+                                await supabaseAdmin.from('audio_jobs').update({
+                                    status: 'succeeded',
+                                    outputs_json: { final_url: audioMixedUrl, original_video: originalVideoUrl }
+                                }).eq('id', jobId);
+                            }
+
+                            console.log(`[AudioEngine] Successfully augmented video ${id} with audio: ${audioMixedUrl}`);
+                        } catch (audioError: any) {
+                            console.error(`[AudioEngine] Pipeline failed for ${id}:`, audioError);
+                            // Fallback gracefully: Do not touch prediction output. Just log to DB.
+                            if (jobId !== 'unknown') {
+                                await supabaseAdmin.from('audio_jobs').update({
+                                    status: 'failed',
+                                    error: audioError.message || String(audioError)
+                                }).eq('id', jobId);
+                            }
+                        }
+                    }
+                } catch (moduleError: any) {
+                    console.error('[AudioEngine] Module load or fatal error:', moduleError);
+                    // Silently fail and return original prediction
+                }
+            }
+        }
+        // ------------------------------------------
+
         res.json(prediction);
     } catch (e: any) {
         res.status(500).json({ error: e.message });

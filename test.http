@@ -1,0 +1,25 @@
+### Mock Video Generation Route (/api/replicate/predict)
+POST http://localhost:3000/api/replicate/predict
+Content-Type: application/json
+Authorization: Bearer <YOUR_TOKEN>
+
+{
+  "version": "hailuo_02_fast",
+  "input": {
+    "prompt": "Test video generation prompt",
+    "first_frame_image": "https://example.com/test.jpg"
+  }
+}
+
+###
+
+### Mock Image Generation Route (/api/replicate/generate-image)
+POST http://localhost:3000/api/replicate/generate-image
+Content-Type: application/json
+Authorization: Bearer <YOUR_TOKEN>
+
+{
+  "imageModel": "flux_schnell",
+  "prompt": "Test image generation prompt",
+  "visualStyle": "cinematic"
+}
