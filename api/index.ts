@@ -927,6 +927,29 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
             }
         }
 
+        // ★ 核心修复：强制参数名称对齐，把锁链焊死
+        // 不同视频模型对"首帧图"的参数名不同，必须统一映射，否则模型会忽略图片导致一致性丢失
+        const tailFrameImg = input.image || input.first_frame_image || input.start_frame || input.reference_image;
+        if (tailFrameImg) {
+            if (version.includes('wan-video')) {
+                input.image = tailFrameImg;
+                delete input.first_frame_image;
+                delete input.start_frame;
+                console.log('[I2V Chain] Wan model: aligned tail frame to input.image');
+            } else if (version.includes('kling')) {
+                input.image = tailFrameImg;
+                delete input.first_frame_image;
+                console.log('[I2V Chain] Kling model: aligned tail frame to input.image');
+            } else if (version.includes('hailuo') || version.includes('minimax')) {
+                input.first_frame_image = tailFrameImg;
+                console.log('[I2V Chain] Hailuo/MiniMax model: aligned tail frame to input.first_frame_image');
+            } else if (version.includes('bytedance') || version.includes('seedance')) {
+                input.image = tailFrameImg;
+                delete input.first_frame_image;
+                console.log('[I2V Chain] Seedance model: aligned tail frame to input.image');
+            }
+        }
+
         const isModelPath = version.includes('/') && !version.match(/^[a-f0-9]{64}$/);
         const targetUrl = isModelPath ? `${base}/models/${version}/predictions` : `${base}/predictions`;
 
