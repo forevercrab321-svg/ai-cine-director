@@ -114,7 +114,9 @@ interface VideoOptions {
 }
 
 function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string, options: VideoOptions = {}, promptEngineVersion?: 'v1' | 'v2'): Record<string, any> {
-  const STRICT_CONSISTENCY = "Strict visual consistency with the input image. Do NOT change the character's face, hair, skin tone, costume, or art style. The character must remain IDENTICAL across all frames. Maintain exact same proportions and appearance. Smooth natural motion only.";
+  // ★ 角色一致性：最高优先级指令 — 放在 prompt 最前面，模型优先读取
+  const CONSISTENCY_CORE = "CRITICAL: The generated video MUST maintain 100% visual consistency with the input image. The character's face, hair color, skin tone, body proportions, clothing, and art style must remain IDENTICAL in every single frame. Do NOT alter, morph, or replace any character. Smooth natural motion only.";
+
   let finalPrompt = prompt;
   // PROMPT ENGINE VERSION SWITCH
   const version = promptEngineVersion || (typeof process !== 'undefined' && process.env && process.env.PROMPT_ENGINE_VERSION) || 'v1';
@@ -122,12 +124,11 @@ function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string
     // v2: use Director Prompt Engine
     finalPrompt = buildVideoPrompt({ scene_text: prompt }, (options && typeof options === 'object' ? options : {}) as any);
     if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV !== 'production') {
-      // 开发环境日志
       console.log(`[PromptEngine] Using v2, prompt:`, finalPrompt.slice(0, 500));
     }
   } else {
-    // v1: legacy
-    finalPrompt = `${STRICT_CONSISTENCY} ${prompt}`;
+    // v1: legacy — 把一致性指令焊在 prompt 最前方
+    finalPrompt = `${CONSISTENCY_CORE} ${prompt}`;
     if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV !== 'production') {
       console.log(`[PromptEngine] Using v1, prompt:`, finalPrompt.slice(0, 500));
     }
@@ -135,15 +136,20 @@ function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string
   const duration = options.duration || 6;
   const aspectRatio = options.aspectRatio || '16:9';
 
+  // ★ 每个模型的参数和一致性策略都不同，必须分别处理
   switch (modelType) {
     case 'wan_2_2_fast':
+      // Wan: I2V 原生支持，image 参数是首帧，prompt_optimizer 帮助提高一致性
       return { prompt: finalPrompt, image: imageUrl, prompt_optimizer: true, seed: 142857 };
     case 'hailuo_02_fast':
+      // Hailuo-02: 使用 first_frame_image，prompt_optimizer=true 由模型内部保持一致性
       return { prompt: finalPrompt, first_frame_image: imageUrl, duration, resolution: "512P", aspect_ratio: aspectRatio, prompt_optimizer: true, seed: 142857 };
     case 'seedance_lite':
+      // Seedance: 使用 image 参数做 I2V
       return { prompt: finalPrompt, image: imageUrl, duration, resolution: "720p", seed: 142857 };
     case 'kling_2_5':
-      return { prompt: finalPrompt, image: imageUrl, duration, cfg_scale: 0.8, seed: 142857 };
+      // Kling: 高质量 I2V，cfg_scale 控制与首帧的贴合度 (越低越贴合图片)
+      return { prompt: finalPrompt, image: imageUrl, duration, cfg_scale: 0.5, seed: 142857 };
     case 'hailuo_live':
       return { prompt: finalPrompt, first_frame_image: imageUrl, prompt_optimizer: true, seed: 142857 };
     case 'google_gemini_nano_banana':
@@ -168,7 +174,11 @@ export const startVideoTask = async (
   promptOptions?: any,
   promptEngineVersion?: 'v1' | 'v2'
 ): Promise<ReplicateResponse> => {
-  const finalPrompt = characterAnchor ? `${characterAnchor}, ${prompt}` : prompt;
+  // ★ 角色锚点放在 prompt 末尾作为"加固指令"，buildVideoInput 会在前方插入一致性核心指令
+  // 结构: [CONSISTENCY_CORE] [scene action] [character anchor constraint]
+  const finalPrompt = characterAnchor
+    ? `${prompt}. Character identity lock: ${characterAnchor}`
+    : prompt;
 
   let modelIdentifier = modelType.includes('/')
     ? modelType
