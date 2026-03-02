@@ -594,11 +594,8 @@ const checkEntitlement = async (
         };
     }
 
-    // 2. Get user profile + credits (using service role for admin access)
-    const supabaseAdmin = createClient(
-        (process.env.VITE_SUPABASE_URL || '').trim(),
-        (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim()
-    );
+    // 2. Get user profile + credits (using service role singleton — not recreated on every call)
+    const supabaseAdmin = getSupabaseAdmin();
 
     let { data: profile, error: profileErr } = await supabaseAdmin
         .from('profiles')
@@ -722,11 +719,8 @@ app.get('/api/entitlement', requireAuth, async (req: any, res: any) => {
             });
         }
 
-        // Get profile for regular users
-        const supabaseAdmin = createClient(
-            (process.env.VITE_SUPABASE_URL || '').trim(),
-            (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim()
-        );
+        // Get profile for regular users — use singleton to avoid re-creating on every request
+        const supabaseAdmin = getSupabaseAdmin();
 
         const { data: profile } = await supabaseAdmin
             .from('profiles')
@@ -2912,62 +2906,7 @@ app.post('/api/upload-demo-video', async (req: any, res: any) => {
         res.status(500).json({ error: err.message || 'Upload failed' });
     }
 });
-
-// ───────────────────────────────────────────────────────────────
-// POST /api/billing/business-subscribe — Create Stripe Checkout for Business Plans
-// ───────────────────────────────────────────────────────────────
-app.post('/api/billing/business-subscribe', async (req: any, res: any) => {
-    try {
-        const authHeader = req.headers.authorization;
-        if (!authHeader) return res.status(401).json({ error: 'Missing Authorization header' });
-
-        const supabaseUser = getUserClient(authHeader);
-        const userId = await getUserId(supabaseUser);
-        if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-
-        const { planId } = req.body;
-        const stripe = getStripe();
-
-        // Business Plan Price IDs
-        const BUSINESS_PRICES: Record<string, string> = {
-            'starter': 'price_1SykmHJ3FWUBvlCmfKxj8XwE',
-            'professional': 'price_1SyknBJ3FWUBvlCmo2sKqZf',
-            'enterprise': 'price_1SykodJ3FWUBvlCmxKjQwerty',
-            'unlimited': 'price_1SykpfJ3FWUBvlCnuLkjHmnbv'
-        };
-
-        const priceId = BUSINESS_PRICES[planId];
-        if (!priceId) {
-            return res.status(400).json({ error: 'Invalid business plan. Please contact sales.' });
-        }
-
-        const session = await stripe.checkout.sessions.create({
-            payment_method_types: ['card'],
-            line_items: [{ price: priceId, quantity: 1 }],
-            mode: 'subscription',
-            success_url: `${req.headers.origin || 'https://aidirector.business'}/?subscription=success`,
-            cancel_url: `${req.headers.origin || 'https://aidirector.business'}/?subscription=cancelled`,
-            client_reference_id: userId,
-            metadata: {
-                user_id: userId,
-                plan: planId,
-                type: 'business'
-            },
-            subscription_data: {
-                metadata: {
-                    user_id: userId,
-                    plan: planId,
-                    type: 'business'
-                }
-            }
-        });
-
-        res.json({ url: session.url });
-    } catch (err: any) {
-        console.error('[Business Subscribe Error]', err);
-        res.status(500).json({ error: err.message || 'Failed to create subscription' });
-    }
-});
+// (duplicate /api/billing/business-subscribe removed — see the canonical registration above at line ~2724)
 
 // ───────────────────────────────────────────────────────────────
 // POST /api/billing/api-subscribe — Create Stripe Checkout for API Plans
@@ -3044,7 +2983,7 @@ const ELEVENLABS_VOICES: Record<string, string> = {
 };
 
 // POST /api/audio/elevenlabs - Generate voice using ElevenLabs
-app.post('/api/audio/elevenlabs', async (req: any, res: any) => {
+app.post('/api/audio/elevenlabs', requireAuth, async (req: any, res: any) => {
     try {
         const authHeader = req.headers.authorization;
         if (!authHeader) {
@@ -3171,7 +3110,7 @@ app.get('/api/audio/elevenlabs/voices', async (req: any, res: any) => {
 });
 
 // POST /api/audio/generate-all - Generate voice for all scenes
-app.post('/api/audio/generate-all', async (req: any, res: any) => {
+app.post('/api/audio/generate-all', requireAuth, async (req: any, res: any) => {
     try {
         const authHeader = req.headers.authorization;
         if (!authHeader) {
@@ -3346,7 +3285,7 @@ app.post('/api/audio/init-bucket', async (req: any, res: any) => {
 // ───────────────────────────────────────────────────────────────
 // POST /api/audio/generate-dialogue — Generate dialogue using Eleven Labs
 // ───────────────────────────────────────────────────────────────
-app.post('/api/audio/generate-dialogue', async (req: any, res: any) => {
+app.post('/api/audio/generate-dialogue', requireAuth, async (req: any, res: any) => {
     try {
         const authHeader = req.headers.authorization;
         if (!authHeader) return res.status(401).json({ error: 'Missing Authorization header' });
@@ -3403,12 +3342,14 @@ app.post('/api/audio/generate-dialogue', async (req: any, res: any) => {
 
         // Upload to Supabase Storage
         const supabaseAdmin = getSupabaseAdmin();
-        const audioBuffer = await response.buffer();
+        // ★ Fix: node-fetch v3 removed .buffer(). Use arrayBuffer() + Buffer.from() instead.
+        const audioBuffer = await response.arrayBuffer();
+        const audioNodeBuffer = Buffer.from(audioBuffer);
         const fileName = `dialogue_${Date.now()}.mp3`;
 
         const { data, error } = await supabaseAdmin.storage
             .from('audio')
-            .upload(fileName, audioBuffer, {
+            .upload(fileName, audioNodeBuffer, {
                 contentType: 'audio/mpeg',
                 upsert: true
             });
@@ -3496,7 +3437,7 @@ app.post('/api/audio/generate-music', async (req: any, res: any) => {
 // ───────────────────────────────────────────────────────────────
 // POST /api/audio/mix — Mix audio with video using FFmpeg
 // ───────────────────────────────────────────────────────────────
-app.post('/api/audio/mix', async (req: any, res: any) => {
+app.post('/api/audio/mix', requireAuth, async (req: any, res: any) => {
     try {
         const authHeader = req.headers.authorization;
         if (!authHeader) return res.status(401).json({ error: 'Missing Authorization header' });
