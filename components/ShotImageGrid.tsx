@@ -133,9 +133,12 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
                 style: settings.videoStyle,
                 seed: shot.seed_hint,
                 character_anchor: characterAnchor,
-                reference_policy: shot.reference_policy,
+                reference_policy: shot.reference_policy || (images.length > 0 ? 'previous-frame' : 'anchor'),
                 project_id: projectId,
-                referenceImageDataUrl: referenceImageDataUrl, // ★ 把照片正式递给中间商！
+                // Use previous shot's last frame for continuity, or reference image for first shot
+                referenceImageDataUrl: images.length > 0 
+                    ? (images[images.length - 1]?.url || referenceImageDataUrl) 
+                    : referenceImageDataUrl,
             });
 
             const newImage: ShotImage = {

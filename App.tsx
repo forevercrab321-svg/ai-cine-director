@@ -6,6 +6,7 @@ import { StoryboardProject } from './types';
 import Header from './components/Header';
 import SettingsModal from './components/SettingsModal';
 import PricingModal from './components/PricingModal';
+import LandingPage from './components/LandingPage';
 import VideoGenerator from './components/VideoGenerator';
 import ShotListView from './components/ShotListView';
 import AuthPage from './components/AuthPage';
@@ -145,14 +146,32 @@ const MainLayout: React.FC = () => {
     setWorkflowStage('production');
   };
 
-  // Auth & Profile Guard
-  if (!isAuthenticated || !profile) {
+  // Authentication flow:
+  // 1. No session at all → Show LandingPage (marketing page)
+  // 2. Has session but no profile → Show AuthPage (complete profile)
+  // 3. Has session and profile → Show main app
+  
+  if (!isAuthenticated) {
+    // Completely new user - show marketing landing page
+    return (
+      <LandingPage
+        lang={settings.lang}
+        onGetStarted={() => {
+          // Scroll to login section or show login modal
+          window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+        }}
+      />
+    );
+  }
+  
+  if (!profile) {
+    // Has session but needs to complete profile
     return (
       <AuthPage
         lang={settings.lang}
-        onLogin={login}
+        onLogin={() => {}}
         onCompleteProfile={completeProfile}
-        hasProfile={!!profile}
+        hasProfile={false}
       />
     );
   }
@@ -170,6 +189,7 @@ const MainLayout: React.FC = () => {
         videoDuration={settings.videoDuration} setVideoDuration={d => updateSettings({ videoDuration: d })}
         videoFps={settings.videoFps} setVideoFps={f => updateSettings({ videoFps: f })}
         videoResolution={settings.videoResolution} setVideoResolution={r => updateSettings({ videoResolution: r })}
+        voice={settings.voice} setVoice={v => updateSettings({ voice: v })}
         onEnableGodMode={enableGodMode}
       />
 
@@ -209,28 +229,36 @@ const MainLayout: React.FC = () => {
               value={storyIdea}
               onChange={e => setStoryIdea(e.target.value)}
               className="w-full bg-slate-950 border border-slate-700 rounded-lg p-4 h-32 text-white mb-6 focus:ring-2 focus:ring-indigo-500 outline-none"
-              placeholder={t(settings.lang, 'storyPlaceholder')}
+              placeholder={t(settings.lang, 'storyPlaceholder') || "例如：一只赛博朋克猫在的未来城市送披萨..."}
             />
 
             {/* 场景数量选择 */}
             <div className="mb-6">
               <label className="block text-sm font-semibold text-slate-300 mb-3">📽️ 场景数量 / Number of Scenes</label>
-              <div className="flex flex-wrap gap-2">
-                {[5, 10, 15, 20, 25, 30].map(n => (
-                  <button
-                    key={n}
-                    onClick={() => setSceneCount(n)}
-                    className={`px-4 py-2 rounded-lg text-sm font-bold transition-all border ${
-                      sceneCount === n
-                        ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-500/25'
-                        : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-white'
-                    }`}
-                  >
-                    {n} 场景
-                  </button>
-                ))}
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-slate-400">快速选择：</span>
+                <button
+                  onClick={() => setSceneCount(10)}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all border ${
+                    sceneCount === 10
+                      ? 'bg-indigo-600 border-indigo-500 text-white'
+                      : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500'
+                  }`}
+                >
+                  10 场景
+                </button>
+                <button
+                  onClick={() => setSceneCount(20)}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all border ${
+                    sceneCount === 20
+                      ? 'bg-indigo-600 border-indigo-500 text-white'
+                      : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500'
+                  }`}
+                >
+                  20 场景
+                </button>
+                <span className="text-xs text-slate-500">(可选)</span>
               </div>
-              <p className="text-xs text-slate-500 mt-2">电影短片建议 10-15 场景，短剧建议 20-30 场景</p>
             </div>
 
             {/* 参考图片上传 */}
@@ -293,12 +321,36 @@ const MainLayout: React.FC = () => {
                       onChange={(e) => handleScriptUpdate(i, 'shot_type', e.target.value)}
                       className="w-full bg-slate-950 border border-slate-800 rounded p-3 text-sm focus:border-indigo-500 outline-none mb-4"
                     />
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Audio</label>
-                    <input
-                      value={scene.audio_description}
-                      onChange={(e) => handleScriptUpdate(i, 'audio_description', e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded p-3 text-sm focus:border-indigo-500 outline-none"
-                    />
+                    <div className="space-y-2">
+                      <label className="block text-xs font-bold text-slate-500 uppercase mb-2">🎵 Audio</label>
+                      <input
+                        value={scene.audio_description}
+                        onChange={(e) => handleScriptUpdate(i, 'audio_description', e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded p-3 text-sm focus:border-indigo-500 outline-none"
+                        placeholder="背景音乐/环境音效描述"
+                      />
+                      {/* 智能对话系统 */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          value={scene.dialogue_speaker || ''}
+                          onChange={(e) => handleScriptUpdate(i, 'dialogue_speaker', e.target.value)}
+                          className="bg-slate-900 border border-slate-800 rounded p-2 text-xs focus:border-indigo-500 outline-none"
+                          placeholder="说话者"
+                        />
+                        <input
+                          value={scene.dialogue_text || ''}
+                          onChange={(e) => handleScriptUpdate(i, 'dialogue_text', e.target.value)}
+                          className="bg-slate-900 border border-slate-800 rounded p-2 text-xs focus:border-indigo-500 outline-none"
+                          placeholder="对话文本"
+                        />
+                      </div>
+                      <input
+                        value={scene.voice_characteristics || ''}
+                        onChange={(e) => handleScriptUpdate(i, 'voice_characteristics', e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-800 rounded p-2 text-xs focus:border-indigo-500 outline-none"
+                        placeholder="声音特征 (AI自动匹配)"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>

@@ -138,18 +138,39 @@ function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string
 
   // ★ 每个模型的参数和一致性策略都不同，必须分别处理
   switch (modelType) {
+    // ★ Top 5 性价比模型
     case 'wan_2_2_fast':
-      // Wan: I2V 原生支持，image 参数是首帧，prompt_optimizer 帮助提高一致性
+      // Wan: I2V 原生支持，image 参数是首帧
       return { prompt: finalPrompt, image: imageUrl, prompt_optimizer: true, seed: 142857 };
+    case 'wan_2_2_t2v':
+      // Wan T2V: 文本转视频
+      return { prompt: finalPrompt, prompt_optimizer: true, seed: 142857 };
+    case 'runway_gen4_turbo':
+      // Runway Gen-4 Turbo: 极速生成
+      return { prompt: finalPrompt, image: imageUrl, num_frames: duration * 24, seed: 142857 };
     case 'hailuo_02_fast':
-      // Hailuo-02: 使用 first_frame_image，prompt_optimizer=true 由模型内部保持一致性
+      // Hailuo-02: 使用 first_frame_image
       return { prompt: finalPrompt, first_frame_image: imageUrl, duration, resolution: "512P", aspect_ratio: aspectRatio, prompt_optimizer: true, seed: 142857 };
     case 'seedance_lite':
-      // Seedance: 使用 image 参数做 I2V
+      // Seedance: 支持首帧尾帧链接
       return { prompt: finalPrompt, image: imageUrl, duration, resolution: "720p", seed: 142857 };
+    
+    // 其他模型
     case 'kling_2_5':
-      // Kling: 高质量 I2V，cfg_scale 控制与首帧的贴合度 (越低越贴合图片)
+      // Kling 2.5: 高质量 I2V，cfg_scale 控制与首帧的贴合度
       return { prompt: finalPrompt, image: imageUrl, duration, cfg_scale: 0.5, seed: 142857 };
+    case 'kling_2_1':
+      // Kling 2.1: 稳定版
+      return { prompt: finalPrompt, image: imageUrl, duration, cfg_scale: 0.5, seed: 142857 };
+    case 'pixverse_v4_5':
+      // Pixverse v4.5: 多风格
+      return { prompt: finalPrompt, image: imageUrl, duration, seed: 142857 };
+    case 'luma_ray2_flash':
+      // Luma Ray2 Flash: 快速精确
+      return { prompt: finalPrompt, image: imageUrl, duration, seed: 142857 };
+    case 'veo_3_fast':
+      // Google Veo 3 Fast: 最高质量 + 原生音频
+      return { prompt: finalPrompt, image: imageUrl, duration, generate_audio: true, seed: 142857 };
     case 'hailuo_live':
       return { prompt: finalPrompt, first_frame_image: imageUrl, prompt_optimizer: true, seed: 142857 };
     case 'google_gemini_nano_banana':

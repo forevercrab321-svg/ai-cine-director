@@ -811,7 +811,13 @@ app.post('/api/replicate/generate-image', requireAuth, async (req: any, res: any
         let resultUrl = '';
         try {
             const modelToRun = (REPLICATE_MODEL_PATHS as any)[imageModel] || REPLICATE_MODEL_PATHS['flux'];
-            const finalPrompt = characterAnchor ? `${prompt}, ${characterAnchor}` : prompt;
+            // CRITICAL: Strengthen character consistency
+            const consistencyInstructions = characterAnchor 
+                ? `IMPORTANT: The character must look EXACTLY like this description: ${characterAnchor}. Same face, same hair, same clothing, same features. DO NOT change the character's appearance.` 
+                : '';
+            const finalPrompt = characterAnchor 
+                ? `${prompt}. ${consistencyInstructions}` 
+                : prompt;
 
             const result = await callReplicateImage({
                 prompt: finalPrompt,
@@ -2727,6 +2733,85 @@ app.get('/api/health', (_req, res) => {
             hasSupabaseServiceRole: !!supabaseService,
         }
     });
+});
+
+// ───────────────────────────────────────────────────────────────
+// POST /api/upload-demo-video — Upload demo video to Supabase Storage
+// ───────────────────────────────────────────────────────────────
+app.post('/api/upload-demo-video', async (req: any, res: any) => {
+    try {
+        const authHeader = req.headers.authorization;
+        if (!authHeader) {
+            return res.status(401).json({ error: 'Unauthorized - Please login first' });
+        }
+
+        // Only allow developer emails to upload demo videos
+        const DEV_EMAILS = ['forevercrab321@gmail.com', 'monsterlee@gmail.com'];
+        const supabaseUser = getUserClient(authHeader);
+        const { data: { user }, error: userError } = await supabaseUser.auth.getUser();
+        
+        if (userError || !user) {
+            return res.status(401).json({ error: 'Invalid user' });
+        }
+
+        const userEmail = user.email?.toLowerCase() || '';
+        const isDeveloper = DEV_EMAILS.some(e => userEmail === e.toLowerCase());
+        
+        if (!isDeveloper) {
+            return res.status(403).json({ error: 'Only developers can upload demo videos' });
+        }
+
+        const { videoBase64, fileName } = req.body;
+        
+        if (!videoBase64) {
+            return res.status(400).json({ error: 'Missing video data' });
+        }
+
+        // Decode base64
+        const buffer = Buffer.from(videoBase64, 'base64');
+        
+        // Get Supabase admin client
+        const supabaseAdmin = getSupabaseAdmin();
+        
+        // Check if 'videos' bucket exists, create if not
+        const { data: buckets } = await supabaseAdmin.storage.listBuckets();
+        let bucketName = 'videos';
+        
+        if (!buckets?.find(b => b.name === 'videos')) {
+            await supabaseAdmin.storage.createBucket('videos', {
+                public: true,
+                fileSizeLimit: '100MB'
+            });
+        }
+
+        // Upload video to Supabase Storage
+        const safeFileName = `demo/demo_${Date.now()}_${fileName || 'video.mp4'}`;
+        const { data, error } = await supabaseAdmin.storage
+            .from('videos')
+            .upload(safeFileName, buffer, {
+                contentType: 'video/mp4',
+                upsert: true
+            });
+
+        if (error) {
+            console.error('[Upload Demo Video] Storage error:', error);
+            return res.status(500).json({ error: error.message });
+        }
+
+        // Get public URL
+        const { data: urlData } = supabaseAdmin.storage
+            .from('videos')
+            .getPublicUrl(safeFileName);
+
+        res.json({ 
+            ok: true, 
+            url: urlData.publicUrl,
+            path: data.path
+        });
+    } catch (err: any) {
+        console.error('[Upload Demo Video] Error:', err);
+        res.status(500).json({ error: err.message || 'Upload failed' });
+    }
 });
 
 export default app;

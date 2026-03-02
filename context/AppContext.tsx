@@ -1,7 +1,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useRef, ReactNode, useCallback } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { UserCreditState, Language, ImageModel, VideoModel, VideoStyle, AspectRatio, VideoQuality, VideoDuration, VideoFps, VideoResolution, MODEL_COSTS } from '../types';
+import { UserCreditState, Language, ImageModel, VideoModel, VideoStyle, AspectRatio, VideoQuality, VideoDuration, VideoFps, VideoResolution, MODEL_COSTS, VoiceSettings } from '../types';
 
 // ═══════════════════════════════════════════════════════════════
 // Entitlement Types (from /api/entitlement)
@@ -35,6 +35,9 @@ interface AppSettings {
   videoFps: VideoFps;
   videoResolution: VideoResolution;
   generationMode: 'storyboard' | 'story';
+
+  // 🎤 Voice Settings
+  voice: VoiceSettings;
 
   // Backend Configuration
   useMockMode: boolean; // Keep for fallback or dev
@@ -96,6 +99,14 @@ const defaultSettings: AppSettings = {
   videoFps: 12,
   videoResolution: '720p',
   generationMode: 'storyboard',
+
+  // 🎤 Voice Settings
+  voice: {
+    enabled: false,
+    voiceId: 'zh_female_1',
+    language: 'zh',
+    speed: 1.0,
+  },
 
   useMockMode: false,
   backendUrl: ''

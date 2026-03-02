@@ -90,6 +90,13 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
     handleAction(async () => {
       setIsLoading(true);
       try {
+        // Developer mode bypasses OTP - login directly
+        if (isDeveloper) {
+          console.log('[AUTH] Developer mode - bypassing OTP, logging in directly');
+          onLogin(true);
+          return;
+        }
+        
         await sendOtpWithFallback();
 
         setStep('otp');

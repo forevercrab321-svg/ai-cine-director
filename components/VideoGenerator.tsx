@@ -17,6 +17,13 @@ import SceneCard from "./SceneCard";
 import { LoaderIcon, PhotoIcon, VideoCameraIcon } from "./IconComponents";
 import { t } from "../i18n";
 import { forceDownload } from "../utils/download";
+import { supabase } from "../lib/supabaseClient";
+
+const FilmIcon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+    <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" />
+  </svg>
+);
 
 const DownloadIcon = () => (
   <svg
@@ -110,6 +117,15 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
 
   // ★ 核心状态锁
   const [isRenderingChain, setIsRenderingChain] = useState(false);
+
+  // ★ 一键成片状态
+  const [videoEditJob, setVideoEditJob] = useState<{
+    jobId: string;
+    status: string;
+    progress: number;
+    outputUrl?: string;
+  } | null>(null);
+  const [isFinalizingVideo, setIsFinalizingVideo] = useState(false);
   const [chainProgress, setChainProgress] = useState({
     completed: 0,
     total: 0,
@@ -252,6 +268,116 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
       await refreshBalance();
     }
   };
+
+  // ★ 一键成片 - 视频拼接合成
+  const handleFinalizeVideo = async () => {
+    if (!isAuthenticated) return alert("请先登录以使用一键成片功能。");
+    
+    // 检查是否有可用的视频
+    const videoEntries = Object.entries(sceneVideoUrls).filter(([_, url]) => url);
+    if (videoEntries.length === 0) {
+      alert("没有可用的视频片段，请先生成视频");
+      return;
+    }
+
+    setIsFinalizingVideo(true);
+    setVideoEditJob(null);
+
+    try {
+      // 准备视频片段数据
+      const segments = videoEntries.map(([sceneNum, url]) => ({
+        scene_number: parseInt(sceneNum),
+        video_url: url,
+      }));
+
+      // 调用视频合成 API
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        alert("请先登录");
+        return;
+      }
+
+      const response = await fetch('/api/video/finalize', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          project_id: project.id,
+          segments: segments,
+          background_music: {
+            url: 'https://assets.mixkit.co/music/preview/mixkit-cinematic-movie-trailer-228.mp3',
+            volume: 0.3,
+            fade_in: 2,
+            fade_out: 2,
+          },
+          transitions: {
+            type: 'crossfade',
+            duration: 0.5,
+          },
+          output_format: {
+            resolution: '1080p',
+            format: 'mp4',
+            fps: 30,
+          },
+        }),
+      });
+
+      const result = await response.json();
+      
+      if (result.success) {
+        setVideoEditJob({
+          jobId: result.job_id,
+          status: 'pending',
+          progress: 0,
+        });
+      } else {
+        alert(result.error || "创建视频合成任务失败");
+      }
+    } catch (e: any) {
+      console.error("[Finalize] Error:", e);
+      alert("视频合成失败: " + e.message);
+    } finally {
+      setIsFinalizingVideo(false);
+    }
+  };
+
+  // ★ 轮询视频编辑任务状态
+  useEffect(() => {
+    if (!videoEditJob || videoEditJob.status === 'completed' || videoEditJob.status === 'failed') {
+      return;
+    }
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) return;
+
+        const response = await fetch(`/api/video/status/${videoEditJob.jobId}`, {
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+        });
+        const status = await response.json();
+
+        setVideoEditJob({
+          jobId: videoEditJob.jobId,
+          status: status.status,
+          progress: status.progress,
+          outputUrl: status.output_url,
+        });
+
+        if (status.status === 'completed' || status.status === 'failed') {
+          clearInterval(pollInterval);
+        }
+      } catch (e) {
+        console.error("[Poll] Error:", e);
+      }
+    }, 3000);
+
+    return () => clearInterval(pollInterval);
+  }, [videoEditJob]);
 
 
 
@@ -399,6 +525,31 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
           </div>
 
           <div className="flex gap-3 w-full md:w-auto flex-wrap">
+            {/* ★ 一键成片按钮 */}
+            {Object.keys(sceneVideoUrls).length > 1 && (
+              <button
+                onClick={isFinalizingVideo ? undefined : handleFinalizeVideo}
+                disabled={isFinalizingVideo || (videoEditJob && videoEditJob.status === 'processing')}
+                className={`flex-1 md:flex-none px-6 py-3 rounded-lg text-white font-bold transition-all shadow-lg flex items-center justify-center gap-2 text-sm
+                  ${isFinalizingVideo || (videoEditJob && videoEditJob.status === 'processing')
+                    ? "bg-purple-900/50 text-purple-300 cursor-not-allowed shadow-none"
+                    : "bg-purple-600 hover:bg-purple-500 shadow-purple-500/20"
+                  }
+                `}
+              >
+                {isFinalizingVideo || (videoEditJob && videoEditJob.status === 'processing') ? (
+                  <LoaderIcon className="w-4 h-4 animate-spin" />
+                ) : (
+                  <FilmIcon />
+                )}
+                {isFinalizingVideo
+                  ? "合成中..."
+                  : videoEditJob?.status === 'processing'
+                    ? `合成中 ${videoEditJob.progress}%`
+                    : "🎬 一键成片"}
+              </button>
+            )}
+
             <button
               onClick={isRenderingChain ? undefined : handleRenderChain}
               disabled={isRenderingChain}
@@ -465,6 +616,63 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
           total={chainProgress.total}
           label="正在执行连续锁链生成 (图片/首尾帧提取/视频)..."
         />
+      )}
+
+      {/* ★ 视频合成进度条 */}
+      {videoEditJob && videoEditJob.status === 'processing' && (
+        <div className="max-w-md mx-auto mb-8 animate-in fade-in slide-in-from-top-4">
+          <div className="flex justify-between text-xs text-purple-400 mb-2 uppercase tracking-widest font-bold">
+            <span>🎬 视频合成中...</span>
+            <span>{videoEditJob.progress}%</span>
+          </div>
+          <div className="h-2 bg-slate-800 rounded-full overflow-hidden border border-purple-500/30">
+            <div
+              className="h-full bg-purple-500 transition-all duration-500 ease-out shadow-[0_0_10px_rgba(168,85,247,0.5)]"
+              style={{ width: `${videoEditJob.progress}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* ★ 视频合成完成 */}
+      {videoEditJob && videoEditJob.status === 'completed' && videoEditJob.outputUrl && (
+        <div className="max-w-md mx-auto mb-8 p-4 bg-green-900/20 border border-green-500/30 rounded-xl animate-in fade-in slide-in-from-top-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center">
+                <span className="text-green-400">✅</span>
+              </div>
+              <div>
+                <p className="text-green-400 font-bold">视频合成完成！</p>
+                <p className="text-green-400/60 text-sm">点击下载最终成片</p>
+              </div>
+            </div>
+            <a
+              href={videoEditJob.outputUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg font-bold text-sm flex items-center gap-2"
+            >
+              <DownloadIcon />
+              下载
+            </a>
+          </div>
+        </div>
+      )}
+
+      {/* ★ 视频合成失败 */}
+      {videoEditJob && videoEditJob.status === 'failed' && (
+        <div className="max-w-md mx-auto mb-8 p-4 bg-red-900/20 border border-red-500/30 rounded-xl animate-in fade-in slide-in-from-top-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center">
+              <span className="text-red-400">❌</span>
+            </div>
+            <div>
+              <p className="text-red-400 font-bold">视频合成失败</p>
+              <p className="text-red-400/60 text-sm">请重试或联系客服</p>
+            </div>
+          </div>
+        </div>
       )}
 
 

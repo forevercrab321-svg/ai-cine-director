@@ -203,6 +203,9 @@ export interface Scene {
   scene_setting?: string; // Unique location/time for this scene (e.g., "A neon-lit alley — midnight")
   visual_description: string;
   audio_description: string;
+  dialogue_text?: string;
+  dialogue_speaker?: string;
+  voice_characteristics?: string;
   shot_type: string;
 
   scene_reference_image_url?: string; // ★ 新增：场次基准锚点图 (URL)
@@ -245,11 +248,17 @@ export type AspectRatio = '1:1' | '3:4' | '4:3' | '9:16' | '16:9';
 export type ImageModel = 'flux' | 'flux_schnell' | 'nano_banana';
 
 export type VideoModel =
-  | 'wan_2_2_fast'
-  | 'seedance_lite'
-  | 'hailuo_02_fast'
+  | 'wan_2_2_fast'           // ★ Alibaba Wan 2.2 - 性价比之王 $0.01-0.02
+  | 'wan_2_2_t2v'           // ★ Alibaba Wan 2.2 文本转视频
+  | 'runway_gen4_turbo'      // ★ Runway Gen-4 Turbo - 极速22秒 $0.25-0.50
+  | 'hailuo_02_fast'        // ★ MiniMax Hailuo-02 - 中国顶尖 $0.10-0.15
+  | 'seedance_lite'         // ★ ByteDance Seedance - 首帧尾帧 $0.09-0.72
+  | 'kling_2_5'             // ★ 快手Kling 2.5 - 电影级 $0.25-0.90
+  | 'kling_2_1'             // ★ 快手Kling 2.1 - 稳定版
+  | 'pixverse_v4_5'          // ★ Pixverse v4.5 - 多风格
+  | 'luma_ray2_flash'       // ★ Luma Ray2 Flash - 快速
+  | 'veo_3_fast'            // ★ Google Veo 3 Fast - 最高质量 $3.20
   | 'hailuo_live'
-  | 'kling_2_5'
   | 'google_gemini_nano_banana';
 
 export type GenerationMode = 'storyboard' | 'story';
@@ -257,7 +266,12 @@ export type GenerationMode = 'storyboard' | 'story';
 export type VideoMethod = 'stable' | 'ai';
 export type MotionIntensity = 'low' | 'medium' | 'high';
 export type VideoQuality = 'draft' | 'standard' | 'pro';
-export type VideoDuration = 4 | 6 | 8;
+/**
+ * ★ 视频时长选择
+ * 支持: 4s, 5s, 6s, 8s, 10s
+ * 根据不同模型支持不同长度
+ */
+export type VideoDuration = 4 | 5 | 6 | 8 | 10;
 export type VideoFps = 12 | 24;
 export type VideoResolution = '720p' | '1080p';
 
@@ -271,6 +285,23 @@ export type VideoStyle =
   | 'cyberpunk'
   | 'ghibli'
   | 'shinkai';
+
+// ═══════════════════════════════════════════════════════════════
+// 🎤 Voice Configuration Types
+// ═══════════════════════════════════════════════════════════════
+
+export type VoiceLanguage = 'zh' | 'en' | 'ja' | 'ko' | 'es' | 'fr' | 'de';
+
+/**
+ * 语音配置
+ */
+export interface VoiceSettings {
+  enabled: boolean;           // 是否启用语音合成
+  voiceId: string;           // 选中的声音ID
+  language: VoiceLanguage;   // 语言
+  speed: number;             // 语速 0.5-2.0
+  referenceAudioUrl?: string; // 参考音频URL（用于克隆）
+}
 
 export interface StylePreset {
   id: VideoStyle;
@@ -331,34 +362,63 @@ export const STYLE_PRESETS: StylePreset[] = [
 ];
 
 /**
- * Credit Pricing — 基于 Replicate API 实际成本 + 40-60% 利润
+ * CREDIT Pricing — 基于 Replicate API 实际成本 + 40-60% 利润
  * 1 credit ≈ $0.01 USD
  * 定价公式: API成本(USD) × 100 × 1.5(50%利润) ≈ credits
- * 最后更新: 2025-07
+ * 最后更新: 2025-08
+ * 
+ * ★ TOP 5 性价比模型推荐:
+ * 1. Wan 2.2 Fast - $0.01/视频 (性价比之王)
+ * 2. Hailuo-02 Fast - $0.10/视频 (中国顶尖)
+ * 3. Runway Gen-4 Turbo - $0.25/视频 (极速22秒)
+ * 4. Seedance Lite - $0.09/视频 (首帧尾帧)
+ * 5. Kling 2.5 - $0.25/视频 (电影级质量)
  */
 export const MODEL_COSTS: Record<VideoModel | 'DEFAULT', number> = {
-  wan_2_2_fast: 8,        // API: ~$0.05/video → 5 × 1.5 ≈ 8    ⚡ 最便宜
-  seedance_lite: 28,      // API: ~$0.18/video → 18 × 1.5 ≈ 28
-  hailuo_02_fast: 18,     // API: ~$0.12/video → 12 × 1.5 = 18
-  hailuo_live: 75,        // API: ~$0.50/video → 50 × 1.5 = 75   🎭 Live2D 专用
-  kling_2_5: 53,          // API: ~$0.35/video → 35 × 1.5 ≈ 53   🏆 最佳物理
+  // ★ Top 5 性价比模型
+  wan_2_2_fast: 8,           // API: ~$0.02/video → 2 × 4 = 8    ⚡ 最便宜
+  wan_2_2_t2v: 10,           // API: ~$0.05/video → 5 × 2 = 10
+  runway_gen4_turbo: 38,      // API: ~$0.25/video → 25 × 1.5 = 38  🎬 极速
+  hailuo_02_fast: 18,        // API: ~$0.10/video → 10 × 1.8 = 18  🇨🇳 中国顶尖
+  seedance_lite: 28,         // API: ~$0.15/video → 15 × 1.8 = 28  🎨 首帧尾帧
+  
+  // 其他模型
+  kling_2_5: 53,             // API: ~$0.35/video → 35 × 1.5 = 53  🏆 最佳物理
+  kling_2_1: 45,             // API: ~$0.30/video → 30 × 1.5 = 45
+  pixverse_v4_5: 35,         // API: ~$0.20/video → 20 × 1.8 = 35
+  luma_ray2_flash: 40,       // API: ~$0.25/video → 25 × 1.6 = 40
+  veo_3_fast: 250,           // API: ~$3.20/video → 320 × 0.8 = 250  👑 最高质量
+  
+  // Legacy
+  hailuo_live: 75,           // API: ~$0.50/video → 50 × 1.5 = 75   🎭 Live2D 专用
   google_gemini_nano_banana: 5, // Budget model
-  DEFAULT: 28
+  DEFAULT: 38
 };
 
 /**
  * Replicate模型路径映射
  * 将VideoModel枚举映射到Replicate API的完整模型路径
  * 用于调用Replicate API时确定正确的endpoint
+ * 
+ * ★ TOP 5 模型路径:
  */
 export const REPLICATE_MODEL_PATHS: Record<VideoModel | ImageModel, string> = {
-  // Video models
+  // ★ Top 5 性价比视频模型
   wan_2_2_fast: "wan-video/wan-2.2-i2v-fast",
+  wan_2_2_t2v: "wan-video/wan-2.2-t2v",
+  runway_gen4_turbo: "runwayml/stable-diffusion-v1-5",
   hailuo_02_fast: "minimax/hailuo-02-fast",
   seedance_lite: "bytedance/seedance-1-lite",
   kling_2_5: "kwaivgi/kling-v2.5-turbo-pro",
+  kling_2_1: "kwaivgi/kling-v2.1-standard",
+  pixverse_v4_5: "pixverse/pixverse-v4.5",
+  luma_ray2_flash: "luma/ray-2-flash",
+  veo_3_fast: "google/veo-3-fast",
+  
+  // Legacy
   hailuo_live: "minimax/video-01-live",
   google_gemini_nano_banana: "google/gemini-nano-banana",
+  
   // Image models
   flux: "black-forest-labs/flux-1.1-pro",
   flux_schnell: "black-forest-labs/flux-schnell",
@@ -398,41 +458,111 @@ export function getCostForReplicatePath(replicatePath: string): number {
   return MODEL_COSTS.DEFAULT;
 }
 
-export const MODEL_METADATA: Record<VideoModel, { label: string; tags: string[]; audio?: boolean; badge?: string; priceLabel: string }> = {
+export const MODEL_METADATA: Record<VideoModel, { label: string; tags: string[]; audio?: boolean; badge?: string; priceLabel: string; resolution: string; duration: string; speed: string }> = {
+  // ★ Top 5 性价比模型
   wan_2_2_fast: {
     label: "Wan 2.2 Fast (Alibaba)",
-    tags: ["⚡ 极速", "💰 最便宜"],
-    badge: "💰 Budget",
-    priceLabel: "8 credits"
+    tags: ["⚡ 极速6秒", "💰 性价比王", "🏷️ 5秒"],
+    badge: "💰 首选",
+    priceLabel: "8 credits",
+    resolution: "480p-720p",
+    duration: "5秒",
+    speed: "⚡⚡⚡⚡⚡ 最快6秒"
+  },
+  wan_2_2_t2v: {
+    label: "Wan 2.2 T2V (Alibaba)",
+    tags: ["📝 文本转视频", "💰 便宜"],
+    priceLabel: "10 credits",
+    resolution: "480p-720p",
+    duration: "5秒",
+    speed: "⚡⚡⚡⚡ 17秒"
+  },
+  runway_gen4_turbo: {
+    label: "Runway Gen-4 Turbo ★",
+    tags: ["⚡ 极速22秒", "🎬 高质量", "🏷️ 5-10秒"],
+    badge: "⭐ 推荐",
+    priceLabel: "38 credits",
+    resolution: "720p",
+    duration: "5-10秒",
+    speed: "⚡⚡⚡⚡⚡ 22秒"
   },
   hailuo_02_fast: {
     label: "Hailuo-02 Fast (MiniMax)",
-    tags: ["⚡ 快速", "🎬 高质量"],
+    tags: ["⚡ 快速", "🎬 高质量", "🇨🇳 中国顶尖", "🏷️ 6-10秒"],
     badge: "⭐ 推荐",
-    priceLabel: "18 credits"
+    priceLabel: "18 credits",
+    resolution: "512p-768p",
+    duration: "6-10秒",
+    speed: "⚡⚡⚡⚡ 41秒"
   },
   seedance_lite: {
     label: "Seedance Lite (ByteDance)",
-    tags: ["🎨 风格多样", "720p"],
-    priceLabel: "28 credits"
+    tags: ["🎨 风格多样", "🔗 首帧尾帧", "🏷️ 5-10秒"],
+    badge: "🔗 连续性",
+    priceLabel: "28 credits",
+    resolution: "480p-1080p",
+    duration: "5-10秒",
+    speed: "⚡⚡⚡⚡ 25秒"
   },
   kling_2_5: {
-    label: "Kling 2.5 Turbo (快影)",
-    tags: ["🏆 最佳物理", "🎬 电影级"],
+    label: "Kling 2.5 Turbo Pro (快手)",
+    tags: ["🏆 最佳物理", "🎬 电影级", "📹 1080p", "🏷️ 5-10秒"],
     badge: "🔥 Pro",
-    priceLabel: "53 credits"
+    priceLabel: "53 credits",
+    resolution: "720p-1080p",
+    duration: "5-10秒",
+    speed: "⚡⚡⚡ 2-4分钟"
+  },
+  kling_2_1: {
+    label: "Kling 2.1 (快手)",
+    tags: ["🏆 稳定版", "🎬 电影级", "📹 1080p"],
+    priceLabel: "45 credits",
+    resolution: "720p-1080p",
+    duration: "5-10秒",
+    speed: "⚡⚡⚡ 2-3分钟"
+  },
+  pixverse_v4_5: {
+    label: "Pixverse v4.5",
+    tags: ["🎨 多风格", "🔗 首帧尾帧"],
+    priceLabel: "35 credits",
+    resolution: "360p-1080p",
+    duration: "5-8秒",
+    speed: "⚡⚡⚡⚡ 17-60秒"
+  },
+  luma_ray2_flash: {
+    label: "Luma Ray2 Flash",
+    tags: ["⚡ 快速", "🎯 精确"],
+    priceLabel: "40 credits",
+    resolution: "540p-720p",
+    duration: "5-9秒",
+    speed: "⚡⚡⚡⚡ 30秒"
+  },
+  veo_3_fast: {
+    label: "Google Veo 3 Fast ★★★",
+    tags: ["👑 最高质量", "🎬 电影级", "🔊 原生音频", "📹 1080p", "🏷️ 8秒"],
+    badge: "👑 旗舰",
+    priceLabel: "250 credits",
+    resolution: "720p-1080p",
+    duration: "8秒",
+    speed: "⚡⚡⚡ 59秒"
   },
   hailuo_live: {
     label: "Hailuo Live (MiniMax)",
     tags: ["🎭 Live2D", "🎨 动画专用"],
     badge: "🎭 Live2D",
-    priceLabel: "75 credits"
+    priceLabel: "75 credits",
+    resolution: "720p",
+    duration: "5秒",
+    speed: "⚡⚡ 3分钟"
   },
   google_gemini_nano_banana: {
     label: "Google Gemini Nano Banana",
     tags: ["🍌 Experimental", "⚡ Fast"],
     badge: "New",
-    priceLabel: "5 credits"
+    priceLabel: "5 credits",
+    resolution: "",
+    duration: "",
+    speed: ""
   }
 };
 
@@ -452,10 +582,21 @@ export const CREDIT_COSTS = {
 
 
 export const MODEL_MULTIPLIERS: Record<VideoModel, number> = {
+  // ★ Top 5 性价比模型
   wan_2_2_fast: 1.0,
+  wan_2_2_t2v: 1.1,
+  runway_gen4_turbo: 1.2,
   hailuo_02_fast: 1.2,
   seedance_lite: 1.3,
+  
+  // 其他模型
   kling_2_5: 1.6,
+  kling_2_1: 1.5,
+  pixverse_v4_5: 1.4,
+  luma_ray2_flash: 1.3,
+  veo_3_fast: 2.0,
+  
+  // Legacy
   hailuo_live: 2.0,
   google_gemini_nano_banana: 1.0
 };
@@ -465,6 +606,195 @@ export const CREDIT_PACKS = [
   { id: 'pack_medium', price: 10, credits: 1200, label: 'Value Pack', popular: true, priceId: 'price_1T4l2pJ3FWUBvlCmS8qBhrW5' },
   { id: 'pack_large', price: 25, credits: 3500, label: 'Pro Pack', priceId: 'price_1T4l2pJ3FWUBvlCmuM0Ki56j' }
 ];
+
+// ═══════════════════════════════════════════════════════════════
+// B2B 企业订阅套餐 (月度)
+// ═══════════════════════════════════════════════════════════════
+export interface BusinessPlan {
+  id: string;
+  name: string;
+  nameZh: string;
+  priceMonthly: number;
+  creditsMonthly: number;
+  pricePerCredit: number;  // 单价
+  features: string[];
+  target: 'starter' | 'pro' | 'business' | 'enterprise';
+  popular?: boolean;
+}
+
+export const BUSINESS_PLANS: BusinessPlan[] = [
+  {
+    id: 'plan_starter',
+    name: 'Studio Starter',
+    nameZh: '小型工作室',
+    priceMonthly: 299,
+    creditsMonthly: 3000,
+    pricePerCredit: 0.10,
+    features: [
+      '3,000 credits/月',
+      '基础视频模型',
+      '标准优先级队列',
+      '邮件支持',
+      '720p 输出',
+      '自动剪辑拼接'
+    ],
+    target: 'starter'
+  },
+  {
+    id: 'plan_pro',
+    name: 'Studio Pro',
+    nameZh: '中型工作室',
+    priceMonthly: 999,
+    creditsMonthly: 15000,
+    pricePerCredit: 0.067,
+    features: [
+      '15,000 credits/月',
+      '全部视频模型',
+      '优先处理队列',
+      '优先客服支持',
+      '1080p 输出',
+      '语音合成',
+      '首帧尾帧链接',
+      '自动剪辑拼接',
+      '团队协作(3人)'
+    ],
+    target: 'pro',
+    popular: true
+  },
+  {
+    id: 'plan_business',
+    name: 'Enterprise',
+    nameZh: '大型企业',
+    priceMonthly: 2999,
+    creditsMonthly: 50000,
+    pricePerCredit: 0.060,
+    features: [
+      '50,000 credits/月',
+      '全部视频模型+Veo3',
+      'VIP 优先队列',
+      '24/7 专属客服',
+      '4K 输出',
+      'API 接入',
+      '自定义品牌水印',
+      '团队协作(10人)',
+      '定制化服务',
+      '专属客户经理'
+    ],
+    target: 'business'
+  },
+  {
+    id: 'plan_enterprise',
+    name: 'Enterprise',
+    nameZh: '集团企业',
+    priceMonthly: 1999,
+    creditsMonthly: 300000,
+    pricePerCredit: 0.007,
+    features: [
+      '300,000 credits/月',
+      '全部模型无限用',
+      '极速专用队列',
+      '专属技术经理',
+      '4K 输出',
+      '完整API接入',
+      '白标定制',
+      '团队协作(无限)',
+      '定制模型训练',
+      '专属服务器'
+    ],
+    target: 'enterprise'
+  }
+];
+
+// ═══════════════════════════════════════════════════════════════
+// B2B API 接入套餐
+// ═══════════════════════════════════════════════════════════════
+export interface APIPlan {
+  id: string;
+  name: string;
+  nameZh: string;
+  priceMonthly: number;
+  apiCallsMonthly: number;
+  overageRate: number;
+  features: string[];
+}
+
+export const API_PLANS: APIPlan[] = [
+  {
+    id: 'api_startup',
+    name: 'API Startup',
+    nameZh: 'API创业版',
+    priceMonthly: 199,
+    apiCallsMonthly: 10000,
+    overageRate: 0.025,
+    features: [
+      '10,000 次API调用/月',
+      'RESTful API',
+      '基础文档',
+      '邮件支持'
+    ]
+  },
+  {
+    id: 'api_business',
+    name: 'API Business',
+    nameZh: 'API商务版',
+    priceMonthly: 499,
+    apiCallsMonthly: 50000,
+    overageRate: 0.015,
+    features: [
+      '50,000 次API调用/月',
+      'Webhooks',
+      '完整文档',
+      '优先技术支持',
+      'SLA 99.5%'
+    ]
+  },
+  {
+    id: 'api_enterprise',
+    name: 'API Enterprise',
+    nameZh: 'API企业版',
+    priceMonthly: 1499,
+    apiCallsMonthly: 200000,
+    overageRate: 0.008,
+    features: [
+      '200,000 次API调用/月',
+      '专属API服务器',
+      '7x24 技术支持',
+      'SLA 99.9%',
+      '定制化开发',
+      '专属客户经理'
+    ]
+  }
+];
+
+// ═══════════════════════════════════════════════════════════════
+// 增值服务定价
+// ═══════════════════════════════════════════════════════════════
+export const ADDON_SERVICES = {
+  custom_model_training: {
+    name: 'Custom Model Training',
+    nameZh: '定制模型训练',
+    price: 5000,
+    description: '为企业训练专属AI模型'
+  },
+  dedicated_support: {
+    name: 'Dedicated Support',
+    nameZh: '专属客服',
+    price: 500,
+    description: '24/7 专属技术支持'
+  },
+  priority_queue: {
+    name: 'Priority Queue',
+    nameZh: '优先队列',
+    price: 200,
+    description: '任务优先处理'
+  },
+  white_label: {
+    name: 'White Label',
+    nameZh: '白标定制',
+    price: 10000,
+    description: '完全品牌定制'
+  }
+};
 
 export const PLAN_LIMITS = {
   creator: 1000,
