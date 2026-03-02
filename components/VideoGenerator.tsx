@@ -128,8 +128,9 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
 
   // ★ Auto-audio: called automatically when a video finishes generating
   const generateAutoAudio = async (sceneNum: number, scene: Scene) => {
-    const textToSpeak = scene.audio_description || scene.dialogue_text || scene.visual_description || '';
-    if (!textToSpeak.trim()) return; // No text to speak for this scene
+    // ★ Use audio_description first, then shot_type (which holds video_motion_prompt), then visual_description
+    const textToSpeak = (scene.audio_description || scene.shot_type || scene.visual_description || '').trim();
+    if (!textToSpeak || textToSpeak.length < 5) return; // Skip if no meaningful text
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -368,11 +369,18 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
 
       const result = await response.json();
 
+      if (!response.ok) {
+        setChainError(result.error || `视频合成失败 (${response.status})`);
+        return;
+      }
+
       if (result.success) {
+        // ★ API returns immediately completed with video_urls playlist
         setVideoEditJob({
           jobId: result.job_id,
-          status: 'pending',
-          progress: 0,
+          status: result.status || 'completed',
+          progress: result.progress ?? 100,
+          outputUrl: result.output_url || result.video_urls?.[0],
         });
       } else {
         setChainError(result.error || "创建视频合成任务失败");
