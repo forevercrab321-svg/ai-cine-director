@@ -46,7 +46,17 @@ async function extractLastFrameServerSide(videoUrl: string): Promise<string> {
   }
 
   if (data.fallback) {
-    console.warn(`⚠️ [FrameExtract] ffmpeg unavailable, using raw URL fallback — backend will convert to Base64`);
+    console.warn(`⚠️ [FrameExtract] ffmpeg unavailable on server. Raw URL returned.`);
+    // ★ CRITICAL FIX: If we got a video URL back (not a base64 image), we CANNOT
+    // pass it to Replicate as first_frame_image — Replicate will reject MP4/video URLs.
+    // Throw so the chain stops cleanly rather than sending garbage to the API.
+    const frame = data.frame as string;
+    const isVideoUrl = /\.(mp4|webm|mov|avi)/i.test(frame) || frame.includes('replicate.delivery');
+    if (isVideoUrl && !frame.startsWith('data:')) {
+      throw new Error(
+        '⚠️ 暑帧截取失败（服务器无ffmpeg）。\n\n请在设置里切换到“wanvideo”模型重试，或联系客服升级为支持ffmpeg的服务器版本。'
+      );
+    }
   } else {
     console.log(`✅ [FrameExtract] Server-side frame extraction success`);
   }
@@ -57,7 +67,8 @@ async function extractLastFrameServerSide(videoUrl: string): Promise<string> {
 
 export interface StoryboardShot {
   image_prompt: string;
-  video_prompt: string;
+  video_prompt?: string;         // legacy alias
+  video_motion_prompt?: string;  // ★ backend field name (video_motion_prompt from Gemini API)
   transition?: "hard_cut" | "seamless";
 }
 
@@ -150,8 +161,9 @@ export const generateSceneChain = async (
       onProgress({ index: i, stage: "video_starting" });
     }
 
-    // ★ 改进版字符锁：保留角色特征，但使用更自然的格式避免API过滤
-    const rawVideoPrompt = shot.video_prompt || shot.video_motion_prompt || `Cinematic motion, scene ${i + 1}`;
+    // ★ CRITICAL: Backend creates `video_motion_prompt`, not `video_prompt`.
+    // Support both field names for forward and backward compatibility.
+    const rawVideoPrompt = shot.video_motion_prompt || shot.video_prompt || shot.shot_type || `Cinematic motion, scene ${i + 1}`;
 
     // 使用更自然的描述格式，避免触发API过滤
     const characterNote = extractedAnchor

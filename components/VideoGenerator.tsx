@@ -108,12 +108,10 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
     Record<number, { status: string; message?: string; error?: string }>
   >({});
   const [sceneImages, setSceneImages] = useState<Record<number, string>>({});
-  const [sceneVideoUrls, setSceneVideoUrls] = useState<Record<number, string>>(
-    {},
-  );
-  const [scenePredictionIds, setScenePredictionIds] = useState<
-    Record<number, string>
-  >({});
+  const [sceneVideoUrls, setSceneVideoUrls] = useState<Record<number, string>>({});
+  const [sceneAudioUrls, setSceneAudioUrls] = useState<Record<number, string>>({}); // ★ Auto-audio
+  const [scenePredictionIds, setScenePredictionIds] = useState<Record<number, string>>({});
+  const [chainError, setChainError] = useState<string | null>(null); // ★ replaces alert()
 
   // ★ 核心状态锁
   const [isRenderingChain, setIsRenderingChain] = useState(false);
@@ -126,10 +124,49 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
     outputUrl?: string;
   } | null>(null);
   const [isFinalizingVideo, setIsFinalizingVideo] = useState(false);
-  const [chainProgress, setChainProgress] = useState({
-    completed: 0,
-    total: 0,
-  });
+  const [chainProgress, setChainProgress] = useState({ completed: 0, total: 0 });
+
+  // ★ Auto-audio: called automatically when a video finishes generating
+  const generateAutoAudio = async (sceneNum: number, scene: Scene) => {
+    const textToSpeak = scene.audio_description || scene.dialogue_text || scene.visual_description || '';
+    if (!textToSpeak.trim()) return; // No text to speak for this scene
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      console.log(`[AutoAudio] Scene ${sceneNum}: generating voice for "${textToSpeak.substring(0, 50)}..."`);
+
+      const resp = await fetch('/api/audio/elevenlabs', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          text: textToSpeak,
+          voice_id: settings.lang === 'zh' ? 'zh_female_shuang' : 'en_female_rachel',
+          speed: 1.0,
+          stability: 0.55,
+          similarity_boost: 0.75,
+        }),
+      });
+
+      if (!resp.ok) {
+        console.warn(`[AutoAudio] Scene ${sceneNum}: voice generation failed (${resp.status})`);
+        return;
+      }
+
+      const data = await resp.json();
+      if (data.audio_url) {
+        setSceneAudioUrls(prev => ({ ...prev, [sceneNum]: data.audio_url }));
+        console.log(`[AutoAudio] Scene ${sceneNum}: voice ready ✅ ${data.audio_url}`);
+      }
+    } catch (err) {
+      console.warn(`[AutoAudio] Scene ${sceneNum}: error (non-fatal):`, err);
+      // Non-fatal: audio failure should NOT break the video generation chain
+    }
+  };
 
   // Poll for video status
   useEffect(() => {
@@ -218,13 +255,15 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
         finalAnchor = FALLBACK_ANCHOR;
       }
 
+      setChainError(null); // Clear previous errors
       await generateSceneChain(
         project.id,
         project.scenes,
         finalAnchor,
-        settings.videoModel,  // ★ Use user-selected model (was always hardcoded to hailuo_02_fast)
+        settings.videoModel,
         (progress) => {
-          const sNum = project.scenes[progress.index].scene_number;
+          const scene = project.scenes[progress.index];
+          const sNum = scene.scene_number;
           if (progress.stage === "image_done") {
             setSceneImages(prev => ({ ...prev, [sNum]: progress.imageUrl }));
             setSceneStatus(prev => ({
@@ -258,12 +297,14 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
               return next;
             });
             setChainProgress(prev => ({ ...prev, completed: prev.completed + 1 }));
+            // ★ AUTO-AUDIO: fire ElevenLabs in parallel (non-blocking — does not stall chain)
+            generateAutoAudio(sNum, scene);
           }
         }
       );
     } catch (e: any) {
       console.error("[Chain] ❌ Pipeline Error:", e);
-      alert(e.message || "生成途中发生严重错误：链条断裂。");
+      setChainError(e.message || "生成途中发生严重错误：链条断裂。");
     } finally {
       setIsRenderingChain(false);
       await refreshBalance();
@@ -272,12 +313,12 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
 
   // ★ 一键成片 - 视频拼接合成
   const handleFinalizeVideo = async () => {
-    if (!isAuthenticated) return alert("请先登录以使用一键成片功能。");
+    if (!isAuthenticated) { setChainError("请先登录以使用一键成片功能。"); return; }
 
     // 检查是否有可用的视频
     const videoEntries = Object.entries(sceneVideoUrls).filter(([_, url]) => url);
     if (videoEntries.length === 0) {
-      alert("没有可用的视频片段，请先生成视频");
+      setChainError("没有可用的视频片段，请先生成视频");
       return;
     }
 
@@ -294,7 +335,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
       // 调用视频合成 API
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
-        alert("请先登录");
+        setChainError("请先登录");
         return;
       }
 
@@ -334,11 +375,11 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
           progress: 0,
         });
       } else {
-        alert(result.error || "创建视频合成任务失败");
+        setChainError(result.error || "创建视频合成任务失败");
       }
     } catch (e: any) {
       console.error("[Finalize] Error:", e);
-      alert("视频合成失败: " + e.message);
+      setChainError("视频合成失败: " + e.message);
     } finally {
       setIsFinalizingVideo(false);
     }
@@ -385,30 +426,20 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
   // 批量下载所有图片
   const handleDownloadAllImages = async () => {
     const imageEntries = Object.entries(sceneImages).filter(([_, url]) => url);
-    if (imageEntries.length === 0) {
-      alert("没有可下载的图片");
-      return;
-    }
-
+    if (imageEntries.length === 0) return;
     for (const [sceneNum, url] of imageEntries) {
       await forceDownload(url as string, `scene-${sceneNum}-image.jpg`);
-      await new Promise((resolve) => setTimeout(resolve, 300)); // 避免过快下载
+      await new Promise((resolve) => setTimeout(resolve, 300));
     }
   };
 
   // 批量下载所有视频
   const handleDownloadAllVideos = async () => {
-    const videoEntries = Object.entries(sceneVideoUrls).filter(
-      ([_, url]) => url,
-    );
-    if (videoEntries.length === 0) {
-      alert("没有可下载的视频");
-      return;
-    }
-
+    const videoEntries = Object.entries(sceneVideoUrls).filter(([_, url]) => url);
+    if (videoEntries.length === 0) return;
     for (const [sceneNum, url] of videoEntries) {
       await forceDownload(url as string, `scene-${sceneNum}-video.mp4`);
-      await new Promise((resolve) => setTimeout(resolve, 500)); // 避免过快下载
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
   };
 
@@ -416,11 +447,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
   const handleDownloadAll = async () => {
     const hasImages = Object.keys(sceneImages).length > 0;
     const hasVideos = Object.keys(sceneVideoUrls).length > 0;
-
-    if (!hasImages && !hasVideos) {
-      alert("没有可下载的内容");
-      return;
-    }
+    if (!hasImages && !hasVideos) return;
 
     if (hasImages) await handleDownloadAllImages();
     if (hasVideos) await handleDownloadAllVideos();
@@ -619,6 +646,21 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
         />
       )}
 
+      {/* ★ Chain error banner — replaces alert() */}
+      {chainError && (
+        <div className="max-w-2xl mx-auto mb-4 p-3 bg-red-900/30 border border-red-500/40 rounded-xl flex items-start gap-3 animate-in fade-in">
+          <span className="text-red-400 text-lg mt-0.5 shrink-0">❌</span>
+          <div className="flex-1">
+            <p className="text-red-300 font-semibold text-sm">生成错误</p>
+            <p className="text-red-400/80 text-xs mt-0.5 whitespace-pre-wrap">{chainError}</p>
+          </div>
+          <button
+            onClick={() => setChainError(null)}
+            className="text-red-400/60 hover:text-red-300 text-lg leading-none shrink-0"
+          >×</button>
+        </div>
+      )}
+
       {/* ★ 视频合成进度条 */}
       {videoEditJob && videoEditJob.status === 'processing' && (
         <div className="max-w-md mx-auto mb-8 animate-in fade-in slide-in-from-top-4">
@@ -720,6 +762,25 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
               errorDetails={sceneStatus[scene.scene_number]?.error}
               characterAnchor={project.character_anchor}
             />
+            {/* ★ AUTO-AUDIO: Inline audio player — appears automatically when voice is ready */}
+            {sceneAudioUrls[scene.scene_number] && (
+              <div className="mt-2 mx-1 px-4 py-2.5 bg-slate-800/80 border border-indigo-500/20 rounded-lg flex items-center gap-3 animate-in fade-in slide-in-from-bottom-2 duration-500">
+                <span className="text-indigo-400 text-sm shrink-0">🎙️</span>
+                <span className="text-indigo-300 text-xs font-semibold shrink-0">AI 配音就绪</span>
+                <audio
+                  controls
+                  src={sceneAudioUrls[scene.scene_number]}
+                  className="flex-1 h-8"
+                  style={{ filter: 'invert(0.8) hue-rotate(180deg)' }}
+                />
+              </div>
+            )}
+            {/* Audio generating indicator */}
+            {sceneVideoUrls[scene.scene_number] && !sceneAudioUrls[scene.scene_number] && (
+              <div className="mt-2 mx-1 px-4 py-2 bg-slate-800/40 border border-slate-700/30 rounded-lg flex items-center gap-2">
+                <span className="text-slate-500 text-xs animate-pulse">🎙️ AI 配音生成中...</span>
+              </div>
+            )}
           </div>
         ))}
       </div>
