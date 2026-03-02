@@ -1227,13 +1227,26 @@ app.post('/api/extract-frame', requireAuth, async (req: any, res: any) => {
 
         console.log('[FrameExtract] Downloading video for frame extraction:', videoUrl.substring(0, 80));
 
-        // Try ffmpeg first (available on most Linux/Vercel environments)
         const { exec } = await import('child_process');
         const { promisify } = await import('util');
         const execAsync = promisify(exec);
         const os = await import('os');
         const path = await import('path');
         const fs = await import('fs');
+
+        // ★ Use ffmpeg-static bundled binary (works on Vercel Lambda — no system ffmpeg needed)
+        let ffmpegBin = 'ffmpeg'; // system fallback
+        try {
+            // ffmpeg-static exports the path to the bundled binary
+            const ffmpegModule = await import('ffmpeg-static');
+            const staticPath = (ffmpegModule as any).default || ffmpegModule;
+            if (staticPath && typeof staticPath === 'string') {
+                ffmpegBin = staticPath;
+                console.log('[FrameExtract] Using ffmpeg-static binary:', ffmpegBin);
+            }
+        } catch (_) {
+            console.warn('[FrameExtract] ffmpeg-static not available, trying system ffmpeg');
+        }
 
         const tmpDir = os.default.tmpdir();
         const tmpVideo = path.default.join(tmpDir, `frame_vid_${Date.now()}.mp4`);
@@ -1247,10 +1260,10 @@ app.post('/api/extract-frame', requireAuth, async (req: any, res: any) => {
         const videoBuffer = Buffer.from(await videoResp.arrayBuffer());
         fs.default.writeFileSync(tmpVideo, videoBuffer);
 
-        // 2) Extract last frame via ffmpeg
+        // 2) Extract last frame via ffmpeg-static
         // -sseof -0.5: seek to 0.5s before end; -vframes 1: one frame; -q:v 2: high JPEG quality
         try {
-            await execAsync(`ffmpeg -y -sseof -0.5 -i "${tmpVideo}" -vframes 1 -q:v 2 "${tmpFrame}" 2>/dev/null`);
+            await execAsync(`"${ffmpegBin}" -y -sseof -0.5 -i "${tmpVideo}" -vframes 1 -q:v 2 "${tmpFrame}" 2>/dev/null`);
             const frameBuffer = fs.default.readFileSync(tmpFrame);
             const base64 = frameBuffer.toString('base64');
 
@@ -1258,19 +1271,17 @@ app.post('/api/extract-frame', requireAuth, async (req: any, res: any) => {
             try { fs.default.unlinkSync(tmpVideo); } catch (_) { }
             try { fs.default.unlinkSync(tmpFrame); } catch (_) { }
 
-            console.log('[FrameExtract] ffmpeg extraction success, frame size:', frameBuffer.length, 'bytes');
+            console.log('[FrameExtract] ffmpeg-static extraction success, frame size:', frameBuffer.length, 'bytes');
             return res.json({ frame: `data:image/jpeg;base64,${base64}` });
         } catch (ffmpegErr: any) {
-            // ffmpeg failed — clean up and fall back to returning the video URL itself
-            // (the backend's preprocessVideoInput will convert it to base64, losing frame precision
-            //  but at least the chain won't break)
             console.error('[FrameExtract] ffmpeg failed:', ffmpegErr.message);
             try { fs.default.unlinkSync(tmpVideo); } catch (_) { }
             try { fs.default.unlinkSync(tmpFrame); } catch (_) { }
 
-            // Fallback: return the raw URL — backend preprocessVideoInput will handle the base64 conversion
-            console.warn('[FrameExtract] Falling back to raw video URL for backend processing');
-            return res.json({ frame: videoUrl, fallback: true });
+            // ★ Return clear error instead of raw video URL (which breaks Replicate)
+            return res.status(500).json({
+                error: `Frame extraction failed: ffmpeg unavailable on this runtime. Error: ${ffmpegErr.message}`
+            });
         }
     } catch (err: any) {
         console.error('[FrameExtract] Error:', err.message);
