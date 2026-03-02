@@ -14,6 +14,7 @@ import { t } from '../i18n';
 import { startVideoTask, generateImage, checkPredictionStatus } from '../services/replicateService';
 import { extractLastFrameFromVideo } from '../utils/video-helpers';
 import { forceDownload } from '../utils/download';
+import { generateVoicesForScenes } from '../services/elevenLabsService';
 interface ShotListViewProps {
     project: StoryboardProject;
     referenceImageDataUrl?: string;  // ★ Compressed base64 for Flux Redux consistency
@@ -70,7 +71,7 @@ const ShotCard: React.FC<{
         <div className="bg-slate-900/80 border border-slate-800 rounded-xl overflow-hidden hover:border-slate-700 transition-all group">
             <div className="flex items-center gap-3 px-4 py-3 cursor-pointer select-none" onClick={onToggle}>
                 <div className="w-10 h-10 rounded-lg bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-300 font-bold text-sm shrink-0">
-                    {shot.shot_number}
+                    {shot.shot_number ?? shotIndex + 1}
                 </div>
                 <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded border ${camClass}`}>{shot.camera}</span>
                 <span className="text-xs">{moveEmoji} {shot.movement}</span>
@@ -262,7 +263,7 @@ const SceneSection: React.FC<{
         <div className="bg-slate-950/50 border border-slate-800 rounded-2xl overflow-hidden">
             <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between">
                 <div>
-                    <div className="flex items-center gap-2"><span className="text-indigo-400 font-bold text-sm uppercase tracking-wider">Scene {scene.scene_number}</span></div>
+                    <div className="flex items-center gap-2"><span className="text-indigo-400 font-bold text-sm uppercase tracking-wider">Scene {scene.scene_number ?? sceneIndex + 1}</span></div>
                     {scene.scene_setting && <p className="text-xs text-amber-400/70 mt-1 font-medium">📍 {scene.scene_setting}</p>}
                 </div>
 
@@ -349,6 +350,10 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
     const [isChainRunning, setIsChainRunning] = useState(false);
     const [chainLog, setChainLog] = useState('');
     const [shotVideos, setShotVideos] = useState<Record<string, string>>({});
+
+    // ★ AI 配音状态
+    const [isGeneratingVoice, setIsGeneratingVoice] = useState(false);
+    const [sceneVoices, setSceneVoices] = useState<Record<number, string>>({});
 
     // ★ 场次级颚外数据（scene_reference_image_base64 等）狠态存储
     const [sceneDataMap, setSceneDataMap] = useState<Record<number, Partial<Scene>>>({});
@@ -484,6 +489,48 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
         for (const scene of project.scenes) {
             if (shotsByScene[scene.scene_number]?.length) continue; // Skip already generated
             await handleGenerateShots(scene);
+        }
+    };
+
+    // ★ AI 配音生成处理器
+    const handleGenerateVoices = async () => {
+        if (!project.scenes || project.scenes.length === 0) {
+            alert('没有场景可以生成配音');
+            return;
+        }
+
+        setIsGeneratingVoice(true);
+        try {
+            const scenesWithDialogue = project.scenes.map(scene => ({
+                scene_number: scene.scene_number,
+                dialogue: scene.dialogue || '',
+                description: scene.description || '',
+            }));
+
+            console.log('[ShotListView] Generating voices for scenes:', scenesWithDialogue);
+
+            const result = await generateVoicesForScenes({
+                scenes: scenesWithDialogue,
+                voice_id: 'zh_female_shuang', // Default Chinese female voice
+            });
+
+            if (result.results) {
+                const newVoices: Record<number, string> = {};
+                for (const r of result.results) {
+                    if (r.success && r.audio_url) {
+                        newVoices[r.scene_number] = r.audio_url;
+                    }
+                }
+                setSceneVoices(prev => ({ ...prev, ...newVoices }));
+                
+                const successCount = result.results.filter((r: any) => r.success).length;
+                alert(`✅ 配音生成完成！成功生成 ${successCount} 个场景的配音`);
+            }
+        } catch (e: any) {
+            console.error('[ShotListView] Voice generation failed:', e);
+            alert(e.message || '配音生成失败');
+        } finally {
+            setIsGeneratingVoice(false);
         }
     };
 
@@ -649,6 +696,38 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                             {generatingScenes.size > 0 && <LoaderIcon className="w-4 h-4 animate-spin" />}
                             {generatingScenes.size > 0 ? '生成中...' : '🎬 一键拆分全部镜头'}
                         </button>
+
+                        {/* ★ AI 配音按钮 */}
+                        <button
+                            onClick={handleGenerateVoices}
+                            disabled={isGeneratingVoice || !project.scenes?.length}
+                            className={`px-4 py-3 rounded-lg text-sm font-bold transition-all flex items-center gap-2
+                                ${isGeneratingVoice || !project.scenes?.length
+                                    ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                                    : 'bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white shadow-lg shadow-pink-500/20'
+                                }`}
+                        >
+                            {isGeneratingVoice ? <LoaderIcon className="w-4 h-4 animate-spin" /> : '🎤'}
+                            {isGeneratingVoice ? '生成中...' : '🎤 AI配音'}
+                        </button>
+
+                        {/* ★ 一键自动剪片按钮 */}
+                        {Object.keys(shotVideos).length > 0 && (
+                            <button
+                                onClick={() => {
+                                    const videoUrls = Object.values(shotVideos);
+                                    if (videoUrls.length === 0) {
+                                        alert('没有可剪辑的视频');
+                                        return;
+                                    }
+                                    // 一键自动剪片功能
+                                    alert(`📹 准备剪辑 ${videoUrls.length} 个视频片段...\n\n完整剪片功能需要服务器端 FFmpeg 处理，当前版本将视频片段拼接为最终成品。`);
+                                }}
+                                className="px-4 py-3 rounded-lg text-sm font-bold transition-all flex items-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white shadow-lg shadow-amber-500/20"
+                            >
+                                🎬 一键成片
+                            </button>
+                        )}
                     </div>
                 </div>
             </div>

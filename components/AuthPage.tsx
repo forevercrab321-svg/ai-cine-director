@@ -58,15 +58,27 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
   const sendOtpWithFallback = async () => {
     // Use backend Resend API to send email (bypasses Supabase SMTP entirely)
     const origin = typeof window !== 'undefined' ? window.location.origin : undefined;
-    const resp = await fetch('/api/auth/send-otp', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, redirectTo: origin }),
-    });
+    console.log('[AUTH] Sending OTP to:', email, 'from origin:', origin);
+    
+    try {
+      const resp = await fetch('/api/auth/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, redirectTo: origin }),
+      });
 
-    if (!resp.ok) {
-      const data = await resp.json().catch(() => ({}));
-      throw new Error(data?.error || 'Failed to send verification email');
+      console.log('[AUTH] Response status:', resp.status);
+      const data = await resp.json();
+      console.log('[AUTH] Response data:', data);
+
+      if (!resp.ok) {
+        throw new Error(data?.error || `Server error: ${resp.status}`);
+      }
+      
+      return data;
+    } catch (err: any) {
+      console.error('[AUTH] Send OTP error:', err);
+      throw err;
     }
   };
 
@@ -97,14 +109,17 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
           return;
         }
         
+        console.log('[AUTH] Starting OTP send...');
         await sendOtpWithFallback();
+        console.log('[AUTH] OTP sent successfully, switching to OTP step');
 
         setStep('otp');
         setCountdown(60);
       } catch (error: any) {
+        console.error('[AUTH] Email submit error:', error);
         const msg = error?.status === 429 || error?.message?.includes('429') || error?.message?.includes('Too Many')
           ? '发送太频繁，请稍后再试'
-          : (error.message || '发送验证码失败');
+          : error?.message || '发送验证码失败，请检查邮箱格式';
         setValidationError(msg);
       } finally {
         setIsLoading(false);

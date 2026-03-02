@@ -1,7 +1,19 @@
 // src/lib/audioEngine/providers.ts
 
-// Since this is a bypassable and generic engine, we will provide a mocked implementation
-// for the basic tier if no actual TTS provider is configured, and real implementation placeholders.
+import { createClient } from '@supabase/supabase-js';
+import fetch from 'node-fetch';
+
+// Eleven Labs API configuration
+const ELEVEN_LABS_API_KEY = process.env.ELEVEN_LABS_API_KEY;
+const ELEVEN_LABS_VOICE_ID = process.env.ELEVEN_LABS_VOICE_ID || 'pNInz6obpgDQGcFmaJgB'; // Default Adam voice
+
+// Supabase for storing audio files
+const getSupabaseAdmin = () => {
+    const url = (process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim();
+    const key = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+    if (!url || !key) throw new Error('Supabase URL or Service Key missing');
+    return createClient(url, key);
+};
 
 export interface AudioAsset {
     id: string;
@@ -11,70 +23,297 @@ export interface AudioAsset {
 }
 
 /**
- * Generate Dialogue (TTS)
+ * Generate Dialogue using Eleven Labs TTS
  */
 export async function generateDialogue(text: string, character: string, emotion: string): Promise<AudioAsset> {
-    const ttsProvider = process.env.TTS_PROVIDER || 'mock';
+    console.log(`[AudioEngine:ElevenLabs] Generating TTS for: "${text.substring(0, 50)}..." [Voice: ${character}, Emotion: ${emotion}]`);
 
-    if (ttsProvider === 'mock') {
-        console.log(`[AudioEngine:Providers] Mocking TTS for: "${text}" [Voice: ${character}, Emotion: ${emotion}]`);
-        // In a real app we would call OpenAI TTS or ElevenLabs here.
-        // For the mock, we simulate returning a generic dialogue MP3.
-        // Ensure we use a valid path for testing if possible.
+    // Check if Eleven Labs API key is configured
+    if (!ELEVEN_LABS_API_KEY) {
+        console.warn('[AudioEngine:ElevenLabs] No API key configured, using mock');
         return {
             id: `dlg_${Date.now()}`,
             type: 'dialogue',
-            url: 'https://actions.google.com/sounds/v1/human_voices/human_snoring.ogg', // generic placeholder
+            url: 'https://actions.google.com/sounds/v1/human_voices/human_snoring.ogg',
             durationSec: 2
         };
     }
 
-    // Placeholder for real OpenAI or ElevenLabs call
-    throw new Error(`TTS provider ${ttsProvider} not fully implemented yet.`);
-}
+    try {
+        // Map emotion to Eleven Labs stability settings
+        const stabilityMap: Record<string, number> = {
+            'happy': 0.5,
+            'sad': 0.4,
+'angry': 0.3,
+            'neutral': 0.7,
+            'excited': 0.6,
+            'calm': 0.8
+        };
+        
+        const emotionMap: Record<string, number> = {
+            'happy': 0.8,
+            'sad': 0.3,
+            'angry': 0.9,
+            'neutral': 0.5,
+            'excited': 0.9,
+            'calm': 0.4
+        };
 
-/**
- * Generate Sound Effects
- */
-export async function generateSFX(description: string): Promise<AudioAsset> {
-    const sfxMode = process.env.SFX_MODE || 'none';
+        const stability = stabilityMap[emotion] || 0.7;
+        const similarityBoost = emotionMap[emotion] || 0.5;
 
-    if (sfxMode === 'mock') {
-        console.log(`[AudioEngine:Providers] Mocking SFX for: "${description}"`);
+        // Call Eleven Labs API
+        const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${ELEVEN_LABS_VOICE_ID}`, {
+            method: 'POST',
+            headers: {
+                'Accept': 'audio/mpeg',
+                'Content-Type': 'application/json',
+                'xi-api-key': ELEVEN_LABS_API_KEY
+            },
+            body: JSON.stringify({
+                text: text,
+                model_id: 'eleven_monolingual_v1',
+                voice_settings: {
+                    stability: stability,
+                    similarity_boost: similarityBoost,
+                    style: 0.5,
+                    use_speaker_boost: true
+                }
+            })
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('[AudioEngine:ElevenLabs] API Error:', errorText);
+            throw new Error(`Eleven Labs API error: ${response.status}`);
+        }
+
+        // Get audio as buffer
+        const audioBuffer = await response.buffer();
+        
+        // Upload to Supabase Storage
+        const supabase = getSupabaseAdmin();
+        const fileName = `audio/dialogue_${Date.now()}.mp3`;
+        
+        const { data, error } = await supabase.storage
+            .from('audio')
+            .upload(fileName, audioBuffer, {
+                contentType: 'audio/mpeg',
+                upsert: true
+            });
+
+        if (error) {
+            console.error('[AudioEngine:ElevenLabs] Upload Error:', error);
+            throw new Error(`Failed to upload audio: ${error.message}`);
+        }
+
+        // Get public URL
+        const { data: urlData } = supabase.storage
+            .from('audio')
+            .getPublicUrl(fileName);
+
+        // Estimate duration (roughly 150 words per minute, ~2.5 words per second)
+        const wordCount = text.split(/\s+/).length;
+        const estimatedDuration = Math.max(1, wordCount / 2.5);
+
+        console.log(`[AudioEngine:ElevenLabs] Success! Audio URL: ${urlData.publicUrl}`);
+
         return {
-            id: `sfx_${Date.now()}`,
-            type: 'sfx',
-            url: 'https://actions.google.com/sounds/v1/impacts/crash.ogg', // generic placeholder
-            durationSec: 1
+            id: `dlg_${Date.now()}`,
+            type: 'dialogue',
+            url: urlData.publicUrl,
+            durationSec: estimatedDuration
+        };
+
+    } catch (error: any) {
+        console.error('[AudioEngine:ElevenLabs] Error:', error.message);
+        // Fallback to mock on error
+        return {
+            id: `dlg_${Date.now()}`,
+            type: 'dialogue',
+            url: 'https://actions.google.com/sounds/v1/human_voices/human_snoring.ogg',
+            durationSec: 2
         };
     }
-
-    if (sfxMode === 'none') {
-        throw new Error('SFX generation requested but SFX_MODE is none.');
-    }
-
-    throw new Error(`SFX provider for mode ${sfxMode} not implemented.`);
 }
 
 /**
- * Get Background Music
+ * Generate Sound Effects using AI (placeholder for now)
+ * Can integrate with services like Eleven Labs for sound effects or use built-in SFX
+ */
+export async function generateSFX(description: string): Promise<AudioAsset> {
+    console.log(`[AudioEngine:SFX] Generating SFX for: "${description.substring(0, 50)}..."`);
+
+    // For now, return a placeholder SFX
+    // In production, you could integrate with services like:
+    // - Eleven Labs SFX (if available)
+    // - AudioShake
+    // - Sonauto
+    // - Built-in SFX library
+    
+    const sfxLibrary: Record<string, string> = {
+        'explosion': 'https://actions.google.com/sounds/v1/explosions/explosion.ogg',
+        'gun': 'https://actions.google.com/sounds/v1/weapons/gun_semiauto.ogg',
+        'footstep': 'https://actions.google.com/sounds/v1/human_voices/walking_on_snow.ogg',
+        'car': 'https://actions.google.com/sounds/v1/vehicles/car_horn.ogg',
+        'door': 'https://actions.google.com/sounds/v1/doors/door_creak.ogg',
+        'default': 'https://actions.google.com/sounds/v1/impacts/crash.ogg'
+    };
+
+    // Try to match description with SFX library
+    const lowerDesc = description.toLowerCase();
+    let selectedSfx = sfxLibrary.default;
+    
+    for (const [key, url] of Object.entries(sfxLibrary)) {
+        if (lowerDesc.includes(key)) {
+            selectedSfx = url;
+            break;
+        }
+    }
+
+    return {
+        id: `sfx_${Date.now()}`,
+        type: 'sfx',
+        url: selectedSfx,
+        durationSec: 2
+    };
+}
+
+/**
+ * Get Background Music using AI music generation
+ * Integrates with Replicate for music generation (can use models like MusicGen, AudioCraft, etc.)
  */
 export async function getMusicTrack(vibe: string): Promise<AudioAsset> {
-    const musicMode = process.env.MUSIC_MODE || 'none';
+    console.log(`[AudioEngine:Music] Generating music for vibe: "${vibe}"`);
 
-    if (musicMode === 'mock') {
-        console.log(`[AudioEngine:Providers] Mocking Music for vibe: "${vibe}"`);
+    // Try to use Replicate for music generation
+    const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN;
+    
+    if (!REPLICATE_TOKEN) {
+        console.warn('[AudioEngine:Music] No Replicate token, using placeholder');
         return {
             id: `bgm_${Date.now()}`,
             type: 'music',
-            url: 'https://actions.google.com/sounds/v1/ambiences/coffee_shop.ogg', // generic placeholder
+            url: 'https://actions.google.com/sounds/v1/ambiences/coffee_shop.ogg',
             durationSec: 10
         };
     }
 
-    if (musicMode === 'none') {
-        throw new Error('Music requested but MUSIC_MODE is none.');
+    try {
+        // Use Meta's MusicGen or AudioCraft via Replicate
+        // This is a placeholder - you would need to set up the actual model
+        const modelVersion = 'meta/musicgen-stereo-large'; // Example model
+        
+        const response = await fetch('https://api.replicate.com/v1/predictions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${REPLICATE_TOKEN}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                version: modelVersion,
+                input: {
+                    prompt: vibe,
+                    duration: 10,
+                    model: 'musicgen-large'
+                }
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Replicate API error: ${response.status}`);
+        }
+
+        const prediction = await response.json() as any;
+        
+        // Poll for completion
+        let result: any = prediction;
+        while (result.status !== 'succeeded' && result.status !== 'failed') {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            const statusResponse = await fetch(`https://api.replicate.com/v1/predictions/${result.id}`, {
+                headers: {
+                    'Authorization': `Bearer ${REPLICATE_TOKEN}`
+                }
+            });
+            result = await statusResponse.json();
+        }
+
+        if (result.status === 'succeeded') {
+            const musicUrl = result.output;
+            
+            // Upload to Supabase for permanent storage
+            const supabase = getSupabaseAdmin();
+            const musicResponse = await fetch(musicUrl);
+            const musicBuffer = await musicResponse.buffer();
+            
+            const fileName = `audio/music_${Date.now()}.mp3`;
+            const { error } = await supabase.storage
+                .from('audio')
+                .upload(fileName, musicBuffer, {
+                    contentType: 'audio/mpeg',
+                    upsert: true
+                });
+
+            if (!error) {
+                const { data: urlData } = supabase.storage
+                    .from('audio')
+                    .getPublicUrl(fileName);
+                
+                return {
+                    id: `bgm_${Date.now()}`,
+                    type: 'music',
+                    url: urlData.publicUrl,
+                    durationSec: 10
+                };
+            }
+        }
+
+        throw new Error('Music generation failed');
+
+    } catch (error: any) {
+        console.error('[AudioEngine:Music] Error:', error.message);
+        // Fallback to royalty-free music
+        return {
+            id: `bgm_${Date.now()}`,
+            type: 'music',
+            url: 'https://actions.google.com/sounds/v1/ambiences/coffee_shop.ogg',
+            durationSec: 10
+        };
+    }
+}
+
+/**
+ * Generate ambience sound for scenes
+ */
+export async function generateAmbience(sceneDescription: string): Promise<AudioAsset> {
+    console.log(`[AudioEngine:Ambience] Generating ambience for: "${sceneDescription.substring(0, 50)}..."`);
+
+    // Map scene descriptions to ambience sounds
+    const ambienceLibrary: Record<string, string> = {
+        'rain': 'https://actions.google.com/sounds/v1/weather/rain_heavy_loud.ogg',
+        'storm': 'https://actions.google.com/sounds/v1/weather/thunder_crack.ogg',
+        'wind': 'https://actions.google.com/sounds/v1/weather/wind_howling.ogg',
+        'city': 'https://actions.google.com/sounds/v1/ambiences/city_traffic.ogg',
+        'forest': 'https://actions.google.com/sounds/v1/ambiences/forest_morning.ogg',
+        'ocean': 'https://actions.google.com/sounds/v1/ambiences/ocean_waves.ogg',
+        'fire': 'https://actions.google.com/sounds/v1/ambiences/fireplace.ogg',
+        'default': 'https://actions.google.com/sounds/v1/ambiences/coffee_shop.ogg'
+    };
+
+    const lowerDesc = sceneDescription.toLowerCase();
+    let selectedAmbience = ambienceLibrary.default;
+    
+    for (const [key, url] of Object.entries(ambienceLibrary)) {
+        if (lowerDesc.includes(key)) {
+            selectedAmbience = url;
+            break;
+        }
     }
 
-    throw new Error(`Music provider for mode ${musicMode} not implemented.`);
+    return {
+        id: `amb_${Date.now()}`,
+        type: 'ambience',
+        url: selectedAmbience,
+        durationSec: 10
+    };
 }

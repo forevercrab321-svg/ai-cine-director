@@ -56,16 +56,26 @@ const PricingModal: React.FC<PricingModalProps> = ({ isOpen, onClose, onUpgrade 
     const btnKey = `subscribe-${tier}`;
     try {
       setProcessingButton(btnKey);
+      console.log('[Pricing] Starting subscription for tier:', tier);
+      
       const { data: { session } } = await supabase.auth.getSession();
+      console.log('[Pricing] Session:', session ? 'found' : 'not found');
+      
       if (!session) {
         showToast("请先登录以订阅", 'error');
+        console.log('[Pricing] No session - user not logged in');
         setProcessingButton(null);
         return;
       }
+      
       const billingCycleSafe = billingCycle;
       const userId = session.user.id;
       const email = session.user.email;
+      console.log('[Pricing] User:', email, 'ID:', userId);
+      
       showToast('正在跳转到支付页面...', 'info');
+      console.log('[Pricing] Calling /api/billing/subscribe...');
+      
       const response = await fetch('/api/billing/subscribe', {
         method: 'POST',
         headers: {
@@ -74,17 +84,24 @@ const PricingModal: React.FC<PricingModalProps> = ({ isOpen, onClose, onUpgrade 
         },
         body: JSON.stringify({ tier, billingCycle: billingCycleSafe, userId, email }),
       });
+      
+      console.log('[Pricing] Response status:', response.status);
+      const responseData = await response.json();
+      console.log('[Pricing] Response data:', responseData);
+      
       if (!response.ok) {
-        const errData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
-        throw new Error(errData.error || '创建订阅会话失败');
+        throw new Error(responseData.error || `HTTP ${response.status}`);
       }
-      const { url } = await response.json();
+      
+      const { url } = responseData;
       if (url) {
+        console.log('[Pricing] Redirecting to:', url);
         window.location.href = url;
       } else {
         throw new Error('未获取到支付链接');
       }
     } catch (e: any) {
+      console.error('[Pricing] Subscribe error:', e);
       showToast(`订阅失败：${e.message}`, 'error');
     } finally {
       setProcessingButton(null);

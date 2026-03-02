@@ -1,21 +1,27 @@
 import React from 'react';
 import { BUSINESS_PLANS } from '../types';
 import { SparklesIcon } from './IconComponents';
+import { supabase } from '../lib/supabaseClient';
 
 interface LandingPageProps {
   onGetStarted: () => void;
+  onOpenPricing?: () => void;
   lang: 'en' | 'zh';
 }
 
-const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, lang }) => {
+const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, lang }) => {
   const [showLogin, setShowLogin] = React.useState(false);
   const [showUpload, setShowUpload] = React.useState(false);
   const [uploadProgress, setUploadProgress] = React.useState('');
   const [uploadError, setUploadError] = React.useState('');
   const [demoVideoUrl, setDemoVideoUrl] = React.useState<string | null>(null);
-  
-  // Check for developer login status
   const [isDeveloper, setIsDeveloper] = React.useState(false);
+  
+  // Login form states - MOVED TO TOP LEVEL to avoid React hooks violation
+  const [email, setEmail] = React.useState('');
+  const [loginLoading, setLoginLoading] = React.useState(false);
+  const [loginSent, setLoginSent] = React.useState(false);
+  const [loginError, setLoginError] = React.useState('');
   
   // Handle video upload
   const handleVideoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -101,39 +107,79 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, lang }) => {
     }
   };
   
-  // If showing login, import and show AuthPage
-  if (showLogin) {
-    const [email, setEmail] = React.useState('');
-    const [loading, setLoading] = React.useState(false);
-    const [sent, setSent] = React.useState(false);
-    const [error, setError] = React.useState('');
+  // Handle send verification code
+  const handleSendCode = async () => {
+    if (!email) return;
+    setLoginLoading(true);
+    setLoginError('');
     
-    const handleSendCode = async () => {
-      if (!email) return;
-      setLoading(true);
-      setError('');
+    try {
+      console.log('[Landing] Sending OTP to:', email);
+      const res = await fetch('/api/auth/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      });
+      const data = await res.json();
+      console.log('[Landing] OTP Response:', data);
       
-      try {
-        const res = await fetch('/api/auth/send-otp', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email })
-        });
-        const data = await res.json();
-        
-        if (data.ok || data.message) {
-          setSent(true);
-        } else {
-          setError(data.error || 'Failed to send code');
-        }
-      } catch (e: any) {
-        setError(e.message || 'Network error');
-      } finally {
-        setLoading(false);
+      if (data.ok || data.message) {
+        setLoginSent(true);
+      } else {
+        setLoginError(data.error || 'Failed to send code');
       }
-    };
+    } catch (e: any) {
+      console.error('[Landing] OTP Error:', e);
+      setLoginError(e.message || 'Network error - please try again');
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+  
+  // Reset login form
+  const resetLoginForm = () => {
+    setShowLogin(false);
+    setLoginSent(false);
+    setEmail('');
+    setLoginError('');
+    setOtpCode('');
+  };
+  
+  // Resend the magic link
+  const handleResendCode = async () => {
+    if (!email) return;
+    setLoginLoading(true);
+    setLoginError('');
     
-    // Inline minimal login form
+    try {
+      console.log('[Landing] Resending magic link to:', email);
+      const res = await fetch('/api/auth/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      });
+      const data = await res.json();
+      
+      if (data.ok || data.message) {
+        // Show success message
+        setLoginError('');
+        alert('Magic link sent! Check your email and click the login link.');
+      } else {
+        setLoginError(data.error || 'Failed to resend link');
+      }
+    } catch (e: any) {
+      console.error('[Landing] Resend Error:', e);
+      setLoginError(e.message || 'Network error');
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+  
+  // Add state for OTP code (for future use if needed)
+  const [otpCode, setOtpCode] = React.useState('');
+  
+  // Render login form when showLogin is true
+  if (showLogin) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
         <div className="w-full max-w-md">
@@ -144,10 +190,10 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, lang }) => {
               </svg>
             </div>
             <h1 className="text-3xl font-bold text-white">AI Cine-Director</h1>
-            <p className="text-slate-400 mt-2">{sent ? 'Check your email' : 'Sign in to continue'}</p>
+            <p className="text-slate-400 mt-2">{loginSent ? 'Check your email' : 'Sign in to continue'}</p>
           </div>
           
-          {!sent ? (
+          {!loginSent ? (
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
               <p className="text-sm text-slate-400 mb-4">Enter your email to receive a verification code:</p>
               <input
@@ -157,39 +203,81 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, lang }) => {
                 placeholder="your@email.com"
                 className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-3 text-white mb-4"
               />
-              {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
+              {loginError && <p className="text-red-400 text-sm mb-4">{loginError}</p>}
               <button
                 onClick={handleSendCode}
-                disabled={loading || !email}
+                disabled={loginLoading || !email}
                 className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-700 text-white font-bold rounded-lg"
               >
-                {loading ? 'Sending...' : 'Send Verification Code'}
+                {loginLoading ? 'Sending...' : 'Send Verification Code'}
               </button>
               <p className="text-xs text-slate-500 mt-4 text-center">
                 By continuing, you agree to our Terms of Service
               </p>
             </div>
           ) : (
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 text-center">
-              <div className="text-4xl mb-4">✓</div>
-              <p className="text-white mb-2">Verification code sent!</p>
-              <p className="text-slate-400 text-sm mb-4">Check your email inbox (and spam) for the code.</p>
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+              <p className="text-sm text-slate-400 mb-4">输入邮箱收到的验证码:</p>
+              <input
+                type="text"
+                value={otpCode}
+                onChange={(e) => setOtpCode(e.target.value.replace(/[^0-9]/g, ''))}
+                placeholder="00000000"
+                maxLength={8}
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-3 text-white mb-4 text-center text-xl tracking-[0.5em] font-mono"
+              />
+              {loginError && <p className="text-red-400 text-sm mb-4">{loginError}</p>}
               <button
-                onClick={() => setShowLogin(false)}
-                className="w-full py-2 text-indigo-400 text-sm"
+                onClick={async () => {
+                  if (!otpCode || otpCode.length < 6) {
+                    setLoginError('请输入8位验证码');
+                    return;
+                  }
+                  setLoginLoading(true);
+                  setLoginError('');
+                  try {
+                    // 验证 OTP
+                    const { error } = await supabase.auth.verifyOtp({
+                      email: email,
+                      token: otpCode,
+                      type: 'magiclink'
+                    });
+                    if (error) {
+                      // 尝试 email 类型
+                      const { error: emailError } = await supabase.auth.verifyOtp({
+                        email: email,
+                        token: otpCode,
+                        type: 'email'
+                      });
+                      if (emailError) throw emailError;
+                    }
+                    // 验证成功，页面会自动刷新通过 Auth state change 登录
+                  } catch (e: any) {
+                    console.error('[Landing] OTP verify error:', e);
+                    setLoginError(e.message || '验证码无效，请重试');
+                  } finally {
+                    setLoginLoading(false);
+                  }
+                }}
+                disabled={loginLoading || otpCode.length < 8}
+                className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-700 text-white font-bold rounded-lg"
               >
-                ← Back to Home
+                {loginLoading ? '验证中...' : '确认登录'}
+              </button>
+              <button
+                onClick={handleResendCode}
+                disabled={loginLoading}
+                className="w-full py-2 text-indigo-400 text-sm mt-3"
+              >
+                {loginLoading ? '发送中...' : '重新发送验证码'}
+              </button>
+              <button
+                onClick={resetLoginForm}
+                className="w-full py-2 text-slate-500 text-sm"
+              >
+                ← 使用其他邮箱
               </button>
             </div>
-          )}
-          
-          {sent && (
-            <button
-              onClick={() => setShowLogin(false)}
-              className="w-full mt-4 py-2 text-slate-500 text-sm"
-            >
-              ← Back to Home
-            </button>
           )}
         </div>
       </div>
@@ -223,9 +311,9 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, lang }) => {
 
           {/* CTA Button */}
           <div className="text-center mb-16">
-            <div className="flex gap-4 justify-center">
+            <div className="flex gap-4 justify-center flex-wrap">
               <button
-                onClick={() => setShowLogin(true)}
+                onClick={() => { console.log('[Landing] Get Started clicked'); setShowLogin(true); }}
                 className="px-8 py-4 bg-indigo-600 hover:bg-indigo-500 text-white text-lg font-bold rounded-full transition-all shadow-lg shadow-indigo-500/30 hover:shadow-indigo-500/50 transform hover:scale-105"
               >
                 {lang === 'zh' ? '🚀 开始使用' : '🚀 Get Started'}
@@ -238,7 +326,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, lang }) => {
               </a>
               {/* Developer upload button */}
               <button
-                onClick={() => setShowUpload(true)}
+                onClick={() => { console.log('[Landing] Upload clicked'); setShowUpload(true); }}
                 className="px-6 py-4 bg-emerald-600 hover:bg-emerald-500 text-white text-lg font-bold rounded-full transition-all shadow-lg shadow-emerald-500/30"
               >
                 📤 {lang === 'zh' ? '上传Demo' : 'Upload Demo'}
@@ -338,8 +426,11 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, lang }) => {
                   <li key={i}>✓ {f}</li>
                 ))}
               </ul>
-              <button className={`w-full py-2 rounded-lg text-sm ${plan.popular ? 'bg-indigo-600 hover:bg-indigo-500' : 'bg-slate-800 hover:bg-slate-700'} text-white transition-colors`}>
-                {lang === 'zh' ? '联系我们' : 'Contact Sales'}
+              <button 
+                onClick={() => onOpenPricing?.()}
+                className={`w-full py-2 rounded-lg text-sm ${plan.popular ? 'bg-indigo-600 hover:bg-indigo-500' : 'bg-slate-800 hover:bg-slate-700'} text-white transition-colors`}
+              >
+                {lang === 'zh' ? '立即订阅' : 'Subscribe Now'}
               </button>
             </div>
           ))}

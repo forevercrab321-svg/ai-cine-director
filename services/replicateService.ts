@@ -26,11 +26,17 @@ const getAuthHeaders = async () => {
 };
 
 const getConfig = () => {
-  if (typeof window === 'undefined') return { useMockMode: false }; // Default to real in prod/dev if backend ready
-  const saved = localStorage.getItem('app_settings');
-  if (!saved) return { useMockMode: false }; // Default false to enforce credit check
-  const parsed = JSON.parse(saved);
-  return { useMockMode: parsed.useMockMode ?? false };
+  if (typeof window === 'undefined') return { useMockMode: false };
+  try {
+    const saved = localStorage.getItem('app_settings');
+    if (!saved) return { useMockMode: false };
+    const parsed = JSON.parse(saved);
+    return { useMockMode: parsed.useMockMode ?? false };
+  } catch {
+    // ★ Guard against corrupted/stale localStorage data from schema migrations
+    console.warn('[replicateService] Failed to parse app_settings from localStorage, using defaults');
+    return { useMockMode: false };
+  }
 };
 
 // 使用types.ts中的统一模型路径映射
@@ -110,6 +116,7 @@ export const generateImage = async (
 interface VideoOptions {
   duration?: number;  // 4, 6, 8 秒
   aspectRatio?: string;  // "16:9" | "9:16"
+  audioPrompt?: string;  // 音频描述
   [key: string]: any;
 }
 
@@ -135,6 +142,7 @@ function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string
   }
   const duration = options.duration || 6;
   const aspectRatio = options.aspectRatio || '16:9';
+  const audioPrompt = options.audioPrompt || '';  // 获取音频描述
 
   // ★ 每个模型的参数和一致性策略都不同，必须分别处理
   switch (modelType) {
@@ -149,12 +157,17 @@ function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string
       // Runway Gen-4 Turbo: 极速生成
       return { prompt: finalPrompt, image: imageUrl, num_frames: duration * 24, seed: 142857 };
     case 'hailuo_02_fast':
-      // Hailuo-02: 使用 first_frame_image
-      return { prompt: finalPrompt, first_frame_image: imageUrl, duration, resolution: "512P", aspect_ratio: aspectRatio, prompt_optimizer: true, seed: 142857 };
+      // Hailuo-02: 使用 first_frame_image，支持音频生成
+      const hailuoInput: any = { prompt: finalPrompt, first_frame_image: imageUrl, duration, resolution: "512P", aspect_ratio: aspectRatio, prompt_optimizer: true, seed: 142857 };
+      // 如果有音频描述，添加到输入中（MiniMax Hailuo支持audio参数）
+      if (audioPrompt) {
+        hailuoInput.audio_prompt = audioPrompt;
+      }
+      return hailuoInput;
     case 'seedance_lite':
       // Seedance: 支持首帧尾帧链接
       return { prompt: finalPrompt, image: imageUrl, duration, resolution: "720p", seed: 142857 };
-    
+
     // 其他模型
     case 'kling_2_5':
       // Kling 2.5: 高质量 I2V，cfg_scale 控制与首帧的贴合度

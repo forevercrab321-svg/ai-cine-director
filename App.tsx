@@ -46,7 +46,7 @@ const MainLayout: React.FC = () => {
   const [sceneCount, setSceneCount] = useState<number>(5);
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  // const [isPricingOpen, setIsPricingOpen] = useState(false); // Moved to Context
+  const [paymentNotification, setPaymentNotification] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
 
   // ★ Browser history management — pressing back navigates within workflow
   const setWorkflowStage = (stage: 'input' | 'scripting' | 'shots' | 'production') => {
@@ -78,18 +78,30 @@ const MainLayout: React.FC = () => {
   // ★ Stripe Payment Success Callback
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('success') === 'true') {
-      // Clean URL to remove query params
+    // Handle multiple parameter formats:
+    // - Stripe default: success=true, canceled=true
+    // - API custom: payment=success, subscription=success, subscription=cancelled
+    const isSuccess = params.get('success') === 'true' ||
+      params.get('payment') === 'success' ||
+      params.get('subscription') === 'success';
+    const isCanceled = params.get('canceled') === 'true' ||
+      params.get('subscription') === 'cancelled' ||
+      params.get('payment') === 'cancelled';
+
+    if (isSuccess) {
       window.history.replaceState({ stage: 'input' }, '', window.location.pathname + '#input');
       // Credits are added by backend webhook (add_credits RPC).
       // Force refresh balance to reflect new credits immediately
       setTimeout(async () => {
-        await refreshBalance().catch(() => {});
-        alert('✅ 支付成功！额度已添加到您的账户。');
+        await refreshBalance().catch(() => { });
+        setPaymentNotification({ type: 'success', msg: '✅ 支付成功！额度已添加到您的账户。' });
+        setTimeout(() => setPaymentNotification(null), 6000);
       }, 1500); // Wait a bit for webhook to process
     }
-    if (params.get('canceled') === 'true') {
+    if (isCanceled) {
       window.history.replaceState({ stage: 'input' }, '', window.location.pathname + '#input');
+      setPaymentNotification({ type: 'error', msg: '❌ 支付已取消' });
+      setTimeout(() => setPaymentNotification(null), 4000);
     }
   }, [refreshBalance]);
 
@@ -150,29 +162,42 @@ const MainLayout: React.FC = () => {
   // 1. No session at all → Show LandingPage (marketing page)
   // 2. Has session but no profile → Show AuthPage (complete profile)
   // 3. Has session and profile → Show main app
-  
+
   if (!isAuthenticated) {
     // Completely new user - show marketing landing page
     return (
-      <LandingPage
-        lang={settings.lang}
-        onGetStarted={() => {
-          // Scroll to login section or show login modal
-          window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-        }}
-      />
+      <>
+        <PricingModal
+          isOpen={isPricingOpen} onClose={closePricingModal}
+          onUpgrade={() => { }}
+        />
+        <LandingPage
+          lang={settings.lang}
+          onGetStarted={() => {
+            // Scroll to login section or show login modal
+            window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+          }}
+          onOpenPricing={openPricingModal}
+        />
+      </>
     );
   }
-  
+
   if (!profile) {
     // Has session but needs to complete profile
     return (
-      <AuthPage
-        lang={settings.lang}
-        onLogin={() => {}}
-        onCompleteProfile={completeProfile}
-        hasProfile={false}
-      />
+      <>
+        <PricingModal
+          isOpen={isPricingOpen} onClose={closePricingModal}
+          onUpgrade={() => { }}
+        />
+        <AuthPage
+          lang={settings.lang}
+          onLogin={() => { }}
+          onCompleteProfile={completeProfile}
+          hasProfile={false}
+        />
+      </>
     );
   }
 
@@ -199,6 +224,16 @@ const MainLayout: React.FC = () => {
       />
 
       <div className="max-w-5xl mx-auto px-6 pt-12">
+        {/* ★ Payment notification toast — replaces browser alert() */}
+        {paymentNotification && (
+          <div className={`fixed top-4 right-4 z-50 flex items-center gap-3 px-5 py-3 rounded-xl shadow-2xl text-sm font-semibold animate-in fade-in slide-in-from-top-2 duration-300 ${paymentNotification.type === 'success'
+              ? 'bg-emerald-600 text-white border border-emerald-400/40'
+              : 'bg-red-600 text-white border border-red-400/40'
+            }`}>
+            <span>{paymentNotification.msg}</span>
+            <button onClick={() => setPaymentNotification(null)} className="ml-2 opacity-70 hover:opacity-100 text-lg leading-none">&times;</button>
+          </div>
+        )}
         <Header
           lang={settings.lang}
           toggleLang={toggleLang}
@@ -211,7 +246,7 @@ const MainLayout: React.FC = () => {
         <div className="mb-8 flex items-center justify-between animate-in fade-in duration-700">
           <div>
             <p className="text-xs text-indigo-400 font-bold uppercase tracking-widest">{t(settings.lang, 'welcomeBack')}</p>
-            <h2 className="text-xl font-bold text-white">{profile.name} <span className="text-slate-500 font-normal">| {profile.role}</span></h2>
+            <h2 className="text-xl font-bold text-white">{profile?.name || profile?.email || '导演'} <span className="text-slate-500 font-normal">| {profile?.role || 'Creator'}</span></h2>
           </div>
         </div>
 
@@ -239,21 +274,19 @@ const MainLayout: React.FC = () => {
                 <span className="text-sm text-slate-400">快速选择：</span>
                 <button
                   onClick={() => setSceneCount(10)}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all border ${
-                    sceneCount === 10
+                  className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all border ${sceneCount === 10
                       ? 'bg-indigo-600 border-indigo-500 text-white'
                       : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500'
-                  }`}
+                    }`}
                 >
                   10 场景
                 </button>
                 <button
                   onClick={() => setSceneCount(20)}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all border ${
-                    sceneCount === 20
+                  className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all border ${sceneCount === 20
                       ? 'bg-indigo-600 border-indigo-500 text-white'
                       : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500'
-                  }`}
+                    }`}
                 >
                   20 场景
                 </button>

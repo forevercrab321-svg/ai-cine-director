@@ -222,6 +222,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
         project.id,
         project.scenes,
         finalAnchor,
+        settings.videoModel,  // ★ Use user-selected model (was always hardcoded to hailuo_02_fast)
         (progress) => {
           const sNum = project.scenes[progress.index].scene_number;
           if (progress.stage === "image_done") {
@@ -272,7 +273,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
   // ★ 一键成片 - 视频拼接合成
   const handleFinalizeVideo = async () => {
     if (!isAuthenticated) return alert("请先登录以使用一键成片功能。");
-    
+
     // 检查是否有可用的视频
     const videoEntries = Object.entries(sceneVideoUrls).filter(([_, url]) => url);
     if (videoEntries.length === 0) {
@@ -325,7 +326,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
       });
 
       const result = await response.json();
-      
+
       if (result.success) {
         setVideoEditJob({
           jobId: result.job_id,

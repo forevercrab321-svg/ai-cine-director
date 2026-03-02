@@ -49,7 +49,7 @@ interface AppContextType {
   isAuthenticated: boolean;
   profile: UserProfile | null;
   settings: AppSettings;
-  
+
   // ★ GOD MODE: Entitlement state from backend
   entitlement: EntitlementState;
   fetchEntitlement: () => Promise<void>;
@@ -77,9 +77,11 @@ interface AppContextType {
 
 // ★ No free credits — users must purchase credits via Stripe
 
-// ★ DEVELOPER EMAIL REGISTRY - for automatic admin mode detection
+// ★ DEVELOPER EMAIL REGISTRY — must stay in sync with backend DEV_EMAIL_ALLOWLIST env var
+// The backend /api/entitlement is the authoritative source; this is only a fast-path offline check.
 const DEVELOPER_EMAILS = new Set([
-  'forevercrab321@gmail.com'
+  'forevercrab321@gmail.com',
+  'monsterlee@gmail.com',  // ★ was missing; now synced with backend HARDCODED_DEV_EMAILS
 ]);
 
 // ★ Helper function to check if email is a developer/admin
@@ -89,7 +91,7 @@ const isDeveloperEmail = (email: string): boolean => {
 };
 
 const defaultSettings: AppSettings = {
-  lang: 'en',
+  lang: 'zh',
   imageModel: 'flux',
   videoModel: 'hailuo_02_fast',
   videoStyle: 'pop_mart',
@@ -139,7 +141,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     monthlyUsage: 0,
     planType: 'creator'
   });
-  
+
   // ★ GOD MODE: Entitlement state from backend
   const [entitlement, setEntitlement] = useState<EntitlementState>(defaultEntitlement);
 
@@ -152,7 +154,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const hasAutoShownPaywall = useRef(false);
 
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
-  
+
   // ★ Fetch entitlement from backend (GOD MODE check)
   const fetchEntitlement = useCallback(async () => {
     try {
@@ -161,20 +163,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setEntitlement({ ...defaultEntitlement, loading: false });
         return;
       }
-      
+
       const response = await fetch('/api/entitlement', {
         headers: {
           'Authorization': `Bearer ${currentSession.access_token}`,
           'Content-Type': 'application/json',
         },
       });
-      
+
       if (!response.ok) {
         throw new Error(`Entitlement check failed: ${response.status}`);
       }
-      
+
       const data = await response.json();
-      
+
       setEntitlement({
         isDeveloper: data.isDeveloper ?? false,
         isAdmin: data.isAdmin ?? false,
@@ -186,7 +188,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         loading: false,
         error: null,
       });
-      
+
       // Sync with userState if GOD MODE
       if (data.isDeveloper || data.isAdmin) {
         balanceRef.current = 999999;
@@ -198,7 +200,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }));
         console.log('[GOD MODE] ✅ Developer/Admin mode activated via /api/entitlement');
       }
-      
+
     } catch (err: any) {
       console.error('[Entitlement] Error:', err);
       setEntitlement(prev => ({ ...prev, loading: false, error: err.message }));
@@ -216,7 +218,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const fetchProfile = async (userId: string, userEmail?: string) => {
     try {
       console.log(`[PROFILE] Fetching profile for user: ${userId}, email: ${userEmail}`);
-      
+
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
@@ -267,7 +269,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         // ★ AUTO-DETECT DEVELOPER: Check if email is in developer registry
         const isDeveloper = userEmail ? isDeveloperEmail(userEmail) : data.is_admin;
         console.log(`[PROFILE] isDeveloper check: email="${userEmail}", isDeveloper=${isDeveloper}, isDeveloperEmail result=${userEmail ? isDeveloperEmail(userEmail) : 'N/A'}`);
-        
+
         // Restore God Mode from LocalStorage if active
         const isGodMode = localStorage.getItem('ai_cine_god_mode') === 'true';
         console.log(`[PROFILE] isGodMode=${isGodMode}, data.is_admin=${data.is_admin}`);
@@ -422,13 +424,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // ★ NEW: Refresh balance from DB (call after API operations)
   const refreshBalance = async () => {
     if (!session?.user) return;
-    
+
     // ★ IMPORTANT: If user is admin, don't override their 999999 balance
     if (userState.isAdmin) {
       console.log(`[CREDIT SYNC] Skipping refresh for admin user (keeping balance=${balanceRef.current})`);
       return;
     }
-    
+
     try {
       const { data, error } = await supabase
         .from('profiles')

@@ -103,7 +103,7 @@ const Header: React.FC<HeaderProps> = ({ lang, toggleLang, onOpenSettings, userS
 
         {/* Credit Badge - Visible to ALL users (shows 50 by default) */}
         <button
-          onClick={onUpgrade}
+          onClick={() => { console.log('[Header] Credits button clicked, calling onUpgrade'); onUpgrade(); }}
           className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all group cursor-pointer mr-1
             ${userState.isAdmin
               ? 'bg-slate-950 border-amber-500/50 shadow-lg shadow-amber-500/20'

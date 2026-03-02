@@ -8,6 +8,6 @@
         }
     },
     "rewrites": [
-        { "source": "/api/:path*", "destination": "/api/index.ts" }
+        { "source": "/api/(.*)", "destination": "/api/index.ts" }
     ]
 }

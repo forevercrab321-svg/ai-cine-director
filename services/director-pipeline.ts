@@ -102,6 +102,7 @@ export const generateSceneChain = async (
   sceneId: string,
   storyboard: any[],
   extractedAnchor: string,
+  videoModel: VideoModel = 'hailuo_02_fast',  // ★ Now accepts user-selected model (default: hailuo)
   onProgress?: (data: {
     index: number;
     stage: string;
@@ -149,28 +150,37 @@ export const generateSceneChain = async (
       onProgress({ index: i, stage: "video_starting" });
     }
 
-    // ★ 双重死锁：1)视觉锁(尾帧图片) 2)文字锁(角色锚点注入 prompt)
-    // 不允许只发动作描述！锚点必须焊入每一镜的 prompt，防止大模型角色幻觉
+    // ★ 改进版字符锁：保留角色特征，但使用更自然的格式避免API过滤
     const rawVideoPrompt = shot.video_prompt || shot.video_motion_prompt || `Cinematic motion, scene ${i + 1}`;
-    const lockedVideoPrompt = extractedAnchor
-      ? `${rawVideoPrompt}. IDENTITY LOCK: ${extractedAnchor}.`
+
+    // 使用更自然的描述格式，避免触发API过滤
+    const characterNote = extractedAnchor
+      ? `Keep character appearance consistent with first frame: ${extractedAnchor}`
+      : '';
+
+    // 格式更自然，不使用"LOCK"等可能触发过滤的词汇
+    const lockedVideoPrompt = characterNote
+      ? `${rawVideoPrompt}. ${characterNote}`
       : rawVideoPrompt;
 
-    console.log(`🔒 [Shot ${i + 1}] Locked prompt: ${lockedVideoPrompt.slice(0, 120)}...`);
+    console.log(`🔒 [Shot ${i + 1}] Character anchor: ${characterNote ? 'ACTIVE' : 'NONE'}`);
 
     // 注意：这里所有的视频都统一锁定同一个模型（例如 hailuo_02_fast），保证运动物理引擎一致
+    // 传入音频提示（如果shot有音频描述）
+    const audioPrompt = shot.audio_description || shot.dialogue_text || '';
     const videoPrediction = await startVideoTask(
       lockedVideoPrompt,
       currentStartImage,
-      "hailuo_02_fast" as VideoModel,
+      videoModel,  // ★ Use user-selected model instead of hardcoded hailuo_02_fast
       "none" as VideoStyle,
       "storyboard" as GenerationMode,
       "standard" as VideoQuality,
-      "6s" as unknown as VideoDuration,
+      6 as unknown as VideoDuration,  // Fixed: use number 6 instead of string "6s"
       "24fps" as unknown as VideoFps,
       "720p" as VideoResolution,
       extractedAnchor,   // Still passed here so buildVideoInput can also append it
-      "16:9"
+      "16:9",
+      { audioPrompt }  // Pass audio prompt
     );
 
     if (onProgress) {
