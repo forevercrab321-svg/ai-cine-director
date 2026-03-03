@@ -1252,30 +1252,23 @@ app.post('/api/extract-frame', requireAuth, async (req: any, res: any) => {
         const tmpVideo = path.default.join(tmpDir, `frame_vid_${Date.now()}.mp4`);
         const tmpFrame = path.default.join(tmpDir, `frame_out_${Date.now()}.jpg`);
 
-        // 1) Download video server-side (no CORS issue)
-        const videoResp = await fetch(videoUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AI-Cine-Director/1.0)' }
-        });
-        if (!videoResp.ok) throw new Error(`Failed to download video: ${videoResp.status}`);
-        const videoBuffer = Buffer.from(await videoResp.arrayBuffer());
-        fs.default.writeFileSync(tmpVideo, videoBuffer);
+        console.log('[FrameExtract] Running ffmpeg directly on URL...');
 
-        // 2) Extract last frame via ffmpeg-static
-        // -sseof -0.5: seek to 0.5s before end; -vframes 1: one frame; -q:v 2: high JPEG quality
+        // 2) Extract last frame via ffmpeg-static directly from URL
+        // Using -sseof -0.5 is risky with remote URLs if the server doesn't support range requests.
+        // Instead, we can try to get the last frame safely or just rely on Vercel network speed.
         try {
-            await execAsync(`"${ffmpegBin}" -y -sseof -0.5 -i "${tmpVideo}" -vframes 1 -q:v 2 "${tmpFrame}" 2>/dev/null`);
+            await execAsync(`"${ffmpegBin}" -y -sseof -0.5 -i "${videoUrl}" -vframes 1 -q:v 2 "${tmpFrame}" 2>/dev/null`);
             const frameBuffer = fs.default.readFileSync(tmpFrame);
             const base64 = frameBuffer.toString('base64');
 
             // Cleanup temp files
-            try { fs.default.unlinkSync(tmpVideo); } catch (_) { }
             try { fs.default.unlinkSync(tmpFrame); } catch (_) { }
 
             console.log('[FrameExtract] ffmpeg-static extraction success, frame size:', frameBuffer.length, 'bytes');
             return res.json({ frame: `data:image/jpeg;base64,${base64}` });
         } catch (ffmpegErr: any) {
             console.error('[FrameExtract] ffmpeg failed:', ffmpegErr.message);
-            try { fs.default.unlinkSync(tmpVideo); } catch (_) { }
             try { fs.default.unlinkSync(tmpFrame); } catch (_) { }
 
             // ★ Return clear error instead of raw video URL (which breaks Replicate)

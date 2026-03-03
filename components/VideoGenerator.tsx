@@ -44,6 +44,7 @@ const DownloadIcon = () => (
 
 interface VideoGeneratorProps {
   project: StoryboardProject;
+  referenceImageDataUrl?: string;
   onBackToScript: () => void;
 }
 
@@ -81,6 +82,7 @@ const friendlyError = (msg: string) => {
 
 const VideoGenerator: React.FC<VideoGeneratorProps> = ({
   project,
+  referenceImageDataUrl,
   onBackToScript,
 }) => {
   const {
@@ -107,8 +109,20 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
   const [sceneStatus, setSceneStatus] = useState<
     Record<number, { status: string; message?: string; error?: string }>
   >({});
-  const [sceneImages, setSceneImages] = useState<Record<number, string>>({});
-  const [sceneVideoUrls, setSceneVideoUrls] = useState<Record<number, string>>({});
+  const [sceneImages, setSceneImages] = useState<Record<number, string>>(() => {
+    const init: Record<number, string> = {};
+    project.scenes?.forEach((s: any) => {
+      if (s.image_url) init[s.scene_number || s.shot_number || s.shot_id] = s.image_url;
+    });
+    return init;
+  });
+  const [sceneVideoUrls, setSceneVideoUrls] = useState<Record<number, string>>(() => {
+    const init: Record<number, string> = {};
+    project.scenes?.forEach((s: any) => {
+      if (s.video_url) init[s.scene_number || s.shot_number || s.shot_id] = s.video_url;
+    });
+    return init;
+  });
   const [sceneAudioUrls, setSceneAudioUrls] = useState<Record<number, string>>({}); // ★ Auto-audio
   const [scenePredictionIds, setScenePredictionIds] = useState<Record<number, string>>({});
   const [chainError, setChainError] = useState<string | null>(null); // ★ replaces alert()
@@ -262,6 +276,9 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
         project.scenes,
         finalAnchor,
         settings.videoModel,
+        settings.imageModel,
+        referenceImageDataUrl,
+        sceneVideoUrls, // ★ Pass existing videos so the pipeline can resume gracefully
         (progress) => {
           const scene = project.scenes[progress.index];
           const sNum = scene.scene_number;

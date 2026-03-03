@@ -227,8 +227,8 @@ const MainLayout: React.FC = () => {
         {/* ★ Payment notification toast — replaces browser alert() */}
         {paymentNotification && (
           <div className={`fixed top-4 right-4 z-50 flex items-center gap-3 px-5 py-3 rounded-xl shadow-2xl text-sm font-semibold animate-in fade-in slide-in-from-top-2 duration-300 ${paymentNotification.type === 'success'
-              ? 'bg-emerald-600 text-white border border-emerald-400/40'
-              : 'bg-red-600 text-white border border-red-400/40'
+            ? 'bg-emerald-600 text-white border border-emerald-400/40'
+            : 'bg-red-600 text-white border border-red-400/40'
             }`}>
             <span>{paymentNotification.msg}</span>
             <button onClick={() => setPaymentNotification(null)} className="ml-2 opacity-70 hover:opacity-100 text-lg leading-none">&times;</button>
@@ -275,8 +275,8 @@ const MainLayout: React.FC = () => {
                 <button
                   onClick={() => setSceneCount(10)}
                   className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all border ${sceneCount === 10
-                      ? 'bg-indigo-600 border-indigo-500 text-white'
-                      : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500'
+                    ? 'bg-indigo-600 border-indigo-500 text-white'
+                    : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500'
                     }`}
                 >
                   10 场景
@@ -284,8 +284,8 @@ const MainLayout: React.FC = () => {
                 <button
                   onClick={() => setSceneCount(20)}
                   className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all border ${sceneCount === 20
-                      ? 'bg-indigo-600 border-indigo-500 text-white'
-                      : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500'
+                    ? 'bg-indigo-600 border-indigo-500 text-white'
+                    : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500'
                     }`}
                 >
                   20 场景
@@ -402,6 +402,7 @@ const MainLayout: React.FC = () => {
         {workflowStage === 'production' && project && (
           <VideoGenerator
             project={project}
+            referenceImageDataUrl={referenceImageDataUrl}
             onBackToScript={() => setWorkflowStage('scripting')}
           />
         )}

@@ -27,6 +27,9 @@ interface SettingsModalProps {
   videoResolution: VideoResolution;
   setVideoResolution: (r: VideoResolution) => void;
 
+  voice?: any;
+  setVoice?: (v: any) => void;
+
   // God Mode Injection
   onEnableGodMode: () => void;
 }

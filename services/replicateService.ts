@@ -149,16 +149,16 @@ function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string
     // ★ Top 5 性价比模型
     case 'wan_2_2_fast':
       // Wan: I2V 原生支持，image 参数是首帧
-      return { prompt: finalPrompt, image: imageUrl, prompt_optimizer: true, seed: 142857 };
+      return { prompt: finalPrompt, image: imageUrl, prompt_optimizer: false, seed: 142857 };
     case 'wan_2_2_t2v':
       // Wan T2V: 文本转视频
-      return { prompt: finalPrompt, prompt_optimizer: true, seed: 142857 };
+      return { prompt: finalPrompt, prompt_optimizer: false, seed: 142857 };
     case 'runway_gen4_turbo':
       // Runway Gen-4 Turbo: 极速生成
       return { prompt: finalPrompt, image: imageUrl, num_frames: duration * 24, seed: 142857 };
     case 'hailuo_02_fast':
       // Hailuo-02: 使用 first_frame_image，支持音频生成
-      const hailuoInput: any = { prompt: finalPrompt, first_frame_image: imageUrl, duration, resolution: "512P", aspect_ratio: aspectRatio, prompt_optimizer: true, seed: 142857 };
+      const hailuoInput: any = { prompt: finalPrompt, first_frame_image: imageUrl, duration, resolution: "512P", aspect_ratio: aspectRatio, prompt_optimizer: false, seed: 142857 };
       // 如果有音频描述，添加到输入中（MiniMax Hailuo支持audio参数）
       if (audioPrompt) {
         hailuoInput.audio_prompt = audioPrompt;
@@ -185,11 +185,11 @@ function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string
       // Google Veo 3 Fast: 最高质量 + 原生音频
       return { prompt: finalPrompt, image: imageUrl, duration, generate_audio: true, seed: 142857 };
     case 'hailuo_live':
-      return { prompt: finalPrompt, first_frame_image: imageUrl, prompt_optimizer: true, seed: 142857 };
+      return { prompt: finalPrompt, first_frame_image: imageUrl, prompt_optimizer: false, seed: 142857 };
     case 'google_gemini_nano_banana':
-      return { prompt: finalPrompt, first_frame_image: imageUrl, prompt_optimizer: true, seed: 142857 };
+      return { prompt: finalPrompt, first_frame_image: imageUrl, prompt_optimizer: false, seed: 142857 };
     default:
-      return { prompt: finalPrompt, first_frame_image: imageUrl, prompt_optimizer: true, seed: 142857 };
+      return { prompt: finalPrompt, first_frame_image: imageUrl, prompt_optimizer: false, seed: 142857 };
   }
 }
 

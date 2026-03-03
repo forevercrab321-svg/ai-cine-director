@@ -6,6 +6,7 @@ import {
 import { supabase } from '../lib/supabaseClient';
 import type {
   VideoModel,
+  ImageModel,
   VideoStyle,
   GenerationMode,
   VideoQuality,
@@ -114,6 +115,9 @@ export const generateSceneChain = async (
   storyboard: any[],
   extractedAnchor: string,
   videoModel: VideoModel = 'hailuo_02_fast',  // ★ Now accepts user-selected model (default: hailuo)
+  imageModel: ImageModel = 'flux', // ★ user-selected image model
+  referenceImageBase64?: string, // ★ NEW: Fast forwarding base64 image reference to backend
+  existingSceneUrls: Record<number, string> = {}, // ★ RESUME SUPPORT
   onProgress?: (data: {
     index: number;
     stage: string;
@@ -127,18 +131,44 @@ export const generateSceneChain = async (
 
   for (let i = 0; i < storyboard.length; i++) {
     const shot = storyboard[i];
+    const sNum = shot.scene_number;
     let currentStartImage: string;
 
     console.log(`\n🎬 --- 开始制作第 ${i + 1} 镜 ---`);
+
+    // ★ RESUME LOGIC: Check if this scene is already fully generated
+    if (existingSceneUrls[sNum]) {
+      console.log(`⏭️ [第 ${i + 1} 镜] 检测到该镜头已生成视频，跳过重新生成，直接提取尾帧接力...`);
+      const existingUrl = existingSceneUrls[sNum];
+      videoUrls.push(existingUrl);
+
+      if (onProgress) {
+        onProgress({ index: i, stage: "video_done", videoUrl: existingUrl });
+      }
+
+      if (i < storyboard.length - 1) {
+        try {
+          previousVideoLastFrame = await extractLastFrameServerSide(existingUrl);
+          const frameType = previousVideoLastFrame.startsWith('data:') ? 'Base64' : 'URL';
+          console.log(`✅ [Shot ${i + 1} SKIP] 尾帧截取成功 (${frameType})`);
+        } catch (frameErr: any) {
+          console.error(`❌ [Shot ${i + 1} SKIP] 尾帧截取失败！错误: ${frameErr.message}`);
+          throw frameErr;
+        }
+      }
+      continue; // Skip the heavy generation part
+    }
+
     if (i === 0) {
-      console.log("🚀 [第一镜] 强制使用 Flux 引擎生成初始起步图...");
+      console.log(`🚀 [第一镜] 强制使用 ${imageModel} 引擎生成初始起步图...`);
       const imgPrompt = shot.image_prompt || shot.visual_description || `Cinematic shot, Scene ${i + 1}`;
       currentStartImage = await generateImage(
         imgPrompt,
-        "flux_schnell",
+        imageModel,
         "none",
         "16:9",
-        extractedAnchor
+        extractedAnchor,
+        referenceImageBase64 // ★ pass image so Pulid clones the face
       );
       if (onProgress) {
         onProgress({ index: i, stage: "image_done", imageUrl: currentStartImage });
