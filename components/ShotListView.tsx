@@ -18,6 +18,7 @@ import { generateVoicesForScenes } from '../services/elevenLabsService';
 interface ShotListViewProps {
     project: StoryboardProject;
     referenceImageDataUrl?: string;  // ★ Compressed base64 for Flux Redux consistency
+    shotCount: number; // ★ 新增：镜头数量（5/10/15/20/25/30）
     onBack: () => void;
 }
 
@@ -328,7 +329,7 @@ const SceneSection: React.FC<{
 // ═══════════════════════════════════════════════════════════════
 // Main ShotListView component
 // ═══════════════════════════════════════════════════════════════
-const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageDataUrl, onBack }) => {
+const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageDataUrl, shotCount, onBack }) => {
     const { settings, isAuthenticated, openPricingModal, hasEnoughCredits, refreshBalance } = useAppContext();
 
     // ★ Generate a stable project ID if missing (for legacy projects)
@@ -403,7 +404,7 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                 visual_style: project.visual_style,
                 character_anchor: project.character_anchor,
                 language: settings.lang,
-                num_shots: 5,
+                num_shots: shotCount, // ★ 改为使用用户选择的shotCount，而不是硬编码的5
             });
 
             setShotsByScene(prev => ({ ...prev, [sNum]: result.shots }));
@@ -419,7 +420,7 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                 return next;
             });
         }
-    }, [isAuthenticated, hasEnoughCredits, openPricingModal, project, settings.lang, refreshBalance]);
+    }, [isAuthenticated, hasEnoughCredits, openPricingModal, project, settings.lang, refreshBalance, shotCount]); // ★ 添加shotCount到依赖
 
     const handleUpdateShot = useCallback((sceneNum: number, shotId: string, updates: Partial<Shot>) => {
         setShotsByScene(prev => {

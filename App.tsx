@@ -44,6 +44,7 @@ const MainLayout: React.FC = () => {
   const [referenceImagePreview, setReferenceImagePreview] = useState<string | null>(null);
   const [referenceImageDataUrl, setReferenceImageDataUrl] = useState<string>('');  // ★ Compressed base64 for Flux Redux
   const [sceneCount, setSceneCount] = useState<number>(5);
+  const [shotCount, setShotCount] = useState<number>(5); // ★ 新增：镜头数量快速选择
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [paymentNotification, setPaymentNotification] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
@@ -272,24 +273,39 @@ const MainLayout: React.FC = () => {
               <label className="block text-sm font-semibold text-slate-300 mb-3">📽️ 场景数量 / Number of Scenes</label>
               <div className="flex items-center gap-2">
                 <span className="text-sm text-slate-400">快速选择：</span>
-                <button
-                  onClick={() => setSceneCount(10)}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all border ${sceneCount === 10
-                    ? 'bg-indigo-600 border-indigo-500 text-white'
-                    : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500'
-                    }`}
-                >
-                  10 场景
-                </button>
-                <button
-                  onClick={() => setSceneCount(20)}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all border ${sceneCount === 20
-                    ? 'bg-indigo-600 border-indigo-500 text-white'
-                    : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500'
-                    }`}
-                >
-                  20 场景
-                </button>
+                {[5, 10, 15, 20, 25, 30].map((count) => (
+                  <button
+                    key={count}
+                    onClick={() => setSceneCount(count)}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all border ${sceneCount === count
+                      ? 'bg-indigo-600 border-indigo-500 text-white'
+                      : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500'
+                      }`}
+                  >
+                    {count} 场景
+                  </button>
+                ))}
+                <span className="text-xs text-slate-500">(可选)</span>
+              </div>
+            </div>
+
+            {/* ★ 镜头数量快速选择 */}
+            <div className="mb-6">
+              <label className="block text-sm font-semibold text-slate-300 mb-3">🎬 镜头数量 / Number of Shots</label>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-slate-400">快速选择：</span>
+                {[5, 10, 15, 20, 25, 30].map((count) => (
+                  <button
+                    key={count}
+                    onClick={() => setShotCount(count)}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all border ${shotCount === count
+                      ? 'bg-indigo-600 border-indigo-500 text-white'
+                      : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500'
+                      }`}
+                  >
+                    {count} 镜头
+                  </button>
+                ))}
                 <span className="text-xs text-slate-500">(可选)</span>
               </div>
             </div>
@@ -395,6 +411,7 @@ const MainLayout: React.FC = () => {
           <ShotListView
             project={project}
             referenceImageDataUrl={referenceImageDataUrl}
+            shotCount={shotCount}
             onBack={() => setWorkflowStage('scripting')}
           />
         )}
