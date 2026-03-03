@@ -1366,6 +1366,11 @@ ${identityAnchor
                 : `Invent a detailed characterAnchor: ethnicity, age, face shape, eye color, hair, outfit, body type. Must match the "${visualStyle}" art style.`}
 Do NOT copy characterAnchor into the image_prompt. The image_prompt should focus on action and environment.
 
+**★ AUDIO & VOICEOVER (audio_description):**
+【MUST FILL】Every single shot must have a spoken line or inner monologue in \`audio_description\`. 
+This text will be sent to an AI Voice Synthesizer (ElevenLabs).
+It should be natural dialogue, breathing, or inner thoughts that match the action of the shot. (e.g. "I can't believe he's really gone...", or "Step right up, folks!")
+
 **Language Rule:**
 * **image_prompt**, **video_prompt** & **location**: ALWAYS in English.
 * **audio_description** & **project_title**: ${language === 'zh' ? "Chinese (Simplified)" : "English"}.

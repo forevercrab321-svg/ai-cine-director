@@ -45,17 +45,9 @@ export const saveStoryboard = async (
 
         if (!storyboardId) throw new Error("Failed to get storyboard ID");
 
-        // 2. Upsert Scenes
-        // We iterate over scenes. If scene has ID, update. If not, insert.
-        // However, upsert([array]) works best if we omit 'id' for new rows.
-        // Supabase JS client handles undefined keys in object?
-        // We need to be careful. Let's separate into update list and insert list?
-        // Or just loop sequentially for safety (less performant but simpler).
-        // Or upsert relies on primary key. If primary key is missing, it inserts (if using .upsert(), usually requires PK constraint).
-        // Actually, upsert() in Supabase works by checking PK. If no PK provided, it should insert IF we don't pass 'id'.
-
-        // Let's try upsert with the array.
-
+        // 2. Insert or Update Scenes
+        // Supabase upsert works best when we provide the PK for existing rows
+        // For new rows, we MUST omit the 'id' field entirely to let the DB generate it.
         const scenesPayload = project.scenes.map(scene => {
             const payload: any = {
                 storyboard_id: storyboardId,
@@ -64,24 +56,31 @@ export const saveStoryboard = async (
                 audio_description: scene.audio_description,
                 shot_type: scene.shot_type,
                 image_prompt: scene.image_prompt,
-                video_motion_prompt: scene.video_motion_prompt,
+                video_prompt: scene.video_prompt || scene.video_motion_prompt, // Legacy support
+                video_motion_prompt: scene.video_motion_prompt || scene.video_prompt,
                 image_url: scene.image_url,
                 video_url: scene.video_url
             };
-            if (scene.id) {
+
+            // Only attach ID if it's a valid existing UUID
+            if (scene.id && scene.id.includes('-')) {
                 payload.id = scene.id;
             }
             return payload;
         });
 
+        // Use upsert on the 'id' column constraint
         const { data: scenesData, error: scenesError } = await supabase
             .from('scenes')
-            .upsert(scenesPayload, { onConflict: 'id' }) // Use ID for conflict resolution
+            .upsert(scenesPayload, { onConflict: 'id' })
             .select();
 
-        if (scenesError) throw scenesError;
+        if (scenesError) {
+            console.error('[Supabase Upsert] Error saving scenes:', scenesError);
+            throw scenesError;
+        }
 
-        // Sort scenes by scene_number just in case
+        // Sort scenes by scene_number
         const sortedScenes = (scenesData as Scene[]).sort((a, b) => a.scene_number - b.scene_number);
 
         return {
