@@ -1209,7 +1209,8 @@ const geminiResponseSchema = {
                 },
                 required: ['scene_id', 'location', 'shots'],
             },
-            maxItems: 50, // ★ 场景数量最多50个（实际会被targetScenes限制）
+            // ★ 移除maxItems限制（会导致schema约束过多错误）
+            // 改用后端逻辑在生成后根据targetScenes进行切片过滤
         },
     },
     required: ['project_title', 'visual_style', 'characterAnchor', 'scenes'],
@@ -1333,55 +1334,38 @@ app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
         if (!storyIdea) return res.status(400).json({ error: 'Missing storyIdea' });
 
         const ai = getGeminiAI();
-        const systemInstruction = `
-**Role:** Professional Short Drama Screenwriter & Director of Photography.
-
-**★★★ CORE CONCEPT — SCENE & SHOT CONTINUITY ★★★**
-You are writing a SHORT DRAMA (短剧) broken into SCENES. Each scene contains multiple SHOTS.
-The story must flow seamlessly. DO NOT waste shots on preparation or backstory. Start with ACTION.
-
-**★★★ MANDATORY RULES FOR SHOTS ★★★**
-1. **shot_index === 0 (First Shot of a Scene):**
-   - \`image_prompt\`: 【必须详细填写】Describe the environment, character appearance, clothing, lighting, and action vividly. (e.g. "A girl in a red ski suit and goggles stands at the snowy mountain peak ready to sprint.")
-   - \`video_prompt\`: Describe the cinematic motion and physics. (e.g. "The girl pushes hard on her ski poles and glides forward, camera follows.")
-   
-2. **shot_index > 0 (Continuation Shots):**
-   - \`image_prompt\`: 【必须为空字符串 ""】The system will strictly reuse the last frame of the previous video. DO NOT output any image prompt here!
-   - \`video_prompt\`: 【必须是物理延续动作】Describe ONLY the continuation of the motion from the previous shot. (e.g. "The girl accelerates down a steep slope, kicking up massive snow, camera zooms to mid-shot.")
-
-**ANTI-PADDING RULES:**
-❌ NO generic "looking at scenery" filler shots.
-✅ Every shot must physically advance the action of the scene.
-
-**★ CHARACTER CONSISTENCY:**
-The "characterAnchor" is the protagonist's frozen visual identity.
-${identityAnchor
-                ? `Character is LOCKED to: "${identityAnchor}". Copy this EXACTLY into characterAnchor.`
-                : `Invent a detailed characterAnchor: ethnicity, age, face shape, eye color, hair, outfit, body type. Must match the "${visualStyle}" art style.`}
-Do NOT copy characterAnchor into the image_prompt. The image_prompt should focus on action and environment.
-
-**★ AUDIO & VOICEOVER (audio_description):**
-【MUST FILL】Every single shot must have a spoken line or inner monologue in \`audio_description\`. 
-This text will be sent to an AI Voice Synthesizer (ElevenLabs).
-It should be natural dialogue, breathing, or inner thoughts that match the action of the shot. (e.g. "I can't believe he's really gone...", or "Step right up, folks!")
-
-**Language Rule:**
-* **image_prompt**, **video_prompt** & **location**: ALWAYS in English.
-* **audio_description** & **project_title**: ${language === 'zh' ? "Chinese (Simplified)" : "English"}.
-
-**Output Format:** JSON strictly following the provided schema.
-`;
+        const systemInstruction = `You are a short drama screenwriter.
+Create scenes with shots. First shot of each scene: full image_prompt. Other shots: empty image_prompt (reuse last frame), only video_prompt (continuation motion).
+Every shot needs audio_description dialogue.
+${identityAnchor ? `Character: "${identityAnchor}".` : `Create characterAnchor matching style: "${visualStyle}".`}
+Language: image_prompt/video_prompt/location in English. audio_description/${language === 'zh' ? 'title in Chinese' : 'title in English'}.
+Output as valid JSON.`;
 
         let response;
         try {
             const promptContent = `Write a SHORT DRAMA (短剧) broken down into SCENES and SHOTS for: ${storyIdea}. Style: ${visualStyle}. Total expected shots: ~${targetScenes}.
 ★ CRITICAL: Scene 1 must START with the character ALREADY doing the core activity ("${storyIdea}"). Every shot must showcase a PHYSICAL CONTINUATION or a DIFFERENT moment of the activity.`;
 
-            response = await ai.models.generateContent({
-                model: 'gemini-2.0-flash',
-                contents: promptContent,
-                config: { systemInstruction, responseMimeType: 'application/json', responseSchema: geminiResponseSchema, temperature: 0.7 },
-            });
+            try {
+                // Try with schema first (Gemini 2.0 Flash)
+                response = await ai.models.generateContent({
+                    model: 'gemini-2.0-flash',
+                    contents: promptContent,
+                    config: { systemInstruction, responseMimeType: 'application/json', responseSchema: geminiResponseSchema, temperature: 0.7 },
+                });
+            } catch (schemaError: any) {
+                // If schema causes "too many states" error, fall back to text-only generation
+                if (schemaError.message?.includes('too many states') || schemaError.message?.includes('constraint')) {
+                    console.warn('[Gemini] Schema validation failed, falling back to text-only generation...');
+                    response = await ai.models.generateContent({
+                        model: 'gemini-2.0-flash',
+                        contents: promptContent + '\n\nOutput ONLY valid JSON, no schema validation needed.',
+                        config: { systemInstruction: systemInstruction + '\nOutput as raw JSON text only.' },
+                    });
+                } else {
+                    throw schemaError;
+                }
+            }
         } catch (initialError: any) {
             if (initialError.message?.includes('429') || initialError.message?.includes('Resource exhausted')) {
                 const promptContent = `Write a SHORT DRAMA (短剧) broken down into SCENES and SHOTS for: ${storyIdea}. Style: ${visualStyle}. Total expected shots: ~${targetScenes}.

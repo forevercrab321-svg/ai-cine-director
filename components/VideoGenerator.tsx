@@ -46,6 +46,7 @@ interface VideoGeneratorProps {
   project: StoryboardProject;
   referenceImageDataUrl?: string;
   onBackToScript: () => void;
+  onUpdateScene?: (sceneIndex: number, field: string, value: any) => void;
 }
 
 const ProgressBar = ({
@@ -84,6 +85,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
   project,
   referenceImageDataUrl,
   onBackToScript,
+  onUpdateScene,
 }) => {
   const {
     settings,
@@ -123,7 +125,13 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
     });
     return init;
   });
-  const [sceneAudioUrls, setSceneAudioUrls] = useState<Record<number, string>>({}); // ★ Auto-audio
+  const [sceneAudioUrls, setSceneAudioUrls] = useState<Record<number, string>>(() => {
+    const init: Record<number, string> = {};
+    project.scenes?.forEach((s: any) => {
+      if (s.audio_url) init[s.scene_number || s.shot_number || s.shot_id] = s.audio_url;
+    });
+    return init;
+  });
   const [scenePredictionIds, setScenePredictionIds] = useState<Record<number, string>>({});
   const [chainError, setChainError] = useState<string | null>(null); // ★ replaces alert()
 
@@ -175,6 +183,8 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
       const data = await resp.json();
       if (data.audio_url) {
         setSceneAudioUrls(prev => ({ ...prev, [sceneNum]: data.audio_url }));
+        const sceneIndex = project.scenes.findIndex(s => s.scene_number === sceneNum);
+        if (onUpdateScene && sceneIndex !== -1) onUpdateScene(sceneIndex, 'audio_url', data.audio_url);
         console.log(`[AutoAudio] Scene ${sceneNum}: voice ready ✅ ${data.audio_url}`);
       }
     } catch (err) {
@@ -200,6 +210,8 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
               ? statusRes.output[0]
               : String(statusRes.output);
             setSceneVideoUrls((prev) => ({ ...prev, [sNum]: videoUrl }));
+            const sceneIndex = project.scenes.findIndex(s => s.scene_number === sNum);
+            if (onUpdateScene && sceneIndex !== -1) onUpdateScene(sceneIndex, 'video_url', videoUrl);
             setSceneStatus((prev) => ({
               ...prev,
               [sNum]: { status: "done", message: "✅ 渲染完成" },
@@ -284,6 +296,8 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
           const sNum = scene.scene_number;
           if (progress.stage === "image_done") {
             setSceneImages(prev => ({ ...prev, [sNum]: progress.imageUrl }));
+            const sceneIndex = project.scenes.findIndex(s => s.scene_number === sNum);
+            if (onUpdateScene && sceneIndex !== -1) onUpdateScene(sceneIndex, 'image_url', progress.imageUrl);
             setSceneStatus(prev => ({
               ...prev,
               [sNum]: { status: "ready", message: "✅ 尾帧/图片已就绪" },
@@ -305,6 +319,8 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
             }));
           } else if (progress.stage === "video_done") {
             setSceneVideoUrls(prev => ({ ...prev, [sNum]: progress.videoUrl }));
+            const sceneIndex = project.scenes.findIndex(s => s.scene_number === sNum);
+            if (onUpdateScene && sceneIndex !== -1) onUpdateScene(sceneIndex, 'video_url', progress.videoUrl);
             setSceneStatus(prev => ({
               ...prev,
               [sNum]: { status: "done", message: "✅ 渲染完成" }
@@ -338,23 +354,35 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
   const handleFinalizeVideo = async (overrideUrls?: string[]) => {
     if (!isAuthenticated) { setChainError("请先登录以使用一键成片功能。"); return; }
 
-    let segments: { scene_number: number, video_url: string }[] = [];
+    let segments: { scene_number: number; video_url: string; audio_url?: string; subtitle_text?: string }[] = [];
 
     if (overrideUrls && overrideUrls.length > 0) {
-      segments = overrideUrls.map((url, i) => ({
-        scene_number: project.scenes[i]?.scene_number || (i + 1),
-        video_url: url
-      }));
+      segments = overrideUrls.map((url, i) => {
+        const scene = project.scenes[i];
+        const sNum = scene?.scene_number || (i + 1);
+        return {
+          scene_number: sNum,
+          video_url: url,
+          audio_url: sceneAudioUrls[sNum],
+          subtitle_text: scene ? (scene.audio_description || scene.dialogue_text || '').trim() : undefined
+        };
+      });
     } else {
       const videoEntries = Object.entries(sceneVideoUrls).filter(([_, url]) => url);
       if (videoEntries.length === 0) {
         setChainError("没有可用的视频片段，请先生成视频");
         return;
       }
-      segments = videoEntries.map(([sceneNum, url]) => ({
-        scene_number: parseInt(sceneNum),
-        video_url: url,
-      }));
+      segments = videoEntries.map(([sceneNumStr, url]) => {
+        const sNum = parseInt(sceneNumStr);
+        const scene = project.scenes.find(s => s.scene_number === sNum);
+        return {
+          scene_number: sNum,
+          video_url: url,
+          audio_url: sceneAudioUrls[sNum],
+          subtitle_text: scene ? (scene.audio_description || scene.dialogue_text || '').trim() : undefined
+        };
+      });
     }
 
     setIsFinalizingVideo(true);
@@ -779,12 +807,14 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
               globalVideoResolution={settings.videoResolution}
               imageUrl={sceneImages[scene.scene_number] || null}
               previousImage={sceneImages[scene.scene_number - 1] || null}
-              onImageGenerated={(url) =>
+              onImageGenerated={(url) => {
                 setSceneImages((prev) => ({
                   ...prev,
                   [scene.scene_number]: url,
-                }))
-              }
+                }));
+                const sceneIndex = project.scenes.findIndex(s => s.scene_number === scene.scene_number);
+                if (onUpdateScene && sceneIndex !== -1) onUpdateScene(sceneIndex, 'image_url', url);
+              }}
               onGenerateVideo={() =>
                 handleGenerateSingleVideo(scene.scene_number)
               }

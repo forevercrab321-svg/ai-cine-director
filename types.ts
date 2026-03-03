@@ -215,6 +215,7 @@ export interface Scene {
   video_motion_prompt?: string;
   image_url?: string;
   video_url?: string;
+  audio_url?: string;
 }
 
 export interface StoryboardProject {
@@ -381,14 +382,14 @@ export const MODEL_COSTS: Record<VideoModel | 'DEFAULT', number> = {
   runway_gen4_turbo: 38,      // API: ~$0.25/video → 25 × 1.5 = 38  🎬 极速
   hailuo_02_fast: 18,        // API: ~$0.10/video → 10 × 1.8 = 18  🇨🇳 中国顶尖
   seedance_lite: 28,         // API: ~$0.15/video → 15 × 1.8 = 28  🎨 首帧尾帧
-  
+
   // 其他模型
   kling_2_5: 53,             // API: ~$0.35/video → 35 × 1.5 = 53  🏆 最佳物理
   kling_2_1: 45,             // API: ~$0.30/video → 30 × 1.5 = 45
   pixverse_v4_5: 35,         // API: ~$0.20/video → 20 × 1.8 = 35
   luma_ray2_flash: 40,       // API: ~$0.25/video → 25 × 1.6 = 40
   veo_3_fast: 250,           // API: ~$3.20/video → 320 × 0.8 = 250  👑 最高质量
-  
+
   // Legacy
   hailuo_live: 75,           // API: ~$0.50/video → 50 × 1.5 = 75   🎭 Live2D 专用
   google_gemini_nano_banana: 5, // Budget model
@@ -414,11 +415,11 @@ export const REPLICATE_MODEL_PATHS: Record<VideoModel | ImageModel, string> = {
   pixverse_v4_5: "pixverse/pixverse-v4.5",
   luma_ray2_flash: "luma/ray-2-flash",
   veo_3_fast: "google/veo-3-fast",
-  
+
   // Legacy
   hailuo_live: "minimax/video-01-live",
   google_gemini_nano_banana: "google/gemini-nano-banana",
-  
+
   // Image models
   flux: "black-forest-labs/flux-1.1-pro",
   flux_schnell: "black-forest-labs/flux-schnell",
@@ -588,14 +589,14 @@ export const MODEL_MULTIPLIERS: Record<VideoModel, number> = {
   runway_gen4_turbo: 1.2,
   hailuo_02_fast: 1.2,
   seedance_lite: 1.3,
-  
+
   // 其他模型
   kling_2_5: 1.6,
   kling_2_1: 1.5,
   pixverse_v4_5: 1.4,
   luma_ray2_flash: 1.3,
   veo_3_fast: 2.0,
-  
+
   // Legacy
   hailuo_live: 2.0,
   google_gemini_nano_banana: 1.0
