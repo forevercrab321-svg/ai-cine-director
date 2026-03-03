@@ -147,7 +147,7 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
     const { settings, isAuthenticated, hasEnoughCredits, openPricingModal, refreshBalance } = useAppContext();
 
     // Config - Allow up to 100 images per batch
-    const [count, setCount] = useState(Math.min(100, allShots.length));
+    const [count, setCount] = useState(Math.min(3, allShots.length));
     const [model, setModel] = useState<ImageModel>('flux');
 
     // Job state

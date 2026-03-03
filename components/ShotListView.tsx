@@ -537,18 +537,24 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
 
     // ★ 核心多米诺骨牌引擎 (Global Level)
     const handleRunGlobalDominoChain = async () => {
-        // ★ 新增：检查是否已经锁定
+        // ★ 新增：检查是否已经锁定（第一道防线）
         if (isChainLocked) {
             alert("⚠️ 全片物理锁链已执行完毕并锁定，不允许重复运行！\n如需重新生成，请刷新页面重新开始。");
             return;
         }
         
-        if (!project.character_anchor) return alert("请先在左侧设定【角色一致性锚点】！");
-        if (project.scenes.length === 0) return alert("当前剧本没有任何场景，请先拆分场景。");
+        // ★ 验证前置条件（必须在锁定之前检查）
+        if (!project.character_anchor) {
+            return alert("请先在左侧设定【角色一致性锚点】！");
+        }
+        if (project.scenes.length === 0) {
+            return alert("当前剧本没有任何场景，请先拆分场景。");
+        }
 
-        // ★ 新增：第一次点击时立即锁定，防止重复点击
+        // ★ 新增：第一次点击时立即锁定，防止重复点击（在所有检查通过后）
         setIsChainLocked(true);
         setChainLog("🔒 全片物理锁链已启动，系统已锁定，请勿重复操作...");
+        setIsChainRunning(true);
 
         // Step 1: 自动验证是否所有场景都已生成拆分镜头
         let hasMissingShots = false;
@@ -561,11 +567,8 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
 
         if (hasMissingShots) {
             setChainLog("检测到未拆分镜头的场景，正在为您自动执行全场预拆分...");
-            setIsChainRunning(true);
             await handleGenerateAll(); // Will await internally all the generation loops
         }
-
-        setIsChainRunning(true);
         let globalTailFrameBase64: string | null = null;
 
         try {
