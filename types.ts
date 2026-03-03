@@ -249,18 +249,15 @@ export type AspectRatio = '1:1' | '3:4' | '4:3' | '9:16' | '16:9';
 export type ImageModel = 'flux' | 'flux_schnell' | 'nano_banana';
 
 export type VideoModel =
+  // ★ 性价比模型 (2个) - 快速出片
   | 'wan_2_2_fast'           // ★ Alibaba Wan 2.2 - 性价比之王 $0.01-0.02
-  | 'wan_2_2_t2v'           // ★ Alibaba Wan 2.2 文本转视频
-  | 'runway_gen4_turbo'      // ★ Runway Gen-4 Turbo - 极速22秒 $0.25-0.50
-  | 'hailuo_02_fast'        // ★ MiniMax Hailuo-02 - 中国顶尖 $0.10-0.15
-  | 'seedance_lite'         // ★ ByteDance Seedance - 首帧尾帧 $0.09-0.72
-  | 'kling_2_5'             // ★ 快手Kling 2.5 - 电影级 $0.25-0.90
-  | 'kling_2_1'             // ★ 快手Kling 2.1 - 稳定版
-  | 'pixverse_v4_5'          // ★ Pixverse v4.5 - 多风格
-  | 'luma_ray2_flash'       // ★ Luma Ray2 Flash - 快速
-  | 'veo_3_fast'            // ★ Google Veo 3 Fast - 最高质量 $3.20
-  | 'hailuo_live'
-  | 'google_gemini_nano_banana';
+  | 'hailuo_02_fast'        // ★ MiniMax Hailuo-02 - 均衡之选 $0.10-0.15
+
+  // ★ 顶级画质模型 (4个) - 电影级质量
+  | 'kling_2_5_pro'        // ★ 快手Kling 2.5 Pro - 顶级物理 $0.50-0.90
+  | 'veo_3'                // ★ Google Veo 3 - 最高质量 $3.00+
+  | 'seedance_pro'          // ★ ByteDance Seedance Pro - 首帧尾帧 $0.30-0.72
+  | 'sora_2';              // ★ OpenAI Sora 2 - 最新AI视频 $2.50
 
 export type GenerationMode = 'storyboard' | 'story';
 
@@ -376,24 +373,17 @@ export const STYLE_PRESETS: StylePreset[] = [
  * 5. Kling 2.5 - $0.25/视频 (电影级质量)
  */
 export const MODEL_COSTS: Record<VideoModel | 'DEFAULT', number> = {
-  // ★ Top 5 性价比模型
-  wan_2_2_fast: 8,           // API: ~$0.02/video → 2 × 4 = 8    ⚡ 最便宜
-  wan_2_2_t2v: 10,           // API: ~$0.05/video → 5 × 2 = 10
-  runway_gen4_turbo: 38,      // API: ~$0.25/video → 25 × 1.5 = 38  🎬 极速
-  hailuo_02_fast: 18,        // API: ~$0.10/video → 10 × 1.8 = 18  🇨🇳 中国顶尖
-  seedance_lite: 28,         // API: ~$0.15/video → 15 × 1.8 = 28  🎨 首帧尾帧
+  // ★ 性价比模型 (2个) - 快速出片
+  wan_2_2_fast: 8,           // API: ~$0.02/video → 8 💎  ⚡ 最便宜
+  hailuo_02_fast: 22,        // API: ~$0.10/video → 22 💎  🇨🇳 均衡之选
 
-  // 其他模型
-  kling_2_5: 53,             // API: ~$0.35/video → 35 × 1.5 = 53  🏆 最佳物理
-  kling_2_1: 45,             // API: ~$0.30/video → 30 × 1.5 = 45
-  pixverse_v4_5: 35,         // API: ~$0.20/video → 20 × 1.8 = 35
-  luma_ray2_flash: 40,       // API: ~$0.25/video → 25 × 1.6 = 40
-  veo_3_fast: 250,           // API: ~$3.20/video → 320 × 0.8 = 250  👑 最高质量
+  // ★ 顶级画质模型 (4个) - 电影级质量
+  kling_2_5_pro: 85,        // API: ~$0.50/video → 85 💎  🏆 顶级物理
+  veo_3: 300,               // API: ~$3.00/video → 300 💎  👑 最高质量
+  seedance_pro: 55,         // API: ~$0.35/video → 55 💎  🎬 首帧尾帧
+  sora_2: 250,             // API: ~$2.50/video → 250 💎  🤖 OpenAI最新
 
-  // Legacy
-  hailuo_live: 75,           // API: ~$0.50/video → 50 × 1.5 = 75   🎭 Live2D 专用
-  google_gemini_nano_banana: 5, // Budget model
-  DEFAULT: 38
+  DEFAULT: 22
 };
 
 /**
@@ -404,21 +394,15 @@ export const MODEL_COSTS: Record<VideoModel | 'DEFAULT', number> = {
  * ★ TOP 5 模型路径:
  */
 export const REPLICATE_MODEL_PATHS: Record<VideoModel | ImageModel, string> = {
-  // ★ Top 5 性价比视频模型
+  // ★ 性价比模型 (2个)
   wan_2_2_fast: "wan-video/wan-2.2-i2v-fast",
-  wan_2_2_t2v: "wan-video/wan-2.2-t2v",
-  runway_gen4_turbo: "runwayml/stable-diffusion-v1-5",
   hailuo_02_fast: "minimax/hailuo-02-fast",
-  seedance_lite: "bytedance/seedance-1-lite",
-  kling_2_5: "kwaivgi/kling-v2.5-turbo-pro",
-  kling_2_1: "kwaivgi/kling-v2.1-standard",
-  pixverse_v4_5: "pixverse/pixverse-v4.5",
-  luma_ray2_flash: "luma/ray-2-flash",
-  veo_3_fast: "google/veo-3-fast",
 
-  // Legacy
-  hailuo_live: "minimax/video-01-live",
-  google_gemini_nano_banana: "google/gemini-nano-banana",
+  // ★ 顶级画质模型 (4个)
+  kling_2_5_pro: "kwaivgi/kling-v2.5-turbo-pro",
+  veo_3: "google/veo-3",
+  seedance_pro: "bytedance/seedance-1",
+  sora_2: "openai/sora-2",
 
   // Image models
   flux: "black-forest-labs/flux-1.1-pro",
@@ -460,110 +444,62 @@ export function getCostForReplicatePath(replicatePath: string): number {
 }
 
 export const MODEL_METADATA: Record<VideoModel, { label: string; tags: string[]; audio?: boolean; badge?: string; priceLabel: string; resolution: string; duration: string; speed: string }> = {
-  // ★ Top 5 性价比模型
+  // ★ 性价比模型 (2个) - 快速出片
   wan_2_2_fast: {
     label: "Wan 2.2 Fast (Alibaba)",
-    tags: ["⚡ 极速6秒", "💰 性价比王", "🏷️ 5秒"],
+    tags: ["⚡ 极速", "💰 性价比王", "🏷️ 5秒"],
     badge: "💰 首选",
     priceLabel: "8 credits",
     resolution: "480p-720p",
     duration: "5秒",
     speed: "⚡⚡⚡⚡⚡ 最快6秒"
   },
-  wan_2_2_t2v: {
-    label: "Wan 2.2 T2V (Alibaba)",
-    tags: ["📝 文本转视频", "💰 便宜"],
-    priceLabel: "10 credits",
-    resolution: "480p-720p",
-    duration: "5秒",
-    speed: "⚡⚡⚡⚡ 17秒"
-  },
-  runway_gen4_turbo: {
-    label: "Runway Gen-4 Turbo ★",
-    tags: ["⚡ 极速22秒", "🎬 高质量", "🏷️ 5-10秒"],
-    badge: "⭐ 推荐",
-    priceLabel: "38 credits",
-    resolution: "720p",
-    duration: "5-10秒",
-    speed: "⚡⚡⚡⚡⚡ 22秒"
-  },
   hailuo_02_fast: {
-    label: "Hailuo-02 Fast (MiniMax)",
+    label: "Hailuo-02 (MiniMax)",
     tags: ["⚡ 快速", "🎬 高质量", "🇨🇳 中国顶尖", "🏷️ 6-10秒"],
     badge: "⭐ 推荐",
-    priceLabel: "18 credits",
+    priceLabel: "22 credits",
     resolution: "512p-768p",
     duration: "6-10秒",
     speed: "⚡⚡⚡⚡ 41秒"
   },
-  seedance_lite: {
-    label: "Seedance Lite (ByteDance)",
-    tags: ["🎨 风格多样", "🔗 首帧尾帧", "🏷️ 5-10秒"],
-    badge: "🔗 连续性",
-    priceLabel: "28 credits",
-    resolution: "480p-1080p",
-    duration: "5-10秒",
-    speed: "⚡⚡⚡⚡ 25秒"
-  },
-  kling_2_5: {
-    label: "Kling 2.5 Turbo Pro (快手)",
-    tags: ["🏆 最佳物理", "🎬 电影级", "📹 1080p", "🏷️ 5-10秒"],
+
+  // ★ 顶级画质模型 (3个) - 电影级质量
+  kling_2_5_pro: {
+    label: "Kling 2.5 Pro (快手)",
+    tags: ["🏆 顶级物理", "🎬 电影级", "📹 1080p", "🏷️ 5-10秒"],
     badge: "🔥 Pro",
-    priceLabel: "53 credits",
+    priceLabel: "85 credits",
     resolution: "720p-1080p",
     duration: "5-10秒",
     speed: "⚡⚡⚡ 2-4分钟"
   },
-  kling_2_1: {
-    label: "Kling 2.1 (快手)",
-    tags: ["🏆 稳定版", "🎬 电影级", "📹 1080p"],
-    priceLabel: "45 credits",
-    resolution: "720p-1080p",
-    duration: "5-10秒",
-    speed: "⚡⚡⚡ 2-3分钟"
-  },
-  pixverse_v4_5: {
-    label: "Pixverse v4.5",
-    tags: ["🎨 多风格", "🔗 首帧尾帧"],
-    priceLabel: "35 credits",
-    resolution: "360p-1080p",
-    duration: "5-8秒",
-    speed: "⚡⚡⚡⚡ 17-60秒"
-  },
-  luma_ray2_flash: {
-    label: "Luma Ray2 Flash",
-    tags: ["⚡ 快速", "🎯 精确"],
-    priceLabel: "40 credits",
-    resolution: "540p-720p",
-    duration: "5-9秒",
-    speed: "⚡⚡⚡⚡ 30秒"
-  },
-  veo_3_fast: {
-    label: "Google Veo 3 Fast ★★★",
+  veo_3: {
+    label: "Veo 3 (Google)",
     tags: ["👑 最高质量", "🎬 电影级", "🔊 原生音频", "📹 1080p", "🏷️ 8秒"],
     badge: "👑 旗舰",
-    priceLabel: "250 credits",
+    priceLabel: "300 credits",
     resolution: "720p-1080p",
     duration: "8秒",
     speed: "⚡⚡⚡ 59秒"
   },
-  hailuo_live: {
-    label: "Hailuo Live (MiniMax)",
-    tags: ["🎭 Live2D", "🎨 动画专用"],
-    badge: "🎭 Live2D",
-    priceLabel: "75 credits",
-    resolution: "720p",
-    duration: "5秒",
-    speed: "⚡⚡ 3分钟"
+  seedance_pro: {
+    label: "Seedance Pro (ByteDance)",
+    tags: ["🎨 风格多样", "🔗 首帧尾帧", "🏷️ 5-10秒"],
+    badge: "🎬 Pro",
+    priceLabel: "55 credits",
+    resolution: "480p-1080p",
+    duration: "5-10秒",
+    speed: "⚡⚡⚡⚡ 25秒"
   },
-  google_gemini_nano_banana: {
-    label: "Google Gemini Nano Banana",
-    tags: ["🍌 Experimental", "⚡ Fast"],
-    badge: "New",
-    priceLabel: "5 credits",
-    resolution: "",
-    duration: "",
-    speed: ""
+  sora_2: {
+    label: "Sora 2 (OpenAI)",
+    tags: ["🤖 最新AI", "🎬 电影级", "🔊 原生音频", "📹 1080p", "🏷️ 5-20秒"],
+    badge: "🤖 New",
+    priceLabel: "250 credits",
+    resolution: "720p-1080p",
+    duration: "5-20秒",
+    speed: "⚡⚡⚡ 1-3分钟"
   }
 };
 
@@ -583,23 +519,15 @@ export const CREDIT_COSTS = {
 
 
 export const MODEL_MULTIPLIERS: Record<VideoModel, number> = {
-  // ★ Top 5 性价比模型
+  // ★ 性价比模型
   wan_2_2_fast: 1.0,
-  wan_2_2_t2v: 1.1,
-  runway_gen4_turbo: 1.2,
   hailuo_02_fast: 1.2,
-  seedance_lite: 1.3,
 
-  // 其他模型
-  kling_2_5: 1.6,
-  kling_2_1: 1.5,
-  pixverse_v4_5: 1.4,
-  luma_ray2_flash: 1.3,
-  veo_3_fast: 2.0,
-
-  // Legacy
-  hailuo_live: 2.0,
-  google_gemini_nano_banana: 1.0
+  // ★ 顶级画质模型
+  kling_2_5_pro: 1.6,
+  veo_3: 2.0,
+  seedance_pro: 1.3,
+  sora_2: 1.8
 };
 
 export const CREDIT_PACKS = [

@@ -11,7 +11,26 @@ import Stripe from 'stripe';
 // INLINED TYPES FROM types.ts (Vercel cannot resolve ../types)
 // ═══════════════════════════════════════════════════════════════
 
-type VideoModel = 'wan_2_2_fast' | 'hailuo_02_fast' | 'seedance_lite' | 'kling_2_5' | 'hailuo_live' | 'google_gemini_nano_banana';
+// Profile type for database operations
+interface Profile {
+    id: string;
+    credits: number;
+    is_pro: boolean;
+    is_admin: boolean;
+    name?: string;
+    role?: string;
+}
+
+type VideoModel =
+  // ★ 性价比模型 (2个) - 快速出片
+  | 'wan_2_2_fast'           // ★ Alibaba Wan 2.2 - 性价比之王
+  | 'hailuo_02_fast'        // ★ MiniMax Hailuo-02 - 均衡之选
+
+  // ★ 顶级画质模型 (4个) - 电影级质量
+  | 'kling_2_5_pro'        // ★ 快手Kling 2.5 Pro - 顶级物理
+  | 'veo_3'                // ★ Google Veo 3 - 最高质量
+  | 'seedance_pro'          // ★ ByteDance Seedance Pro - 首帧尾帧
+  | 'sora_2';              // ★ OpenAI Sora 2 - 最新AI
 type ImageModel = 'flux' | 'flux_schnell' | 'nano_banana';
 type BatchJobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 type BatchItemStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
@@ -53,12 +72,17 @@ interface BatchJobItem {
 }
 
 const REPLICATE_MODEL_PATHS: Record<VideoModel | ImageModel, string> = {
+    // ★ 性价比模型 (2个)
     wan_2_2_fast: "wan-video/wan-2.2-i2v-fast",
     hailuo_02_fast: "minimax/hailuo-02-fast",
-    seedance_lite: "bytedance/seedance-1-lite",
-    kling_2_5: "kwaivgi/kling-v2.5-turbo-pro",
-    hailuo_live: "minimax/video-01-live",
-    google_gemini_nano_banana: "google/gemini-nano-banana",
+
+    // ★ 顶级画质模型 (4个)
+    kling_2_5_pro: "kwaivgi/kling-v2.5-turbo-pro",
+    veo_3: "google/veo-3",
+    seedance_pro: "bytedance/seedance-1",
+    sora_2: "openai/sora-2",
+
+    // Image models
     flux: "black-forest-labs/flux-1.1-pro",
     flux_schnell: "black-forest-labs/flux-schnell",
     nano_banana: "google/gemini-nano-banana"
@@ -69,6 +93,37 @@ const IMAGE_MODEL_COSTS: Record<ImageModel, number> = {
     flux_schnell: 1,
     nano_banana: 2
 };
+
+// ★ 视频模型成本映射 (与 types.ts 同步)
+const VIDEO_MODEL_COSTS: Record<VideoModel, number> = {
+    wan_2_2_fast: 8,
+    hailuo_02_fast: 22,
+    kling_2_5_pro: 85,
+    veo_3: 300,
+    seedance_pro: 55,
+    sora_2: 250
+};
+
+// 估算成本函数
+function estimateCost(modelPath: string): number {
+    // 首先尝试精确匹配
+    for (const [model, path] of Object.entries(REPLICATE_MODEL_PATHS)) {
+        if (path === modelPath) {
+            const videoCost = VIDEO_MODEL_COSTS[model as VideoModel];
+            if (videoCost !== undefined) return videoCost;
+            const imageCost = IMAGE_MODEL_COSTS[model as ImageModel];
+            if (imageCost !== undefined) return imageCost;
+        }
+    }
+    // 回退到基于路径的模式匹配
+    if (modelPath.includes('wan-video')) return 8;
+    if (modelPath.includes('hailuo') || modelPath.includes('minimax')) return 22;
+    if (modelPath.includes('kling')) return 85;
+    if (modelPath.includes('veo') || modelPath.includes('google/veo')) return 300;
+    if (modelPath.includes('seedance') || modelPath.includes('bytedance')) return 55;
+    if (modelPath.includes('sora') || modelPath.includes('openai')) return 250;
+    return 22; // 默认成本
+}
 
 interface StylePreset {
     id: string;
@@ -153,8 +208,11 @@ app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), asyn
                 let updateData: any = { credits: newBalance };
                 if (isSubscription && planTier) {
                     updateData.is_pro = true;
-                    // Update schema column if it exists in profiles, otherwise just is_pro
-                    // updateData.plan_type = planTier; 
+                    // Update is_pro and plan_type for subscription users
+                    if (isSubscription && planTier) {
+                        updateData.is_pro = true;
+                        updateData.plan_type = planTier;
+                    } 
                 }
 
                 await supabase.from('profiles').update(updateData).eq('id', userId);
@@ -290,7 +348,7 @@ app.post('/api/auth/ensure-user', async (req: any, res: any) => {
                     name: email,
                     role: 'Director',
                     credits: 50,
-                }, { onConflict: 'id' });
+                } as any, { onConflict: 'id' });
 
             if (upsertErr) {
                 const { error: fallbackUpsertErr } = await supabaseAdmin
@@ -299,7 +357,7 @@ app.post('/api/auth/ensure-user', async (req: any, res: any) => {
                         id: userId,
                         name: email,
                         credits: 50,
-                    }, { onConflict: 'id' });
+                    } as any, { onConflict: 'id' });
 
                 if (fallbackUpsertErr) {
                     console.error('[Auth Ensure User] Profile upsert failed:', fallbackUpsertErr);
@@ -443,7 +501,7 @@ app.post('/api/auth/send-otp', async (req: any, res: any) => {
         if (userId) {
             await supabaseAdmin.from('profiles').upsert({
                 id: userId, name: email, role: 'Director', credits: 50,
-            }, { onConflict: 'id' });
+            } as any, { onConflict: 'id' });
         }
 
         return res.json({ ok: true, message: 'Verification email sent' });
@@ -597,11 +655,14 @@ const checkEntitlement = async (
     // 2. Get user profile + credits (using service role singleton — not recreated on every call)
     const supabaseAdmin = getSupabaseAdmin();
 
-    let { data: profile, error: profileErr } = await supabaseAdmin
+    let profile: Profile | null = null;
+    let { data: profileData, error: profileErr } = await supabaseAdmin
         .from('profiles')
         .select('id, credits, is_pro, is_admin')
         .eq('id', userId)
         .single();
+
+    profile = profileData as Profile | null;
 
     // ★ AUTO-CREATE PROFILE if not exists (fix for new user signup)
     if (profileErr || !profile) {
@@ -616,7 +677,7 @@ const checkEntitlement = async (
                 credits: 50,
                 is_admin: false,
                 is_pro: false,
-            }, { onConflict: 'id', ignoreDuplicates: true })
+            } as any, { onConflict: 'id', ignoreDuplicates: true })
             .select('id, credits, is_pro, is_admin')
             .single();
 
@@ -628,17 +689,19 @@ const checkEntitlement = async (
                 .select('id, credits, is_pro, is_admin')
                 .eq('id', userId)
                 .single();
-            if (retryProfile) {
-                profile = retryProfile;
-                console.log(`[Entitlement] Retry SELECT succeeded, credits=${retryProfile.credits}`);
+            const retryProfileTyped = retryProfile as Profile | null;
+            if (retryProfileTyped) {
+                profile = retryProfileTyped;
+                console.log(`[Entitlement] Retry SELECT succeeded, credits=${retryProfileTyped.credits}`);
             } else {
                 console.error('[Entitlement] Retry SELECT also failed — allowing with 0 credits');
                 // Don't block the user — allow with 0 credits, they'll hit NEED_PAYMENT naturally
                 profile = { id: userId, credits: 0, is_pro: false, is_admin: false };
             }
-        } else {
-            profile = newProfile;
-            console.log(`[Entitlement] Upserted profile for ${email}, credits=${newProfile?.credits}`);
+        } else if (newProfile) {
+            const newProfileTyped = newProfile as Profile;
+            profile = newProfileTyped;
+            console.log(`[Entitlement] Upserted profile for ${email}, credits=${newProfileTyped.credits}`);
         }
     }
 
@@ -728,14 +791,15 @@ app.get('/api/entitlement', requireAuth, async (req: any, res: any) => {
             .eq('id', userId)
             .single();
 
-        const credits = profile?.credits ?? 0;
-        const isPaid = profile?.is_pro === true;
+        const profileTyped = profile as Profile | null;
+        const credits = profileTyped?.credits ?? 0;
+        const isPaid = profileTyped?.is_pro === true;
         const plan: UserPlan = isPaid ? 'paid' : 'free';
         const canGenerate = credits > 0 || isPaid;
 
         res.json({
             isDeveloper: false,
-            isAdmin: profile?.is_admin === true,
+            isAdmin: (profile as any)?.is_admin === true,
             plan,
             credits,
             canGenerate,
@@ -1118,9 +1182,9 @@ app.get('/api/replicate/status/:id', requireAuth, async (req: any, res: any) => 
                             video_job_id: id,
                             status: 'processing',
                             mode: mode
-                        }).select('id').single();
+                        } as any).select('id').single();
 
-                        const jobId = jobInfo?.id || 'unknown';
+                        const jobId = (jobInfo as any)?.id || 'unknown';
 
                         try {
                             // Extract prompt if available (Replicate predictions usually have it in input.prompt)
@@ -1140,7 +1204,7 @@ app.get('/api/replicate/status/:id', requireAuth, async (req: any, res: any) => 
 
                             // Update DB job
                             if (jobId !== 'unknown') {
-                                await supabaseAdmin.from('audio_jobs').update({
+                                await (supabaseAdmin.from('audio_jobs') as any).update({
                                     status: 'succeeded',
                                     outputs_json: { final_url: audioMixedUrl, original_video: originalVideoUrl }
                                 }).eq('id', jobId);
@@ -1151,7 +1215,7 @@ app.get('/api/replicate/status/:id', requireAuth, async (req: any, res: any) => 
                             console.error(`[AudioEngine] Pipeline failed for ${id}:`, audioError);
                             // Fallback gracefully: Do not touch prediction output. Just log to DB.
                             if (jobId !== 'unknown') {
-                                await supabaseAdmin.from('audio_jobs').update({
+                                await (supabaseAdmin.from('audio_jobs') as any).update({
                                     status: 'failed',
                                     error: audioError.message || String(audioError)
                                 }).eq('id', jobId);
@@ -1371,11 +1435,22 @@ Output as valid JSON.`;
                 const promptContent = `Write a SHORT DRAMA (短剧) broken down into SCENES and SHOTS for: ${storyIdea}. Style: ${visualStyle}. Total expected shots: ~${targetScenes}.
 ★ CRITICAL: Scene 1 must START with the character ALREADY doing the core activity ("${storyIdea}"). Every shot must showcase a PHYSICAL CONTINUATION or a DIFFERENT moment of the activity.`;
 
-                response = await ai.models.generateContent({
-                    model: 'gemini-1.5-flash',
-                    contents: promptContent,
-                    config: { systemInstruction, responseMimeType: 'application/json', responseSchema: geminiResponseSchema, temperature: 0.7 },
-                });
+                // Try gemini-2.0-flash-lite as fallback (newer, faster, cheaper)
+                try {
+                    response = await ai.models.generateContent({
+                        model: 'gemini-2.0-flash-lite',
+                        contents: promptContent,
+                        config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.7 },
+                    });
+                } catch (liteError: any) {
+                    // If lite also fails, try with gemini-2.0-flash again with lower config
+                    console.warn('[Gemini] Lite model failed, retrying with flash...');
+                    response = await ai.models.generateContent({
+                        model: 'gemini-2.0-flash',
+                        contents: promptContent,
+                        config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.5 },
+                    });
+                }
             } else {
                 throw initialError;
             }
@@ -1383,7 +1458,24 @@ Output as valid JSON.`;
 
         const text = response.text;
         if (!text) throw new Error('No response from AI Director.');
-        const parsedData = JSON.parse(text);
+        
+        // Try to parse JSON, with fallback for malformed responses
+        let parsedData;
+        try {
+            parsedData = JSON.parse(text);
+        } catch (parseError: any) {
+            console.warn('[Gemini Generate] JSON parse failed, attempting to fix...', parseError.message);
+            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                try {
+                    parsedData = JSON.parse(jsonMatch[0]);
+                } catch (e2: any) {
+                    throw new Error(`AI response was not valid JSON: ${text.substring(0, 200)}...`);
+                }
+            } else {
+                throw new Error(`AI response was not valid JSON: ${text.substring(0, 200)}...`);
+            }
+        }
 
         // Extract and map the top-level project data
         const project: any = {
@@ -1925,17 +2017,46 @@ ${character_anchor ? `Character Anchor (MUST appear in every shot's image_prompt
             });
         } catch (initialError: any) {
             if (initialError.message?.includes('429') || initialError.status === 429) {
-                response = await ai.models.generateContent({
-                    model: 'gemini-1.5-flash',
-                    contents: `Break Scene ${scene_number || 1} into ${targetShots} shots. Scene description: ${visual_description}`,
-                    config: { systemInstruction, responseMimeType: 'application/json', responseSchema: shotResponseSchema, temperature: 0.6 },
-                });
+                // Try gemini-2.0-flash-lite as fallback (newer, faster, cheaper)
+                try {
+                    response = await ai.models.generateContent({
+                        model: 'gemini-2.0-flash-lite',
+                        contents: `Break Scene ${scene_number || 1} into ${targetShots} shots. Scene description: ${visual_description}`,
+                        config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.6 },
+                    });
+                } catch (liteError: any) {
+                    // If lite also fails, try again with flash
+                    console.warn('[Gemini] Lite model failed, retrying with flash...');
+                    response = await ai.models.generateContent({
+                        model: 'gemini-2.0-flash',
+                        contents: `Break Scene ${scene_number || 1} into ${targetShots} shots. Scene description: ${visual_description}`,
+                        config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.5 },
+                    });
+                }
             } else throw initialError;
         }
 
         const text = response.text;
         if (!text) throw new Error('No response from AI');
-        const result = JSON.parse(text);
+        
+        // Try to parse JSON, with fallback for malformed responses
+        let result;
+        try {
+            result = JSON.parse(text);
+        } catch (parseError: any) {
+            console.warn('[Shots Generate] JSON parse failed, attempting to fix...', parseError.message);
+            // Try to extract JSON from the response
+            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                try {
+                    result = JSON.parse(jsonMatch[0]);
+                } catch (e2: any) {
+                    throw new Error(`AI response was not valid JSON: ${text.substring(0, 200)}...`);
+                }
+            } else {
+                throw new Error(`AI response was not valid JSON: ${text.substring(0, 200)}...`);
+            }
+        }
 
         const enrichedShots = (result.shots || []).map((s: any, idx: number) => ({
             shot_id: crypto.randomUUID(),
@@ -2032,17 +2153,45 @@ ${shotJson}
             });
         } catch (initialError: any) {
             if (initialError.message?.includes('429') || initialError.status === 429) {
-                response = await ai.models.generateContent({
-                    model: 'gemini-1.5-flash',
-                    contents: `Rewrite fields [${fieldsStr}] for shot ${shotId}. ${user_instruction || ''}`,
-                    config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.7 },
-                });
+                // Try gemini-2.0-flash-lite as fallback
+                try {
+                    response = await ai.models.generateContent({
+                        model: 'gemini-2.0-flash-lite',
+                        contents: `Rewrite fields [${fieldsStr}] for shot ${shotId}. ${user_instruction || ''}`,
+                        config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.7 },
+                    });
+                } catch (liteError: any) {
+                    // Retry with flash
+                    console.warn('[Gemini] Lite model failed, retrying with flash...');
+                    response = await ai.models.generateContent({
+                        model: 'gemini-2.0-flash',
+                        contents: `Rewrite fields [${fieldsStr}] for shot ${shotId}. ${user_instruction || ''}`,
+                        config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.5 },
+                    });
+                }
             } else throw initialError;
         }
 
         const text = response.text;
         if (!text) throw new Error('No response from AI');
-        const rewrittenFields = JSON.parse(text);
+        
+        // Try to parse JSON, with fallback for malformed responses
+        let rewrittenFields;
+        try {
+            rewrittenFields = JSON.parse(text);
+        } catch (parseError: any) {
+            console.warn('[Shot Rewrite] JSON parse failed, attempting to fix...', parseError.message);
+            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                try {
+                    rewrittenFields = JSON.parse(jsonMatch[0]);
+                } catch (e2: any) {
+                    throw new Error(`AI response was not valid JSON: ${text.substring(0, 200)}...`);
+                }
+            } else {
+                throw new Error(`AI response was not valid JSON: ${text.substring(0, 200)}...`);
+            }
+        }
         for (const locked of (locked_fields || [])) delete rewrittenFields[locked];
         for (const key of Object.keys(rewrittenFields)) {
             if (!fields_to_rewrite.includes(key)) delete rewrittenFields[key];
