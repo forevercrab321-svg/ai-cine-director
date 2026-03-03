@@ -1209,6 +1209,7 @@ const geminiResponseSchema = {
                 },
                 required: ['scene_id', 'location', 'shots'],
             },
+            maxItems: 50, // ★ 场景数量最多50个（实际会被targetScenes限制）
         },
     },
     required: ['project_title', 'visual_style', 'characterAnchor', 'scenes'],
@@ -1462,7 +1463,25 @@ It should be natural dialogue, breathing, or inner thoughts that match the actio
             }
         }
 
-        project.scenes = flattenedShots;
+        // ★ 核心修复：限制场景和镜头数量
+        // 计算出前targetScenes个场景对应的镜头总数
+        let scenesInTarget = 0;
+        let shotsInTarget = 0;
+        for (const shot of flattenedShots) {
+            // 计算这个镜头属于第几个场景（基于shot中的scene_number）
+            const sceneNum = shot.scene_number || 1;
+            if (sceneNum > targetScenes) break; // 超出场景限制
+            
+            shotsInTarget++;
+            if (shotsInTarget <= targetScenes * 10) { // 防止单个场景镜头过多（平均每个场景~10个镜头）
+                scenesInTarget = Math.ceil(shotsInTarget / 10);
+            } else {
+                break; // 镜头数达到极限
+            }
+        }
+        
+        // 只返回目标范围内的镜头
+        project.scenes = flattenedShots.slice(0, Math.min(flattenedShots.length, targetScenes * 10));
 
         if (!skipCreditCheck) {
             await supabaseUser.rpc('finalize_reserve', { ref_type: 'gemini', ref_id: jobRef });
