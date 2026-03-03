@@ -271,7 +271,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
       }
 
       setChainError(null); // Clear previous errors
-      await generateSceneChain(
+      const newVideoUrls = await generateSceneChain(
         project.id,
         project.scenes,
         finalAnchor,
@@ -320,6 +320,11 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
           }
         }
       );
+
+      // ★ Auto-finalize the video into a full movie automatically after the chain is successfully completed.
+      console.log("🎥 [Chain Complete] Auto-finalizing full movie...");
+      await handleFinalizeVideo(newVideoUrls);
+
     } catch (e: any) {
       console.error("[Chain] ❌ Pipeline Error:", e);
       setChainError(e.message || "生成途中发生严重错误：链条断裂。");
@@ -330,25 +335,32 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
   };
 
   // ★ 一键成片 - 视频拼接合成
-  const handleFinalizeVideo = async () => {
+  const handleFinalizeVideo = async (overrideUrls?: string[]) => {
     if (!isAuthenticated) { setChainError("请先登录以使用一键成片功能。"); return; }
 
-    // 检查是否有可用的视频
-    const videoEntries = Object.entries(sceneVideoUrls).filter(([_, url]) => url);
-    if (videoEntries.length === 0) {
-      setChainError("没有可用的视频片段，请先生成视频");
-      return;
+    let segments: { scene_number: number, video_url: string }[] = [];
+
+    if (overrideUrls && overrideUrls.length > 0) {
+      segments = overrideUrls.map((url, i) => ({
+        scene_number: project.scenes[i]?.scene_number || (i + 1),
+        video_url: url
+      }));
+    } else {
+      const videoEntries = Object.entries(sceneVideoUrls).filter(([_, url]) => url);
+      if (videoEntries.length === 0) {
+        setChainError("没有可用的视频片段，请先生成视频");
+        return;
+      }
+      segments = videoEntries.map(([sceneNum, url]) => ({
+        scene_number: parseInt(sceneNum),
+        video_url: url,
+      }));
     }
 
     setIsFinalizingVideo(true);
     setVideoEditJob(null);
 
     try {
-      // 准备视频片段数据
-      const segments = videoEntries.map(([sceneNum, url]) => ({
-        scene_number: parseInt(sceneNum),
-        video_url: url,
-      }));
 
       // 调用视频合成 API
       const { data: { session } } = await supabase.auth.getSession();
@@ -581,7 +593,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
             {/* ★ 一键成片按钮 */}
             {Object.keys(sceneVideoUrls).length > 1 && (
               <button
-                onClick={isFinalizingVideo ? undefined : handleFinalizeVideo}
+                onClick={isFinalizingVideo ? undefined : () => handleFinalizeVideo()}
                 disabled={isFinalizingVideo || (videoEditJob && videoEditJob.status === 'processing')}
                 className={`flex-1 md:flex-none px-6 py-3 rounded-lg text-white font-bold transition-all shadow-lg flex items-center justify-center gap-2 text-sm
                   ${isFinalizingVideo || (videoEditJob && videoEditJob.status === 'processing')
@@ -604,23 +616,25 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
             )}
 
             <button
-              onClick={isRenderingChain ? undefined : handleRenderChain}
-              disabled={isRenderingChain}
+              onClick={isRenderingChain || isFinalizingVideo ? undefined : handleRenderChain}
+              disabled={isRenderingChain || isFinalizingVideo}
               className={`flex-1 md:flex-none px-6 py-3 rounded-lg text-white font-bold transition-all shadow-lg flex items-center justify-center gap-2 text-sm
-                ${isRenderingChain
+                ${isRenderingChain || isFinalizingVideo
                   ? "bg-indigo-900/50 text-indigo-300 cursor-not-allowed shadow-none"
                   : "bg-indigo-600 hover:bg-indigo-500 shadow-indigo-500/20"
                 }
               `}
             >
-              {isRenderingChain ? (
+              {isRenderingChain || isFinalizingVideo ? (
                 <LoaderIcon className="w-4 h-4 animate-spin" />
               ) : (
                 <VideoCameraIcon className="w-4 h-4" />
               )}
               {isRenderingChain
                 ? "锁链生成中..."
-                : "🚀 串行生成全剧"}
+                : isFinalizingVideo
+                  ? "自动合成全片中..."
+                  : "🚀 一键锁链出全片"}
             </button>
 
             {/* 下载按钮 */}
