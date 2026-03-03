@@ -410,7 +410,7 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                             每批数量
                         </label>
                         <div className="flex gap-1">
-                            {[3, 6, 9, 12].filter(n => n <= allShots.length || n === 3).map(n => {
+                            {[3, 5, 6, 9, 12, 30].filter(n => n <= allShots.length || n === 3).map(n => {
                                 const effectiveN = Math.min(n, allShots.length);
                                 return (
                                     <button

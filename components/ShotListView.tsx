@@ -348,6 +348,7 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
 
     // ★ 全局物理引擎锁链状态
     const [isChainRunning, setIsChainRunning] = useState(false);
+    const [isChainLocked, setIsChainLocked] = useState(false); // ★ 新增：锁链永久锁定状态
     const [chainLog, setChainLog] = useState('');
     const [shotVideos, setShotVideos] = useState<Record<string, string>>({});
 
@@ -536,8 +537,18 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
 
     // ★ 核心多米诺骨牌引擎 (Global Level)
     const handleRunGlobalDominoChain = async () => {
+        // ★ 新增：检查是否已经锁定
+        if (isChainLocked) {
+            alert("⚠️ 全片物理锁链已执行完毕并锁定，不允许重复运行！\n如需重新生成，请刷新页面重新开始。");
+            return;
+        }
+        
         if (!project.character_anchor) return alert("请先在左侧设定【角色一致性锚点】！");
         if (project.scenes.length === 0) return alert("当前剧本没有任何场景，请先拆分场景。");
+
+        // ★ 新增：第一次点击时立即锁定，防止重复点击
+        setIsChainLocked(true);
+        setChainLog("🔒 全片物理锁链已启动，系统已锁定，请勿重复操作...");
 
         // Step 1: 自动验证是否所有场景都已生成拆分镜头
         let hasMissingShots = false;
@@ -636,13 +647,15 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                 }
             }
             setChainLog('🎉 全片物理大一统串联完成，真正的电影级“一镜到底”已出炉！');
-            setTimeout(() => setChainLog(''), 8000);
+            setTimeout(() => setChainLog('🔒 全片已永久锁定，不可重复运行'), 8000);
         } catch (error: any) {
             console.error(error);
-            alert(`生成中断: ${error.message}`);
-            setChainLog('❌ 生成过程失败中止');
+            // ★ 重要：即使失败也保持锁定状态，防止用户重复点击导致重复扣费
+            alert(`⚠️ 生成中断: ${error.message}\n\n注意：为防止重复扣费，系统已锁定。如需重新生成，请刷新页面。`);
+            setChainLog('❌ 生成失败但已锁定（防止重复扣费）');
         } finally {
             setIsChainRunning(false);
+            // ★ 注意：不要解除 isChainLocked，保持永久锁定状态
         }
     };
 
@@ -668,14 +681,31 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                         {totalShots > 0 && (
                             <button
                                 onClick={handleRunGlobalDominoChain}
-                                disabled={isChainRunning}
+                                disabled={isChainRunning || isChainLocked}
                                 className={`px-4 py-3 rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2
-                                    ${isChainRunning
+                                    ${isChainLocked
+                                        ? 'bg-green-900/50 text-green-300 cursor-not-allowed border-2 border-green-500/30'
+                                        : isChainRunning
                                         ? 'bg-indigo-900/50 text-indigo-300 cursor-not-allowed'
                                         : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg shadow-purple-500/20'}`}
+                                title={isChainLocked ? "全片已锁定，不可重复运行" : ""}
                             >
-                                {isChainRunning ? <LoaderIcon className="w-4 h-4 animate-spin" /> : '🚀'}
-                                <span className="hidden sm:inline">{isChainRunning ? '锁链执行中...' : '一键跑通全片物理锁链'}</span>
+                                {isChainLocked ? (
+                                    <>
+                                        <span className="text-lg">🔒</span>
+                                        <span className="hidden sm:inline">全片已锁定完成</span>
+                                    </>
+                                ) : isChainRunning ? (
+                                    <>
+                                        <LoaderIcon className="w-4 h-4 animate-spin" />
+                                        <span className="hidden sm:inline">锁链执行中...</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <span>🚀</span>
+                                        <span className="hidden sm:inline">一键跑通全片物理锁链</span>
+                                    </>
+                                )}
                             </button>
                         )}
                         <button
