@@ -572,6 +572,7 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
             await handleGenerateAll(); // Will await internally all the generation loops
         }
         let globalTailFrameBase64: string | null = null;
+        let globalAutoAnchorBase64: string | null = null; // ★ 新增：全片第一帧垫图锚点
 
         try {
             // Step 2: 遍历大循环 (All Scenes -> All Shots)
@@ -589,8 +590,8 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                     // 全剧【唯一奇点】：第一场戏的第一个镜头，或者每个Scene的第一个镜头
                     if (i === 0) {
                         // ★ 硬切：每个场景的第一镜必须重铸人物，拒绝继承前一场的尾帧！
-                        // 最高优先级：当前场次专属定妆图 Base64 → 全局角色照片
-                        const sceneAnchorRef = scene.scene_reference_image_base64 || referenceImageDataUrl;
+                        // 最高优先级：当前场次专属定妆图 Base64 → 全局角色照片 → 系统自动扣取的全片首帧
+                        const sceneAnchorRef = scene.scene_reference_image_base64 || referenceImageDataUrl || globalAutoAnchorBase64;
                         if (scene.scene_reference_image_base64) {
                             // 用户专门上传了定妆图，直接作为本场奇点
                             currentStartImage = scene.scene_reference_image_base64;
@@ -601,8 +602,15 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                             currentStartImage = await generateImage(
                                 shot.image_prompt || scene.visual_description,
                                 'flux_schnell', 'none', '16:9', project.character_anchor,
-                                sceneAnchorRef // ★ 场次定妆图优先，回退全局照片
+                                sceneAnchorRef // ★ 场次定妆图优先，回退全局照片，再回退自动嗅探的全片第一帧
                             );
+
+                            // ★ 【核心一致性机制】：如果是全片首场首镜，且没有局部或全局垫图，则自动缓存为全片霸权锚点
+                            if (sIdx === 0 && !scene.scene_reference_image_base64 && !referenceImageDataUrl) {
+                                globalAutoAnchorBase64 = currentStartImage;
+                                setChainLog(`场 ${scene.scene_number} 首镜：★ 已自动嗅探全片第一帧作为后续所有跨场的绝对一致性基准！`);
+                            }
+
                             // 保存这张生成的首帧留作纪念
                             const newImageId = crypto.randomUUID();
                             setImagesByShot(prev => ({

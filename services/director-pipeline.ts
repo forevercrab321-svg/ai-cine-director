@@ -126,7 +126,8 @@ export const generateSceneChain = async (
     predictionId?: string;
   }) => void
 ) => {
-  let previousVideoLastFrame: string | null = null;
+  let _previousVideoLastFrame: string | null = null; // Unused, but kept for TS compilation if needed
+  let globalAutoAnchorBase64: string | null = null; // ★ 新增：全片霸权面部锚点
   const videoUrls: string[] = [];
 
   for (let i = 0; i < storyboard.length; i++) {
@@ -138,7 +139,7 @@ export const generateSceneChain = async (
 
     // ★ RESUME LOGIC: Check if this scene is already fully generated
     if (existingSceneUrls[sNum]) {
-      console.log(`⏭️ [第 ${i + 1} 镜] 检测到该镜头已生成视频，跳过重新生成，直接提取尾帧接力...`);
+      console.log(`⏭️ [第 ${i + 1} 场] 检测到该场景已生成视频，跳过重新生成...`);
       const existingUrl = existingSceneUrls[sNum];
       videoUrls.push(existingUrl);
 
@@ -146,44 +147,37 @@ export const generateSceneChain = async (
         onProgress({ index: i, stage: "video_done", videoUrl: existingUrl });
       }
 
-      if (i < storyboard.length - 1) {
-        try {
-          previousVideoLastFrame = await extractLastFrameServerSide(existingUrl);
-          const frameType = previousVideoLastFrame.startsWith('data:') ? 'Base64' : 'URL';
-          console.log(`✅ [Shot ${i + 1} SKIP] 尾帧截取成功 (${frameType})`);
-        } catch (frameErr: any) {
-          console.error(`❌ [Shot ${i + 1} SKIP] 尾帧截取失败！错误: ${frameErr.message}`);
-          throw frameErr;
-        }
+      // ★ 核心一致性补救：如果我们因为缓存跳过了全片第一场的生成，必须设法找回它的起步图作为后续的人脸垫图
+      if (i === 0 && !referenceImageBase64) {
+        globalAutoAnchorBase64 = shot.image_url || null;
+        console.log(`✅ [第 ${i + 1} 场 SKIP] 初始化霸权缓存首图: ${globalAutoAnchorBase64 ? '成功' : '失败'}`);
       }
+
       continue; // Skip the heavy generation part
     }
 
-    if (i === 0) {
-      console.log(`🚀 [第一镜] 强制使用 ${imageModel} 引擎生成初始起步图...`);
-      const imgPrompt = shot.image_prompt || shot.visual_description || `Cinematic shot, Scene ${i + 1}`;
-      currentStartImage = await generateImage(
-        imgPrompt,
-        imageModel,
-        "none",
-        "16:9",
-        extractedAnchor,
-        referenceImageBase64 // ★ pass image so Pulid clones the face
-      );
-      if (onProgress) {
-        onProgress({ index: i, stage: "image_done", imageUrl: currentStartImage });
-      }
-    } else {
-      console.log(`🚀 [第 ${i + 1} 镜] 强制拦截！拒绝重新生图，直接读取上一镜的尾帧作为起步图！`);
-      if (!previousVideoLastFrame) {
-        console.error("❌ 严重错误：尾帧接力棒丢失！");
-        throw new Error("无法获取上一镜头的尾帧，连续生成被迫终止。");
-      }
-      // 【强制写死】：绝对不允许在 i > 0 时调用 generateImage。必须使用 Base64 尾帧。
-      currentStartImage = previousVideoLastFrame;
-      if (onProgress) {
-        onProgress({ index: i, stage: "image_done", imageUrl: currentStartImage });
-      }
+    // ★ 全片一致性升级：每个Scene生成新背景(Hard Cut)，但死死锁住首图的人脸！
+    console.log(`🚀 [第 ${i + 1} 场] 正在强制使用 ${imageModel} 引擎生成该场景的新起步图...`);
+    const masterFaceAnchor = referenceImageBase64 || globalAutoAnchorBase64;
+    const imgPrompt = shot.image_prompt || shot.visual_description || `Cinematic shot, Scene ${i + 1}`;
+
+    currentStartImage = await generateImage(
+      imgPrompt,
+      imageModel,
+      "none",
+      "16:9",
+      extractedAnchor,
+      masterFaceAnchor // ★ pass image so Pulid clones the face perfectly into new environment
+    );
+
+    // ★ 缓存全片第一帧人脸
+    if (i === 0 && !referenceImageBase64) {
+      globalAutoAnchorBase64 = currentStartImage;
+      console.log(`✅ [第 ${i + 1} 场] 已自动嗅探全片首帧，将作为后续场景的绝对脸部基准垫图！`);
+    }
+
+    if (onProgress) {
+      onProgress({ index: i, stage: "image_done", imageUrl: currentStartImage });
     }
 
     console.log(`🎥 [阶段 2] 发送视频生成请求: ${shot.video_prompt}`);
@@ -238,20 +232,9 @@ export const generateSceneChain = async (
       onProgress({ index: i, stage: "video_done", videoUrl: generatedVideoUrl });
     }
 
-    // 【强制写死】：只要当前不是最后一个镜头，死等截帧完成！
-    if (i < storyboard.length - 1) {
-      console.log(`📸 [Shot ${i + 1}] 正在调用服务端截帧（绕过 CORS）...`);
-      try {
-        previousVideoLastFrame = await extractLastFrameServerSide(generatedVideoUrl);
-        const frameType = previousVideoLastFrame.startsWith('data:') ? 'Base64' : 'URL';
-        console.log(`✅ [Shot ${i + 1}] 尾帧截取成功 (${frameType})，Base64 长度: ${previousVideoLastFrame.length}`);
-        console.log(`[Chain Check] Shot ${i + 2} will use tail frame: ${frameType}, size=${previousVideoLastFrame.length}, hasData=${previousVideoLastFrame.length > 100}`);
-      } catch (frameErr: any) {
-        console.error(`❌ [Shot ${i + 1}] 尾帧截取失败！错误: ${frameErr.message}`);
-        console.error(`❌ 锁链将在第 ${i + 2} 镜断裂 — 中止执行。`);
-        throw frameErr; // Propagate up — do NOT let chain continue silently
-      }
-    }
+    // 以前这里会提取尾帧给下一个Scene用，现在我们实施Hard Cut跳切场景，
+    // 因此这里不再需要为了下一个Scene去提取尾帧。
+    // 但是在这个闭环内，我们仍然留着日志打印完成。
   }
 
   console.log("🎉 全部锁链生成完毕，真正的一镜到底！");
