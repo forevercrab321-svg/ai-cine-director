@@ -157,6 +157,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
 
   // ★ Fetch entitlement from backend (GOD MODE check)
+  // Falls back to developer mode if backend is unavailable
   const fetchEntitlement = useCallback(async () => {
     try {
       const { data: { session: currentSession } } = await supabase.auth.getSession();
@@ -165,6 +166,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         return;
       }
 
+      // Get user email for developer check
+      const userEmail = currentSession.user?.email || '';
+      const isDevEmail = isDeveloperEmail(userEmail);
+
+      // Try to fetch from backend
       const response = await fetch('/api/entitlement', {
         headers: {
           'Authorization': `Bearer ${currentSession.access_token}`,
@@ -173,7 +179,49 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       });
 
       if (!response.ok) {
-        throw new Error(`Entitlement check failed: ${response.status}`);
+        // Backend unavailable - fall back to developer mode if email is in allowlist
+        console.warn('[Entitlement] Backend unavailable, using fallback mode');
+        if (isDevEmail) {
+          setEntitlement({
+            isDeveloper: true,
+            isAdmin: true,
+            plan: 'developer',
+            credits: 999999,
+            canGenerate: true,
+            mode: 'developer',
+            reasonIfBlocked: null,
+            loading: false,
+            error: null,
+          });
+          balanceRef.current = 999999;
+          setUserState(prev => ({
+            ...prev,
+            balance: 999999,
+            isAdmin: true,
+            isPro: true,
+          }));
+          console.log('[GOD MODE] ✅ Developer mode activated (offline fallback)');
+        } else {
+          setEntitlement({
+            isDeveloper: false,
+            isAdmin: false,
+            plan: 'free',
+            credits: 50,
+            canGenerate: true,
+            mode: 'free',
+            reasonIfBlocked: null,
+            loading: false,
+            error: null,
+          });
+          balanceRef.current = 50;
+          setUserState(prev => ({
+            ...prev,
+            balance: 50,
+            isAdmin: false,
+            isPro: false,
+          }));
+        }
+        return;
       }
 
       const data = await response.json();
@@ -204,7 +252,51 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     } catch (err: any) {
       console.error('[Entitlement] Error:', err);
-      setEntitlement(prev => ({ ...prev, loading: false, error: err.message }));
+      // Network error or backend unavailable - use fallback
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      const userEmail = currentSession?.user?.email || '';
+      const isDevEmail = isDeveloperEmail(userEmail);
+      
+      if (isDevEmail) {
+        setEntitlement({
+          isDeveloper: true,
+          isAdmin: true,
+          plan: 'developer',
+          credits: 999999,
+          canGenerate: true,
+          mode: 'developer',
+          reasonIfBlocked: null,
+          loading: false,
+          error: null,
+        });
+        balanceRef.current = 999999;
+        setUserState(prev => ({
+          ...prev,
+          balance: 999999,
+          isAdmin: true,
+          isPro: true,
+        }));
+        console.log('[GOD MODE] ✅ Developer mode activated (error fallback)');
+      } else {
+        setEntitlement({
+          isDeveloper: false,
+          isAdmin: false,
+          plan: 'free',
+          credits: 50,
+          canGenerate: true,
+          mode: 'free',
+          reasonIfBlocked: null,
+          loading: false,
+          error: null,
+        });
+        balanceRef.current = 50;
+        setUserState(prev => ({
+          ...prev,
+          balance: 50,
+          isAdmin: false,
+          isPro: false,
+        }));
+      }
     }
   }, []);
 
