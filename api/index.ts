@@ -22,15 +22,15 @@ interface Profile {
 }
 
 type VideoModel =
-  // ★ 性价比模型 (2个) - 快速出片
-  | 'wan_2_2_fast'           // ★ Alibaba Wan 2.2 - 性价比之王
-  | 'hailuo_02_fast'        // ★ MiniMax Hailuo-02 - 均衡之选
+    // ★ 性价比模型 (2个) - 快速出片
+    | 'wan_2_2_fast'           // ★ Alibaba Wan 2.2 - 性价比之王
+    | 'hailuo_02_fast'        // ★ MiniMax Hailuo-02 - 均衡之选
 
-  // ★ 顶级画质模型 (4个) - 电影级质量
-  | 'kling_2_5_pro'        // ★ 快手Kling 2.5 Pro - 顶级物理
-  | 'veo_3'                // ★ Google Veo 3 - 最高质量
-  | 'seedance_pro'          // ★ ByteDance Seedance Pro - 首帧尾帧
-  | 'sora_2';              // ★ OpenAI Sora 2 - 最新AI
+    // ★ 顶级画质模型 (4个) - 电影级质量
+    | 'kling_2_5_pro'        // ★ 快手Kling 2.5 Pro - 顶级物理
+    | 'veo_3'                // ★ Google Veo 3 - 最高质量
+    | 'seedance_pro'          // ★ ByteDance Seedance Pro - 首帧尾帧
+    | 'sora_2';              // ★ OpenAI Sora 2 - 最新AI
 type ImageModel = 'flux' | 'flux_schnell' | 'nano_banana';
 type BatchJobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 type BatchItemStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
@@ -212,7 +212,7 @@ app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), asyn
                     if (isSubscription && planTier) {
                         updateData.is_pro = true;
                         updateData.plan_type = planTier;
-                    } 
+                    }
                 }
 
                 await supabase.from('profiles').update(updateData).eq('id', userId);
@@ -302,7 +302,7 @@ const findUserIdByEmail = async (supabaseAdmin: any, email: string): Promise<str
         }
 
         const users = (data as any)?.users as Array<{ id: string; email?: string }> | undefined;
-        if (!users?.length) return undefined;
+        if (!users || !Array.isArray(users)) return undefined;
 
         const match = users.find((u) => (u.email || '').toLowerCase() === target);
         if (match?.id) return match.id;
@@ -348,6 +348,9 @@ app.post('/api/auth/ensure-user', async (req: any, res: any) => {
                     name: email,
                     role: 'Director',
                     credits: 50,
+                    is_pro: false,
+                    plan_type: 'free',
+                    monthly_credits_used: 0
                 } as any, { onConflict: 'id' });
 
             if (upsertErr) {
@@ -357,6 +360,9 @@ app.post('/api/auth/ensure-user', async (req: any, res: any) => {
                         id: userId,
                         name: email,
                         credits: 50,
+                        is_pro: false,
+                        plan_type: 'free',
+                        monthly_credits_used: 0
                     } as any, { onConflict: 'id' });
 
                 if (fallbackUpsertErr) {
@@ -560,21 +566,7 @@ app.post('/api/auth/verify-otp', async (req: any, res: any) => {
 });
 
 // --- Cost --- (同步自 types.ts MODEL_COSTS)
-const estimateCost = (model: string): number => {
-    const COSTS: Record<string, number> = {
-        // 视频模型
-        'wan-video/wan-2.2-i2v-fast': 8,
-        'minimax/hailuo-02-fast': 18,
-        'bytedance/seedance-1-lite': 28,
-        'kwaivgi/kling-v2.5-turbo-pro': 53,
-        'minimax/video-01-live': 75,
-        'google/gemini-nano-banana': 5,
-        // 图片模型
-        'black-forest-labs/flux-1.1-pro': 6,
-        'black-forest-labs/flux-schnell': 1,
-    };
-    return COSTS[model] || 28;  // 默认值与 types.ts MODEL_COSTS.DEFAULT 保持一致
-};
+// estimateCost is defined at the top of the file
 
 // ═══════════════════════════════════════════════════════════════
 // GOD MODE - Developer Allowlist (env-driven + hardcoded fallback)
@@ -1458,7 +1450,7 @@ Output as valid JSON.`;
 
         const text = response.text;
         if (!text) throw new Error('No response from AI Director.');
-        
+
         // Try to parse JSON, with fallback for malformed responses
         let parsedData;
         try {
@@ -1547,7 +1539,7 @@ Output as valid JSON.`;
             // 计算这个镜头属于第几个场景（基于shot中的scene_number）
             const sceneNum = shot.scene_number || 1;
             if (sceneNum > targetScenes) break; // 超出场景限制
-            
+
             shotsInTarget++;
             if (shotsInTarget <= targetScenes * 10) { // 防止单个场景镜头过多（平均每个场景~10个镜头）
                 scenesInTarget = Math.ceil(shotsInTarget / 10);
@@ -1555,7 +1547,7 @@ Output as valid JSON.`;
                 break; // 镜头数达到极限
             }
         }
-        
+
         // 只返回目标范围内的镜头
         project.scenes = flattenedShots.slice(0, Math.min(flattenedShots.length, targetScenes * 10));
 
@@ -2038,7 +2030,7 @@ ${character_anchor ? `Character Anchor (MUST appear in every shot's image_prompt
 
         const text = response.text;
         if (!text) throw new Error('No response from AI');
-        
+
         // Try to parse JSON, with fallback for malformed responses
         let result;
         try {
@@ -2174,7 +2166,7 @@ ${shotJson}
 
         const text = response.text;
         if (!text) throw new Error('No response from AI');
-        
+
         // Try to parse JSON, with fallback for malformed responses
         let rewrittenFields;
         try {

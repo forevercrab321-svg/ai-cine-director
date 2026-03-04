@@ -150,6 +150,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // React state is stale in closures — this ref is the ONLY source of truth
   // for synchronous balance checking in deductCredits
   const balanceRef = useRef(0);
+  const syncLockRef = useRef(0); // ★ Prevents refreshBalance from wiping optimistic deductions
 
   // Track if we've already auto-shown paywall this session
   const hasAutoShownPaywall = useRef(false);
@@ -256,7 +257,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const { data: { session: currentSession } } = await supabase.auth.getSession();
       const userEmail = currentSession?.user?.email || '';
       const isDevEmail = isDeveloperEmail(userEmail);
-      
+
       if (isDevEmail) {
         setEntitlement({
           isDeveloper: true,
@@ -484,6 +485,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // We only mark the ref as "reserved" to prevent rapid-click race conditions in the UI.
     // refreshBalance() will sync the TRUE value from DB after the backend call completes.
     balanceRef.current = balanceRef.current - amount;
+    syncLockRef.current = Date.now(); // ★ Lock sync for 5 seconds to let backend DB catch up
     console.log(`[CREDIT GUARD] UI pre-reserved ${amount}, ref now=${balanceRef.current}`);
 
     // Update React state for immediate UI feedback
@@ -521,6 +523,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // ★ IMPORTANT: If user is admin, don't override their 999999 balance
     if (userState.isAdmin) {
       console.log(`[CREDIT SYNC] Skipping refresh for admin user (keeping balance=${balanceRef.current})`);
+      return;
+    }
+
+    // ★ SYNC LOCK: Prevent DB from overwriting UI if we just optimistically deducted
+    if (Date.now() - syncLockRef.current < 5000) {
+      console.log(`[CREDIT SYNC] Skipping refresh (sync locked to protect optimistic deduction)`);
       return;
     }
 

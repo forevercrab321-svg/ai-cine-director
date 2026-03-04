@@ -20,6 +20,7 @@ interface ShotListViewProps {
     referenceImageDataUrl?: string;  // ★ Compressed base64 for Flux Redux consistency
     shotCount: number; // ★ 新增：镜头数量（5/10/15/20/25/30）
     onBack: () => void;
+    onUpdateScene?: (sceneIndex: number, field: string, value: any) => void;
 }
 
 // ── Camera & movement badge colors ──
@@ -505,8 +506,8 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
         try {
             const scenesWithDialogue = project.scenes.map(scene => ({
                 scene_number: scene.scene_number,
-                dialogue: scene.dialogue || '',
-                description: scene.description || '',
+                dialogue: scene.dialogue_text || '',
+                description: scene.visual_description || '',
             }));
 
             console.log('[ShotListView] Generating voices for scenes:', scenesWithDialogue);
@@ -524,7 +525,7 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                     }
                 }
                 setSceneVoices(prev => ({ ...prev, ...newVoices }));
-                
+
                 const successCount = result.results.filter((r: any) => r.success).length;
                 alert(`✅ 配音生成完成！成功生成 ${successCount} 个场景的配音`);
             }
@@ -543,7 +544,7 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
             alert("⚠️ 全片物理锁链已执行完毕并锁定，不允许重复运行！\n如需重新生成，请刷新页面重新开始。");
             return;
         }
-        
+
         // ★ 验证前置条件（必须在锁定之前检查）
         if (!project.character_anchor) {
             return alert("请先在左侧设定【角色一致性锚点】！");
@@ -690,8 +691,8 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                                     ${isChainLocked
                                         ? 'bg-green-900/50 text-green-300 cursor-not-allowed border-2 border-green-500/30'
                                         : isChainRunning
-                                        ? 'bg-indigo-900/50 text-indigo-300 cursor-not-allowed'
-                                        : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg shadow-purple-500/20'}`}
+                                            ? 'bg-indigo-900/50 text-indigo-300 cursor-not-allowed'
+                                            : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg shadow-purple-500/20'}`}
                                 title={isChainLocked ? "全片已锁定，不可重复运行" : ""}
                             >
                                 {isChainLocked ? (

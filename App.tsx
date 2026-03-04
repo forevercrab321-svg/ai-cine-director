@@ -139,6 +139,21 @@ const MainLayout: React.FC = () => {
     setProject({ ...project, scenes: newScenes });
   };
 
+  const handleSceneSync = async (sceneIndex: number, field: string, value: any) => {
+    if (!project || !profile?.id) return;
+    const newScenes = [...project.scenes];
+    if (newScenes[sceneIndex]) {
+      newScenes[sceneIndex] = { ...newScenes[sceneIndex], [field]: value };
+      const updatedProject = { ...project, scenes: newScenes };
+      setProject(updatedProject);
+      try {
+        await saveStoryboard(profile.id, updatedProject);
+      } catch (e) {
+        console.error("Failed to sync storyboard to db", e);
+      }
+    }
+  };
+
   const handleGoToProduction = async () => {
     if (!project) return;
 
@@ -413,6 +428,7 @@ const MainLayout: React.FC = () => {
             referenceImageDataUrl={referenceImageDataUrl}
             shotCount={shotCount}
             onBack={() => setWorkflowStage('scripting')}
+            onUpdateScene={handleSceneSync}
           />
         )}
 
@@ -421,6 +437,7 @@ const MainLayout: React.FC = () => {
             project={project}
             referenceImageDataUrl={referenceImageDataUrl}
             onBackToScript={() => setWorkflowStage('scripting')}
+            onUpdateScene={handleSceneSync}
           />
         )}
       </div>
