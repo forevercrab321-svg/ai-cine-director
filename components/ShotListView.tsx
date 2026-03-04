@@ -3,7 +3,7 @@
  * Shows detailed shot breakdowns per scene with editing, AI rewrite, and field locking.
  */
 import React, { useState, useCallback } from 'react';
-import { StoryboardProject, Scene, Shot, ShotImage, ShotRevision, Language } from '../types';
+import { StoryboardProject, Scene, Shot, ShotImage, ShotRevision, Language, VideoModel } from '../types';
 import { generateShots, rewriteShotFields } from '../services/shotService';
 import { useAppContext } from '../context/AppContext';
 import { LoaderIcon } from './IconComponents';
@@ -11,8 +11,7 @@ import ShotEditDrawer from './ShotEditDrawer';
 import ShotImageGrid from './ShotImageGrid';
 import BatchImagePanel from './BatchImagePanel';
 import { t } from '../i18n';
-import { startVideoTask, generateImage, checkPredictionStatus } from '../services/replicateService';
-import { extractLastFrameFromVideo } from '../utils/video-helpers';
+import { startVideoTask, generateImage, checkPredictionStatus, extractLastFrameWithFallback } from '../services/replicateService';
 import { forceDownload } from '../utils/download';
 import { generateVoicesForScenes } from '../services/elevenLabsService';
 interface ShotListViewProps {
@@ -148,7 +147,8 @@ const SceneSection: React.FC<{
     project: StoryboardProject; imagesByShot: Record<string, ShotImage[]>; onImagesChange: (shotId: string, images: ShotImage[]) => void; effectiveProjectId: string;
     referenceImageDataUrl?: string;
     onUpdateScene: (updates: Partial<Scene>) => void; // ★ 新增：场次数据更新回调
-}> = ({ scene, sceneIndex, shots, isGenerating, onGenerateShots, onUpdateShot, onRewriteShot, project, imagesByShot, onImagesChange, effectiveProjectId, referenceImageDataUrl, onUpdateScene }) => {
+    videoModel: VideoModel; // ★ Pass model from settings
+}> = ({ scene, sceneIndex, shots, isGenerating, onGenerateShots, onUpdateShot, onRewriteShot, project, imagesByShot, onImagesChange, effectiveProjectId, referenceImageDataUrl, onUpdateScene, videoModel }) => {
     const [expandedShots, setExpandedShots] = useState<Set<string>>(new Set());
     const [editingShot, setEditingShot] = useState<Shot | null>(null);
 
@@ -220,7 +220,7 @@ const SceneSection: React.FC<{
 
                 setChainLog(`[第 ${i + 1} 镜] 正在生成视频动态...`);
                 const videoRes = await startVideoTask(
-                    shot.action || "", currentStartImage, 'hailuo_02_fast', 'none', 'storyboard', 'standard', 6, 24, '720p', project.character_anchor, '16:9'
+                    shot.action || "", currentStartImage, videoModel, 'none', 'storyboard', 'standard', 6, 24, '720p', project.character_anchor, '16:9'
                 );
 
                 let videoUrl = "";
@@ -244,7 +244,7 @@ const SceneSection: React.FC<{
                 // 准备接力棒
                 if (i < shots.length - 1) {
                     setChainLog(`[第 ${i + 1} 镜] 正在后台静默提取尾帧...`);
-                    tailFrameBase64 = await extractLastFrameFromVideo(videoUrl);
+                    tailFrameBase64 = await extractLastFrameWithFallback(videoUrl);
                 }
             }
             setChainLog('🎉 锁链执行完毕，一镜到底生成成功！');
@@ -617,10 +617,10 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                         currentStartImage = globalTailFrameBase64;
                     }
 
-                    setChainLog(`场 ${scene.scene_number} 镜 ${i + 1}：正在基于海螺物理引擎渲染动态视频...`);
+                    setChainLog(`场 ${scene.scene_number} 镜 ${i + 1}：正在基于物理引擎渲染动态视频...`);
                     // 发送视频请求
                     const videoRes = await startVideoTask(
-                        shot.action || "", currentStartImage, 'hailuo_02_fast', 'none', 'storyboard', 'standard', 6, 24, '720p', project.character_anchor, '16:9'
+                        shot.action || "", currentStartImage, settings.videoModel, 'none', 'storyboard', 'standard', 6, 24, '720p', project.character_anchor, '16:9'
                     );
 
                     // 轮询等待视频完成
@@ -647,7 +647,7 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                     const isVeryLastShotInWholeMovie = (sIdx === project.scenes.length - 1) && (i === sceneShots.length - 1);
                     if (!isVeryLastShotInWholeMovie) {
                         setChainLog(`当前镜头渲染完毕，正在静默截取最后 0.1s 绝对尾帧准备跨域接力...`);
-                        globalTailFrameBase64 = await extractLastFrameFromVideo(videoUrl);
+                        globalTailFrameBase64 = await extractLastFrameWithFallback(videoUrl);
                     }
                 }
             }
@@ -845,6 +845,7 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                             effectiveProjectId={effectiveProjectId}
                             referenceImageDataUrl={referenceImageDataUrl}
                             onUpdateScene={(updates) => handleUpdateScene(scene.scene_number, updates)}
+                            videoModel={settings.videoModel}
                         />
                     );
                 })}

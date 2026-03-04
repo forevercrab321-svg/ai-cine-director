@@ -13,6 +13,30 @@ export interface ReplicateResponse {
   logs?: string;
 }
 
+export const extractLastFrameWithFallback = async (videoUrl: string): Promise<string> => {
+  try {
+    const { extractLastFrameFromVideo } = await import('../utils/video-helpers');
+    return await extractLastFrameFromVideo(videoUrl);
+  } catch (err: any) {
+    console.warn('[extractLastFrameWithFallback] Local extraction failed (CORS/memory). Falling back to server...', err);
+    try {
+      const headers = await getAuthHeaders();
+      const res = await fetch('/api/extract-frame', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ videoUrl })
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      if (!data.base64) throw new Error('No base64 returned from server');
+      return `data:image/jpeg;base64,${data.base64}`;
+    } catch (serverErr: any) {
+      console.error('[extractLastFrameWithFallback] Server fallback also failed:', serverErr);
+      throw new Error(`Failed to extract frame: ${err.message} -> ${serverErr.message}`);
+    }
+  }
+};
+
 const API_BASE = '/api/replicate';
 
 // Helper: Get Auth Token
