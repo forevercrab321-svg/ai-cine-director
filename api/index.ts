@@ -79,7 +79,7 @@ const REPLICATE_MODEL_PATHS: Record<VideoModel | ImageModel, string> = {
     // ★ 顶级画质模型 (4个)
     kling_2_5_pro: "kwaivgi/kling-v2.5-turbo-pro",
     veo_3: "google/veo-3",
-    seedance_pro: "bytedance/seedance-1",
+    seedance_pro: "bytedance/seedance-1-pro",
     sora_2: "openai/sora-2",
 
     // Image models
