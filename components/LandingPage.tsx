@@ -16,39 +16,39 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
   const [uploadError, setUploadError] = React.useState('');
   const [demoVideoUrl, setDemoVideoUrl] = React.useState<string | null>(null);
   const [isDeveloper, setIsDeveloper] = React.useState(false);
-  
+
   // Login form states - MOVED TO TOP LEVEL to avoid React hooks violation
   const [email, setEmail] = React.useState('');
   const [loginLoading, setLoginLoading] = React.useState(false);
   const [loginSent, setLoginSent] = React.useState(false);
   const [loginError, setLoginError] = React.useState('');
-  
+
   // Handle video upload
   const handleVideoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    
+
     if (!file.type.startsWith('video/')) {
       setUploadError('Please select a video file');
       return;
     }
-    
+
     // Check file size (max 50MB)
     if (file.size > 50 * 1024 * 1024) {
       setUploadError('Video file too large. Maximum 50MB.');
       return;
     }
-    
+
     setUploadProgress('Reading file...');
     setUploadError('');
-    
+
     try {
       // Convert to base64
       const reader = new FileReader();
       reader.onload = async () => {
         const base64 = (reader.result as string).split(',')[1];
         setUploadProgress('Uploading...');
-        
+
         // Get auth token from localStorage or session
         const token = localStorage.getItem('supabase.auth.token');
         let authHeader = '';
@@ -57,14 +57,14 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
           if (parsed.access_token) {
             authHeader = `Bearer ${parsed.access_token}`;
           }
-        } catch {}
-        
+        } catch { }
+
         if (!authHeader) {
           setUploadError('Please login first to upload demo videos');
           setUploadProgress('');
           return;
         }
-        
+
         try {
           const res = await fetch('/api/upload-demo-video', {
             method: 'POST',
@@ -77,9 +77,9 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
               fileName: file.name
             })
           });
-          
+
           const data = await res.json();
-          
+
           if (data.ok && data.url) {
             setDemoVideoUrl(data.url);
             setUploadProgress('Upload successful!');
@@ -106,28 +106,33 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
       setUploadProgress('');
     }
   };
-  
+
   // Handle send verification code
   const handleSendCode = async () => {
     if (!email) return;
     setLoginLoading(true);
     setLoginError('');
-    
+
     try {
-      console.log('[Landing] Sending Magic Link via Supabase to:', email);
-      
-      // Use Supabase's built-in signInWithOtp
-      const { error } = await supabase.auth.signInWithOtp({
-        email: email,
+      console.log('[Landing] Sending Magic Link via backend to:', email);
+
+      const res = await fetch('/api/auth/send-otp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ email: email })
       });
 
-      if (error) {
-        console.error('[Landing] Supabase error:', error);
-        setLoginError(error.message);
-      } else {
-        console.log('[Landing] Magic link sent successfully!');
-        setLoginSent(true);
+      const data = await res.json();
+
+      if (!res.ok) {
+        console.error('[Landing] Backend error:', data);
+        throw new Error(data.error || 'Failed to send magic link');
       }
+
+      console.log('[Landing] Magic link sent successfully!');
+      setLoginSent(true);
     } catch (e: any) {
       console.error('[Landing] OTP Error:', e);
       setLoginError(e.message || 'Network error - please try again');
@@ -135,7 +140,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
       setLoginLoading(false);
     }
   };
-  
+
   // Reset login form
   const resetLoginForm = () => {
     setShowLogin(false);
@@ -144,28 +149,33 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
     setLoginError('');
     setOtpCode('');
   };
-  
+
   // Resend the magic link
   const handleResendCode = async () => {
     if (!email) return;
     setLoginLoading(true);
     setLoginError('');
-    
+
     try {
-      console.log('[Landing] Resending magic link via Supabase to:', email);
-      
-      // Use Supabase's built-in signInWithOtp
-      const { error } = await supabase.auth.signInWithOtp({
-        email: email,
+      console.log('[Landing] Resending magic link via backend to:', email);
+
+      const res = await fetch('/api/auth/send-otp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ email: email })
       });
 
-      if (error) {
-        console.error('[Landing] Resend error:', error);
-        setLoginError(error.message);
-      } else {
-        console.log('[Landing] Magic link resent successfully!');
-        alert('Magic link sent! Check your email and click the login link.');
+      const data = await res.json();
+
+      if (!res.ok) {
+        console.error('[Landing] Resend error:', data);
+        throw new Error(data.error || 'Failed to resend magic link');
       }
+
+      console.log('[Landing] Magic link resent successfully!');
+      alert('Magic link sent! Check your email and click the login link.');
     } catch (e: any) {
       console.error('[Landing] Resend Error:', e);
       setLoginError(e.message || 'Network error');
@@ -173,10 +183,10 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
       setLoginLoading(false);
     }
   };
-  
+
   // Add state for OTP code (for future use if needed)
   const [otpCode, setOtpCode] = React.useState('');
-  
+
   // Render login form when showLogin is true
   if (showLogin) {
     return (
@@ -191,7 +201,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
             <h1 className="text-3xl font-bold text-white">AI Cine-Director</h1>
             <p className="text-slate-400 mt-2">{loginSent ? 'Check your email' : 'Sign in to continue'}</p>
           </div>
-          
+
           {!loginSent ? (
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
               <p className="text-sm text-slate-400 mb-4">Enter your email to receive a verification code:</p>
@@ -282,14 +292,14 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
       </div>
     );
   }
-  
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200">
       {/* Hero Section */}
       <div className="relative overflow-hidden">
         {/* Background gradient */}
         <div className="absolute inset-0 bg-gradient-to-br from-indigo-900/20 via-slate-950 to-purple-900/20" />
-        
+
         <div className="relative max-w-6xl mx-auto px-6 py-20">
           {/* Logo & Badge */}
           <div className="flex items-center justify-center gap-3 mb-8">
@@ -297,13 +307,13 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
               <SparklesIcon className="w-8 h-8 text-white" />
             </div>
           </div>
-          
+
           <h1 className="text-5xl md:text-6xl font-bold text-white text-center mb-6 tracking-tight">
             AI Cine-Director
           </h1>
-          
+
           <p className="text-xl text-slate-400 text-center mb-12 max-w-2xl mx-auto">
-            {lang === 'zh' 
+            {lang === 'zh'
               ? 'AI 视频创作平台 - 从剧本到电影，只需一句话'
               : 'AI Video Creation Platform - From Script to Cinema with Just One Prompt'}
           </p>
@@ -339,7 +349,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
           {/* Demo Video - User's generated video */}
           <div className="max-w-4xl mx-auto mb-20">
             <div className="aspect-video bg-slate-900 rounded-2xl border border-slate-800 overflow-hidden relative">
-              <video 
+              <video
                 className="w-full h-full object-cover"
                 controls
                 poster="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1920' height='1080'%3E%3Crect fill='%231e293b' width='1920' height='1080'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%2394a3b8' font-size='24'%3EDemo Video%3C/text%3E%3C/svg%3E"
@@ -360,7 +370,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
         <h2 className="text-3xl font-bold text-white text-center mb-12">
           {lang === 'zh' ? '为什么选择 AI Cine-Director？' : 'Why Choose AI Cine-Director?'}
         </h2>
-        
+
         <div className="grid md:grid-cols-3 gap-8">
           {/* Feature 1 */}
           <div className="bg-slate-900/50 p-6 rounded-xl border border-slate-800">
@@ -369,7 +379,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
               {lang === 'zh' ? '角色一致性' : 'Character Consistency'}
             </h3>
             <p className="text-slate-400 text-sm">
-              {lang === 'zh' 
+              {lang === 'zh'
                 ? '我们的 Visual Anchoring System 确保角色在不同场景中保持一致，再也不会出现脸崩的情况'
                 : 'Our Visual Anchoring System ensures consistent characters across scenes'}
             </p>
@@ -382,7 +392,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
               {lang === 'zh' ? '端到端工作流' : 'End-to-End Workflow'}
             </h3>
             <p className="text-slate-400 text-sm">
-              {lang === 'zh' 
+              {lang === 'zh'
                 ? '从剧本创作到视频生成，一站式完成。无需在多个工具之间切换'
                 : 'From script to video, complete in one platform'}
             </p>
@@ -395,7 +405,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
               {lang === 'zh' ? '多模型支持' : 'Multi-Model Support'}
             </h3>
             <p className="text-slate-400 text-sm">
-              {lang === 'zh' 
+              {lang === 'zh'
                 ? '支持 Runway、Kling、Veo 等多种 AI 视频生成模型，选择最适合你的'
                 : 'Support for Runway, Kling, Veo and more AI video models'}
             </p>
@@ -408,7 +418,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
         <h2 className="text-3xl font-bold text-white text-center mb-12">
           {lang === 'zh' ? 'B2B 企业定价' : 'B2B Enterprise Pricing'}
         </h2>
-        
+
         <div className="grid md:grid-cols-3 gap-6">
           {BUSINESS_PLANS.map((plan, index) => (
             <div key={plan.id} className={`bg-slate-900/50 p-6 rounded-xl border ${plan.popular ? 'border-indigo-500/50 bg-indigo-900/20' : 'border-slate-800'} text-center relative`}>
@@ -425,7 +435,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
                   <li key={i}>✓ {f}</li>
                 ))}
               </ul>
-              <button 
+              <button
                 onClick={() => onOpenPricing?.()}
                 className={`w-full py-2 rounded-lg text-sm ${plan.popular ? 'bg-indigo-600 hover:bg-indigo-500' : 'bg-slate-800 hover:bg-slate-700'} text-white transition-colors`}
               >
@@ -447,7 +457,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
       {showUpload && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
           <div className="relative w-full max-w-md bg-slate-900 rounded-2xl border border-slate-800 shadow-2xl p-6">
-            <button 
+            <button
               onClick={() => { setShowUpload(false); setUploadError(''); setUploadProgress(''); }}
               className="absolute top-4 right-4 text-slate-400 hover:text-white"
             >
@@ -455,12 +465,12 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
                 <path d="M18 6 6 18" /><path d="m6 6 12 12" />
               </svg>
             </button>
-            
+
             <h3 className="text-xl font-bold text-white mb-4">📤 Upload Demo Video</h3>
             <p className="text-slate-400 text-sm mb-6">
               Upload a video to replace the demo on the landing page. Only developers can upload.
             </p>
-            
+
             <div className="border-2 border-dashed border-slate-700 rounded-xl p-8 text-center mb-4">
               <input
                 type="file"
@@ -478,11 +488,11 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
                 <p className="text-slate-500 text-xs mt-2">Max 50MB, MP4/WebM</p>
               </label>
             </div>
-            
+
             {uploadError && (
               <p className="text-red-400 text-sm mb-4 text-center">{uploadError}</p>
             )}
-            
+
             <button
               onClick={() => { setShowUpload(false); setUploadError(''); setUploadProgress(''); }}
               className="w-full py-2 text-slate-400 hover:text-white text-sm"
