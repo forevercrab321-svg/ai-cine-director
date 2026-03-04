@@ -594,9 +594,9 @@ export const BUSINESS_PLANS: BusinessPlan[] = [
     id: 'plan_business',
     name: 'Enterprise',
     nameZh: '大型企业',
-    priceMonthly: 2999,
+    priceMonthly: 1999,
     creditsMonthly: 50000,
-    pricePerCredit: 0.060,
+    pricePerCredit: 0.040,
     features: [
       '50,000 credits/月',
       '全部视频模型+Veo3',
@@ -615,9 +615,9 @@ export const BUSINESS_PLANS: BusinessPlan[] = [
     id: 'plan_enterprise',
     name: 'Enterprise',
     nameZh: '集团企业',
-    priceMonthly: 1999,
+    priceMonthly: 2999,
     creditsMonthly: 300000,
-    pricePerCredit: 0.007,
+    pricePerCredit: 0.010,
     features: [
       '300,000 credits/月',
       '全部模型无限用',

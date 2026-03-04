@@ -143,6 +143,7 @@ export async function startBatchGenImagesSSE(params: {
             style: params.style ?? 'none',
             character_anchor: params.character_anchor ?? '',
             concurrency: params.concurrency ?? 3,
+            reference_image_url: params.reference_image_url ?? '',  // ★ 修复：传递参考图片URL
         }),
         signal: abortController.signal,
     });

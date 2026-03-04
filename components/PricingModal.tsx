@@ -331,8 +331,8 @@ const PricingModal: React.FC<PricingModalProps> = ({ isOpen, onClose, onUpgrade 
                 {billingCycle === 'yearly' && <span className="text-xs text-indigo-300 mt-1">年付 $99</span>}
               </div>
               <ul className="space-y-4 mb-8 flex-1">
-                <Feature text={billingCycle === 'yearly' ? "12,000 额度 / 年" : "1,000 额度 / 月"} highlight={selectedTier === 'creator'} />
-                <Feature text="约 66 个高端 Wan 2.1 视频/月" />
+                <Feature text={billingCycle === 'yearly' ? "16,000 额度 / 年" : "1,000 额度 / 月"} highlight={selectedTier === 'creator'} />
+                <Feature text={billingCycle === 'yearly' ? "约 88 个高端 Wan 2.1 视频/年" : "约 66 个高端 Wan 2.1 视频/月"} />
                 <Feature text="商用授权" />
               </ul>
               <button 
@@ -353,8 +353,8 @@ const PricingModal: React.FC<PricingModalProps> = ({ isOpen, onClose, onUpgrade 
                 {billingCycle === 'yearly' && <span className="text-xs text-green-400 mt-1">年付 $299</span>}
               </div>
               <ul className="space-y-4 mb-8 flex-1">
-                <Feature text={billingCycle === 'yearly' ? "42,000 额度 / 年" : "3,500 额度 / 月"} />
-                <Feature text="约 230 个高端视频/月" />
+                <Feature text={billingCycle === 'yearly' ? "50,000 额度 / 年" : "3,500 额度 / 月"} />
+                <Feature text={billingCycle === 'yearly' ? "约 277 个高端视频/年" : "约 230 个高端视频/月"} />
                 <Feature text="最高优先速度" />
               </ul>
               <button 

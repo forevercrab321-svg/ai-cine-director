@@ -5,9 +5,11 @@
  * Uses a simplified Mean Squared Error (MSE) approach on downscaled samples.
  */
 
+// ★★★ 增强阈值：降低到0.15以提高对角色变化的敏感度 ★★★
 // Threshold: 0.0 is identical, 1.0 is opposite.
-// 0.15 allows for compression artifacts and minor lighting shifts but catches scene changes.
-const CONTINUITY_THRESHOLD = 0.20; 
+// 0.15 allows for minor lighting shifts and compression artifacts but catches most character changes.
+// Lower threshold = stricter consistency requirements (film quality)
+const CONTINUITY_THRESHOLD = 0.15; 
 
 export const checkVisualContinuity = async (
   imageUrl: string, 

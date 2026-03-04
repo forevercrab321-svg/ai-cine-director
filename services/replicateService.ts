@@ -146,7 +146,8 @@ interface VideoOptions {
 
 function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string, options: VideoOptions = {}, promptEngineVersion?: 'v1' | 'v2'): Record<string, any> {
   // ★ 角色一致性：最高优先级指令 — 放在 prompt 最前面，模型优先读取
-  const CONSISTENCY_CORE = "CRITICAL: The generated video MUST maintain 100% visual consistency with the input image. The character's face, hair color, skin tone, body proportions, clothing, and art style must remain IDENTICAL in every single frame. Do NOT alter, morph, or replace any character. Smooth natural motion only.";
+  // ★ 增强版：更强制性的指令，防止任何角色变化
+  const CONSISTENCY_CORE = "CRITICAL IDENTITY LOCK: The character in this video MUST be IDENTICAL to the character in the input image. Same face structure, same eye color, same hair style and color, same skin tone, same body proportions, same clothing outfit. NO changes allowed. Maintain 100% visual consistency. Smooth natural motion ONLY. DO NOT alter, morph, replace, or transform any character features.";
 
   let finalPrompt = prompt;
   // PROMPT ENGINE VERSION SWITCH
@@ -233,10 +234,10 @@ export const startVideoTask = async (
   promptOptions?: any,
   promptEngineVersion?: 'v1' | 'v2'
 ): Promise<ReplicateResponse> => {
-  // ★ 角色锚点放在 prompt 末尾作为"加固指令"，buildVideoInput 会在前方插入一致性核心指令
-  // 结构: [CONSISTENCY_CORE] [scene action] [character anchor constraint]
+  // ★ 角色锚点加固指令 - 放在 prompt 末尾作为强制约束
+  // 增强版：多重强制确保角色不变
   const finalPrompt = characterAnchor
-    ? `${prompt}. Character identity lock: ${characterAnchor}`
+    ? `${prompt}. CHARACTER IDENTITY LOCK: The character appearance must EXACTLY match: ${characterAnchor}. Same face, hair, eyes, skin, body, clothing. Zero modifications permitted. This is a film production requirement.`
     : prompt;
 
   let modelIdentifier = modelType.includes('/')
