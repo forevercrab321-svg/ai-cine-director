@@ -56,26 +56,27 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
   };
 
   const sendOtpWithFallback = async () => {
-    // Use backend Resend API to send email (bypasses Supabase SMTP entirely)
+    // Use Supabase's built-in signInWithOtp (no custom backend needed)
     const origin = typeof window !== 'undefined' ? window.location.origin : undefined;
-    console.log('[AUTH] Sending OTP to:', email, 'from origin:', origin);
+    console.log('[AUTH] Sending Magic Link via Supabase to:', email);
     
     try {
-      const resp = await fetch('/api/auth/send-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, redirectTo: origin }),
+      // Supabase signInWithOtp sends a magic link instead of OTP
+      const { error } = await supabase.auth.signInWithOtp({
+        email: email,
+        options: {
+          // Redirect to the same page after clicking magic link
+          emailRedirectTo: origin ? `${origin}/auth/callback` : undefined,
+        }
       });
 
-      console.log('[AUTH] Response status:', resp.status);
-      const data = await resp.json();
-      console.log('[AUTH] Response data:', data);
-
-      if (!resp.ok) {
-        throw new Error(data?.error || `Server error: ${resp.status}`);
+      if (error) {
+        console.error('[AUTH] Supabase error:', error);
+        throw new Error(error.message);
       }
       
-      return data;
+      console.log('[AUTH] Magic link sent successfully!');
+      return { success: true, message: 'Magic link sent!' };
     } catch (err: any) {
       console.error('[AUTH] Send OTP error:', err);
       throw err;

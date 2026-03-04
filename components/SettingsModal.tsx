@@ -214,18 +214,21 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
                 {/* Standard Tier */}
                 <optgroup label="⭐ Standard (均衡之选)">
-                  <option value="seedance_lite">
-                    {getModelLabel('seedance_lite')} (💎 {Math.ceil(MODEL_COSTS.seedance_lite * (MODEL_MULTIPLIERS.seedance_lite || 1))})
+                  <option value="seedance_pro">
+                    {getModelLabel('seedance_pro')} (💎 {Math.ceil(MODEL_COSTS.seedance_pro * (MODEL_MULTIPLIERS.seedance_pro || 1))})
                   </option>
                 </optgroup>
 
                 {/* Pro Tier */}
                 <optgroup label="🔥 Pro (顶级画质)">
-                  <option value="kling_2_5">
-                    {getModelLabel('kling_2_5')} (💎 {Math.ceil(MODEL_COSTS.kling_2_5 * (MODEL_MULTIPLIERS.kling_2_5 || 1))})
+                  <option value="kling_2_5_pro">
+                    {getModelLabel('kling_2_5_pro')} (💎 {Math.ceil(MODEL_COSTS.kling_2_5_pro * (MODEL_MULTIPLIERS.kling_2_5_pro || 1))})
                   </option>
-                  <option value="hailuo_live">
-                    {getModelLabel('hailuo_live')} (💎 {Math.ceil(MODEL_COSTS.hailuo_live * (MODEL_MULTIPLIERS.hailuo_live || 1))})
+                  <option value="veo_3">
+                    {getModelLabel('veo_3')} (💎 {Math.ceil(MODEL_COSTS.veo_3 * (MODEL_MULTIPLIERS.veo_3 || 1))})
+                  </option>
+                  <option value="sora_2">
+                    {getModelLabel('sora_2')} (💎 {Math.ceil(MODEL_COSTS.sora_2 * (MODEL_MULTIPLIERS.sora_2 || 1))})
                   </option>
                 </optgroup>
               </select>
@@ -236,8 +239,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                   <span className={`text-[10px] px-2 py-1 rounded font-bold border
                       ${videoModel === 'wan_2_2_fast' ? 'bg-green-500/10 text-green-400 border-green-500/20' : ''}
                       ${videoModel === 'hailuo_02_fast' ? 'bg-sky-500/10 text-sky-400 border-sky-500/20' : ''}
-                      ${videoModel === 'kling_2_5' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : ''}
-                      ${videoModel === 'hailuo_live' ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' : ''}
+                      ${videoModel === 'kling_2_5_pro' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : ''}
+                      ${videoModel === 'veo_3' ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' : ''}
+                      ${videoModel === 'seedance_pro' ? 'bg-pink-500/10 text-pink-400 border-pink-500/20' : ''}
+                      ${videoModel === 'sora_2' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : ''}
                     `}>
                     {MODEL_METADATA[videoModel].badge}
                   </span>

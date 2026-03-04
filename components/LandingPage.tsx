@@ -114,19 +114,19 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
     setLoginError('');
     
     try {
-      console.log('[Landing] Sending OTP to:', email);
-      const res = await fetch('/api/auth/send-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
-      });
-      const data = await res.json();
-      console.log('[Landing] OTP Response:', data);
+      console.log('[Landing] Sending Magic Link via Supabase to:', email);
       
-      if (data.ok || data.message) {
-        setLoginSent(true);
+      // Use Supabase's built-in signInWithOtp
+      const { error } = await supabase.auth.signInWithOtp({
+        email: email,
+      });
+
+      if (error) {
+        console.error('[Landing] Supabase error:', error);
+        setLoginError(error.message);
       } else {
-        setLoginError(data.error || 'Failed to send code');
+        console.log('[Landing] Magic link sent successfully!');
+        setLoginSent(true);
       }
     } catch (e: any) {
       console.error('[Landing] OTP Error:', e);
@@ -152,20 +152,19 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
     setLoginError('');
     
     try {
-      console.log('[Landing] Resending magic link to:', email);
-      const res = await fetch('/api/auth/send-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
-      });
-      const data = await res.json();
+      console.log('[Landing] Resending magic link via Supabase to:', email);
       
-      if (data.ok || data.message) {
-        // Show success message
-        setLoginError('');
-        alert('Magic link sent! Check your email and click the login link.');
+      // Use Supabase's built-in signInWithOtp
+      const { error } = await supabase.auth.signInWithOtp({
+        email: email,
+      });
+
+      if (error) {
+        console.error('[Landing] Resend error:', error);
+        setLoginError(error.message);
       } else {
-        setLoginError(data.error || 'Failed to resend link');
+        console.log('[Landing] Magic link resent successfully!');
+        alert('Magic link sent! Check your email and click the login link.');
       }
     } catch (e: any) {
       console.error('[Landing] Resend Error:', e);

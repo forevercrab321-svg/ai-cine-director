@@ -164,13 +164,13 @@ function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string
         hailuoInput.audio_prompt = audioPrompt;
       }
       return hailuoInput;
-    case 'seedance_lite':
-      // Seedance: 支持首帧尾帧链接
+    case 'seedance_pro':
+      // Seedance Pro: 支持首帧尾帧链接
       return { prompt: finalPrompt, image: imageUrl, duration, resolution: "720p", seed: 142857 };
 
     // 其他模型
-    case 'kling_2_5':
-      // Kling 2.5: 高质量 I2V，cfg_scale 控制与首帧的贴合度
+    case 'kling_2_5_pro':
+      // Kling 2.5 Pro: 高质量 I2V，cfg_scale 控制与首帧的贴合度
       return { prompt: finalPrompt, image: imageUrl, duration, cfg_scale: 0.5, seed: 142857 };
     case 'kling_2_1':
       // Kling 2.1: 稳定版
@@ -184,8 +184,9 @@ function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string
     case 'veo_3_fast':
       // Google Veo 3 Fast: 最高质量 + 原生音频
       return { prompt: finalPrompt, image: imageUrl, duration, generate_audio: true, seed: 142857 };
-    case 'hailuo_live':
-      return { prompt: finalPrompt, first_frame_image: imageUrl, prompt_optimizer: false, seed: 142857 };
+    case 'veo_3':
+      // Google Veo 3: 最高质量 + 原生音频
+      return { prompt: finalPrompt, image: imageUrl, duration, generate_audio: true, seed: 142857 };
     case 'google_gemini_nano_banana':
       return { prompt: finalPrompt, first_frame_image: imageUrl, prompt_optimizer: false, seed: 142857 };
     default:
