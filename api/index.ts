@@ -609,7 +609,8 @@ const isAdminUser = (email: string | undefined): boolean => {
 // ═══════════════════════════════════════════════════════════════
 type EntitlementAction =
     | 'generate_script' | 'generate_shots' | 'generate_image'
-    | 'generate_video' | 'edit_image' | 'batch_images' | 'analyze_image';
+    | 'generate_video' | 'edit_image' | 'batch_images' | 'analyze_image'
+    | 'rewrite_shot';
 
 type UserPlan = 'free' | 'paid' | 'developer';
 
@@ -850,7 +851,18 @@ async function preprocessVideoInput(input: Record<string, any>): Promise<Record<
     const result = { ...input };
 
     for (const field of imageFields) {
-        const url = input[field];
+        let url = input[field];
+
+        // ★ Safety: Purge empty strings to prevent Replicate 422 (Does not match format 'uri')
+        if (typeof url === 'string') {
+            url = url.trim();
+            if (!url) {
+                delete result[field];
+                continue;
+            }
+            result[field] = url; // Save trimmed back
+        }
+
         if (url && typeof url === 'string' && url.startsWith('http')) {
             // Check if URL is a temporary Replicate delivery URL
             if (url.includes('replicate.delivery') || url.includes('pbxt.replicate.delivery')) {
@@ -911,11 +923,12 @@ app.post('/api/replicate/generate-image', requireAuth, async (req: any, res: any
         let resultUrl = '';
         try {
             const modelToRun = (REPLICATE_MODEL_PATHS as any)[imageModel] || REPLICATE_MODEL_PATHS['flux'];
-            // CRITICAL: Strengthen character consistency
-            const consistencyInstructions = characterAnchor
+            // CRITICAL FIX: If we have an absolute physical face clone anchor (referenceImageDataUrl),
+            // do NOT send the text-based description. Text overrides the image and confuses the backend model.
+            const consistencyInstructions = (characterAnchor && !referenceImageDataUrl)
                 ? `IMPORTANT: The character must look EXACTLY like this description: ${characterAnchor}. Same face, same hair, same clothing, same features. DO NOT change the character's appearance.`
                 : '';
-            const finalPrompt = characterAnchor
+            const finalPrompt = (characterAnchor && !referenceImageDataUrl)
                 ? `${prompt}. ${consistencyInstructions}`
                 : prompt;
 
@@ -1053,6 +1066,13 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
                 input.image = tailFrameImg;
                 delete input.first_frame_image;
                 console.log('[I2V Chain] Seedance model: aligned tail frame to input.image');
+            } else {
+                // ALL OTHER MODELS (Sora-2, Veo-3, Runway, etc.) strictly map to "image" by default
+                // to prevent the Master Anchor from being dropped by misnamed image schemas.
+                input.image = tailFrameImg;
+                if (input.first_frame_image) delete input.first_frame_image;
+                if (input.start_frame) delete input.start_frame;
+                console.log('[I2V Chain] Universal Fallback (Veo/Sora/etc): aligned tail frame to input.image');
             }
         }
 
@@ -1683,7 +1703,7 @@ async function callReplicateImage(params: {
 
     // Switch to PuLID face-cloning model if requested
     const modelPath = isFaceCloning
-        ? "zsxkib/flux-pulid:8baa21e4277a0609355ffc06a382be20eb6022c0ad7f457ff51bcf6a1ad13ec2"
+        ? "zsxkib/flux-pulid"
         : params.model;
 
     const isModelPath = modelPath.includes('/') && !modelPath.match(/^[a-f0-9]{64}$/);
@@ -2092,8 +2112,27 @@ app.post('/api/shots/:shotId/rewrite', async (req: any, res: any) => {
         if (!fields_to_rewrite?.length) return res.status(400).json({ error: 'No fields specified for rewrite' });
 
         const supabaseUser = getUserClient(authHeader);
-        const skipCreditCheck = await checkIsAdmin(supabaseUser);
+        const userId = await getUserId(supabaseUser);
+        const userEmail = await getUserEmail(supabaseUser);
+
+        if (!userId || !userEmail) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+
+        // ★ Bug 5 fix: Use unified checkEntitlement instead of legacy checkIsAdmin
         const COST = 1;
+        const entitlement = await checkEntitlement(userId, userEmail, 'rewrite_shot', COST);
+        if (!entitlement.allowed) {
+            const status = entitlement.errorCode === 'NEED_PAYMENT' ? 402
+                : entitlement.errorCode === 'INSUFFICIENT_CREDITS' ? 402 : 403;
+            return res.status(status).json({
+                error: entitlement.reason,
+                code: entitlement.errorCode,
+                credits: entitlement.credits,
+            });
+        }
+
+        const skipCreditCheck = entitlement.mode === 'developer';
         const jobRef = `rewrite:${Date.now()}:${Math.random().toString(36).slice(2)}`;
 
         if (!skipCreditCheck) {
@@ -2102,6 +2141,8 @@ app.post('/api/shots/:shotId/rewrite', async (req: any, res: any) => {
             });
             if (reserveErr) return res.status(500).json({ error: 'Credit verification failed' });
             if (!reserved) return res.status(402).json({ error: 'Insufficient credits', code: 'INSUFFICIENT_CREDITS' });
+        } else {
+            logDeveloperAccess(userEmail, `shots:rewrite:cost=${COST}`);
         }
 
         const ai = getGeminiAI();
@@ -3479,11 +3520,11 @@ app.post('/api/audio/generate-dialogue', requireAuth, async (req: any, res: any)
             return res.status(400).json({ error: 'Missing text' });
         }
 
-        const ELEVEN_LABS_API_KEY = process.env.ELEVEN_LABS_API_KEY;
+        const ELEVEN_LABS_API_KEY = process.env.ELEVENLABS_API_KEY || process.env.ELEVEN_LABS_API_KEY;
         const ELEVEN_LABS_VOICE_ID = process.env.ELEVEN_LABS_VOICE_ID || 'pNInz6obpgDQGcFmaJgB';
 
         if (!ELEVEN_LABS_API_KEY) {
-            return res.status(500).json({ error: 'Eleven Labs API key not configured' });
+            return res.status(500).json({ error: 'ElevenLabs API key not configured (set ELEVENLABS_API_KEY)' });
         }
 
         // Map emotion to Eleven Labs settings
@@ -3590,7 +3631,7 @@ app.post('/api/audio/generate-music', async (req: any, res: any) => {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                version: 'fb5ab990d26f43e9a861b3e03e708e2bc935b919c2d7e7c24e4d8e6a1e7e8c7',
+                version: '671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eedee5', // meta/musicgen
                 input: {
                     prompt: vibe,
                     duration: duration,
@@ -3643,6 +3684,8 @@ app.post('/api/audio/mix', requireAuth, async (req: any, res: any) => {
         const supabaseAdmin = getSupabaseAdmin();
 
         // Build FFmpeg filter for mixing multiple audio streams
+        // ★ SECURITY WARNING: URLs come from user input. If FFmpeg execution is ever enabled,
+        // they MUST be validated (URL format, no shell metacharacters) to prevent injection.
         let ffmpegInputs = `-i "${video_url}" `;
         let audioInputs: string[] = [];
         let filterComplex = '';

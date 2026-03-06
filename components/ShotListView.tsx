@@ -20,6 +20,7 @@ interface ShotListViewProps {
     shotCount: number; // ★ 新增：镜头数量（5/10/15/20/25/30）
     onBack: () => void;
     onUpdateScene?: (sceneIndex: number, field: string, value: any) => void;
+    onSetGlobalAnchor?: (url: string) => void;
 }
 
 // ── Camera & movement badge colors ──
@@ -64,7 +65,8 @@ const ShotCard: React.FC<{
     visualStyle: string;
     projectId?: string;
     referenceImageDataUrl?: string; // ★ 新增接收照片
-}> = ({ shot, shotIndex, videoUrl, isExpanded, onToggle, onEdit, onLockToggle, images, onImagesChange, characterAnchor, visualStyle, projectId, referenceImageDataUrl }) => {
+    onSetGlobalAnchor?: (url: string) => void;
+}> = ({ shot, shotIndex, videoUrl, isExpanded, onToggle, onEdit, onLockToggle, images, onImagesChange, characterAnchor, visualStyle, projectId, referenceImageDataUrl, onSetGlobalAnchor }) => {
     const camClass = cameraBadgeColor[shot.camera] || 'bg-slate-500/20 text-slate-300 border-slate-500/30';
     const moveEmoji = movementBadge[shot.movement] || '🎬';
 
@@ -104,6 +106,7 @@ const ShotCard: React.FC<{
                                     shot={shot} images={images} onImagesChange={onImagesChange}
                                     characterAnchor={characterAnchor} visualStyle={visualStyle} projectId={projectId}
                                     referenceImageDataUrl={referenceImageDataUrl} // ★ 传递给 Grid！
+                                    onSetGlobalAnchor={onSetGlobalAnchor} // ★ 传递回调
                                 />
                             </div>
                         </>
@@ -148,7 +151,9 @@ const SceneSection: React.FC<{
     referenceImageDataUrl?: string;
     onUpdateScene: (updates: Partial<Scene>) => void; // ★ 新增：场次数据更新回调
     videoModel: VideoModel; // ★ Pass model from settings
-}> = ({ scene, sceneIndex, shots, isGenerating, onGenerateShots, onUpdateShot, onRewriteShot, project, imagesByShot, onImagesChange, effectiveProjectId, referenceImageDataUrl, onUpdateScene, videoModel }) => {
+    onSetGlobalAnchor?: (url: string) => void; // ★ Master Anchor callback
+
+}> = ({ scene, sceneIndex, shots, isGenerating, onGenerateShots, onUpdateShot, onRewriteShot, project, imagesByShot, onImagesChange, effectiveProjectId, referenceImageDataUrl, onUpdateScene, videoModel, onSetGlobalAnchor }) => {
     const [expandedShots, setExpandedShots] = useState<Set<string>>(new Set());
     const [editingShot, setEditingShot] = useState<Shot | null>(null);
 
@@ -209,6 +214,11 @@ const SceneSection: React.FC<{
                                 'flux_schnell', 'none', '16:9', project.character_anchor,
                                 sceneAnchorRef // ★ 场次定妆图优先，回退全局照片
                             );
+
+                            // ★ 嗅探全片首帧并霸权锁定！
+                            if (onSetGlobalAnchor && !sceneAnchorRef) {
+                                onSetGlobalAnchor(currentStartImage);
+                            }
                         }
                     }
                 } else {
@@ -330,7 +340,7 @@ const SceneSection: React.FC<{
 // ═══════════════════════════════════════════════════════════════
 // Main ShotListView component
 // ═══════════════════════════════════════════════════════════════
-const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageDataUrl, shotCount, onBack }) => {
+const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageDataUrl, shotCount, onBack, onUpdateScene, onSetGlobalAnchor }) => {
     const { settings, isAuthenticated, openPricingModal, hasEnoughCredits, refreshBalance } = useAppContext();
 
     // ★ Generate a stable project ID if missing (for legacy projects)
@@ -609,6 +619,11 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                             if (sIdx === 0 && !scene.scene_reference_image_base64 && !referenceImageDataUrl) {
                                 globalAutoAnchorBase64 = currentStartImage;
                                 setChainLog(`场 ${scene.scene_number} 首镜：★ 已自动嗅探全片第一帧作为后续所有跨场的绝对一致性基准！`);
+
+                                // ★ 触发全局 React State 更新
+                                if (onSetGlobalAnchor) {
+                                    onSetGlobalAnchor(currentStartImage);
+                                }
                             }
 
                             // 保存这张生成的首帧留作纪念
@@ -794,6 +809,7 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                     visualStyle={project.visual_style}
                     referenceImageDataUrl={referenceImageDataUrl}
                     imagesByShot={imagesByShot}
+                    onSetGlobalAnchor={onSetGlobalAnchor} // ★ Proxy to batch panel
                     onImagesGenerated={(results) => {
                         // Update imagesByShot with newly generated images
                         setImagesByShot(prev => {

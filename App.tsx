@@ -154,6 +154,13 @@ const MainLayout: React.FC = () => {
     }
   };
 
+  const handleSetGlobalAnchor = (url: string) => {
+    if (!referenceImageDataUrl) {
+      console.log('🌟 [Master Anchor] Auto-locking first generated frame as 全片霸权一致性准星！');
+      setReferenceImageDataUrl(url);
+    }
+  };
+
   const handleGoToProduction = async () => {
     if (!project) return;
 
@@ -429,6 +436,7 @@ const MainLayout: React.FC = () => {
             shotCount={shotCount}
             onBack={() => setWorkflowStage('scripting')}
             onUpdateScene={handleSceneSync}
+            onSetGlobalAnchor={handleSetGlobalAnchor}
           />
         )}
 

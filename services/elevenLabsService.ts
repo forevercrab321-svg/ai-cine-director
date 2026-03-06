@@ -147,7 +147,7 @@ export async function autoGenerateAndStitch(
   stitched_video?: VideoStitchResponse;
 }> {
   const { include_voice = true } = options || {};
-  
+
   const result: {
     voices?: any;
     stitched_video?: VideoStitchResponse;
@@ -177,8 +177,9 @@ export async function autoGenerateAndStitch(
     // Full implementation would stitch all videos server-side
     result.stitched_video = {
       success: true,
-      video_url: videoUrls[0],
+      video_url: videoUrls[0], // ★ Playlist mode: returns all individual scene URLs for sequential playback
       video_count: videoUrls.length,
+      message: `${videoUrls.length} videos ready as playlist (not merged into single file)`,
     };
   }
 

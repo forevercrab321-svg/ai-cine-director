@@ -33,10 +33,11 @@ interface ShotImageGridProps {
     visualStyle: string;
     projectId?: string;
     referenceImageDataUrl?: string; // ★ 新增：接收大哥照片的管道
+    onSetGlobalAnchor?: (url: string) => void;
 }
 
 const ShotImageGrid: React.FC<ShotImageGridProps> = ({
-    shot, images, onImagesChange, characterAnchor, visualStyle, projectId, referenceImageDataUrl
+    shot, images, onImagesChange, characterAnchor, visualStyle, projectId, referenceImageDataUrl, onSetGlobalAnchor
 }) => {
     const { settings, userState, isAuthenticated, hasEnoughCredits, openPricingModal, refreshBalance, deductCredits } = useAppContext();
     const [isGenerating, setIsGenerating] = useState(false);
@@ -136,8 +137,8 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
                 reference_policy: shot.reference_policy || (images.length > 0 ? 'previous-frame' : 'anchor'),
                 project_id: projectId,
                 // Use previous shot's last frame for continuity, or reference image for first shot
-                referenceImageDataUrl: images.length > 0 
-                    ? (images[images.length - 1]?.url || referenceImageDataUrl) 
+                referenceImageDataUrl: images.length > 0
+                    ? (images[images.length - 1]?.url || referenceImageDataUrl)
                     : referenceImageDataUrl,
             });
 

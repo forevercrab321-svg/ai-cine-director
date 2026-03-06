@@ -28,8 +28,9 @@ export const extractLastFrameWithFallback = async (videoUrl: string): Promise<st
       });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
-      if (!data.base64) throw new Error('No base64 returned from server');
-      return `data:image/jpeg;base64,${data.base64}`;
+      // ★ Backend returns { frame: "data:image/jpeg;base64,..." } — already a complete data URL
+      if (!data.frame) throw new Error('No frame returned from server');
+      return data.frame;
     } catch (serverErr: any) {
       console.error('[extractLastFrameWithFallback] Server fallback also failed:', serverErr);
       throw new Error(`Failed to extract frame: ${err.message} -> ${serverErr.message}`);
@@ -78,13 +79,8 @@ const sanitizePromptForSafety = (prompt: string) => {
     .concat(' Family-friendly cinematic scene, no gore, no violence, no explicit content.');
 };
 
-// 风格预设
-export const STYLE_PRESETS: Record<string, string> = {
-  cinematic: "cinematic film still, shallow depth of field, color graded, highly detailed",
-  anime: "anime style, vibrant colors, detailed line art, studio Ghibli aesthetic",
-  pixar: "3d render, Pixar style, cute, cartoon character, expressive, subsurface scattering",
-  cyberpunk: "cyberpunk aesthetic, neon lights, retro-futuristic, rain, detailed, dark atmosphere",
-};
+// ★ STYLE_PRESETS — canonical definition is in types.ts (StylePreset[]).
+// Removed duplicate Record<string, string> that was out of sync.
 
 /**
  * generateImage - Enhanced with Real Face-Cloning
@@ -160,7 +156,8 @@ function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string
     }
   } else {
     // v1: legacy — 把一致性指令焊在 prompt 最前方
-    finalPrompt = `${CONSISTENCY_CORE} ${prompt}`;
+    // ★ 只有当我们确实提供了一张图时，才加入 "匹配原图" 的死板指令
+    finalPrompt = imageUrl ? `${CONSISTENCY_CORE} ${prompt}` : prompt;
     if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV !== 'production') {
       console.log(`[PromptEngine] Using v1, prompt:`, finalPrompt.slice(0, 500));
     }
@@ -170,7 +167,7 @@ function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string
   const audioPrompt = options.audioPrompt || '';  // 获取音频描述
 
   // ★ 每个模型的参数和一致性策略都不同，必须分别处理
-  switch (modelType) {
+  switch (modelType as string) {
     // ★ Top 5 性价比模型
     case 'wan_2_2_fast':
       // Wan: I2V 原生支持，image 参数是首帧
@@ -183,7 +180,9 @@ function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string
       return { prompt: finalPrompt, image: imageUrl, num_frames: duration * 24, seed: 142857 };
     case 'hailuo_02_fast':
       // Hailuo-02: 使用 first_frame_image，支持音频生成
-      const hailuoInput: any = { prompt: finalPrompt, first_frame_image: imageUrl, duration, resolution: "512P", aspect_ratio: aspectRatio, prompt_optimizer: false, seed: 142857 };
+      // ★ Safety: Hailuo strictly requires duration to be 6 or 10
+      const safeDuration = duration >= 8 ? 10 : 6;
+      const hailuoInput: any = { prompt: finalPrompt, first_frame_image: imageUrl, duration: safeDuration, resolution: "512P", aspect_ratio: aspectRatio, prompt_optimizer: false, seed: 142857 };
       // 如果有音频描述，添加到输入中（MiniMax Hailuo支持audio参数）
       if (audioPrompt) {
         hailuoInput.audio_prompt = audioPrompt;
@@ -236,7 +235,9 @@ export const startVideoTask = async (
 ): Promise<ReplicateResponse> => {
   // ★ 角色锚点加固指令 - 放在 prompt 末尾作为强制约束
   // 增强版：多重强制确保角色不变
-  const finalPrompt = characterAnchor
+  // CRITICAL FIX: IF an image is provided (`startImageUrl`), we MUST NOT pass the `characterAnchor` text description.
+  // The Video models will get confused by seeing an old man's picture, but reading a prompt forcing it to match "A 25-yr old young man".
+  const finalPrompt = (characterAnchor && !startImageUrl)
     ? `${prompt}. CHARACTER IDENTITY LOCK: The character appearance must EXACTLY match: ${characterAnchor}. Same face, hair, eyes, skin, body, clothing. Zero modifications permitted. This is a film production requirement.`
     : prompt;
 

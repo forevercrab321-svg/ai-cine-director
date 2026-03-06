@@ -37,14 +37,15 @@ interface BatchImagePanelProps {
     imagesByShot: Record<string, ShotImage[]>;
     /** Called when images are generated — parent updates imagesByShot */
     onImagesGenerated: (results: Array<{ shot_id: string; image_id: string; image_url: string }>) => void;
+    onSetGlobalAnchor?: (url: string) => void;
 }
 
 const STATUS_LABELS: Record<string, { label: string; color: string; bg: string }> = {
-    queued:    { label: '等待中',  color: 'text-slate-400',  bg: 'bg-slate-700/50' },
-    running:   { label: '生成中',  color: 'text-blue-400',   bg: 'bg-blue-500/20' },
-    succeeded: { label: '✓ 完成',  color: 'text-green-400',  bg: 'bg-green-500/20' },
-    failed:    { label: '✗ 失败',  color: 'text-red-400',    bg: 'bg-red-500/20' },
-    cancelled: { label: '已取消',  color: 'text-amber-400',  bg: 'bg-amber-500/20' },
+    queued: { label: '等待中', color: 'text-slate-400', bg: 'bg-slate-700/50' },
+    running: { label: '生成中', color: 'text-blue-400', bg: 'bg-blue-500/20' },
+    succeeded: { label: '✓ 完成', color: 'text-green-400', bg: 'bg-green-500/20' },
+    failed: { label: '✗ 失败', color: 'text-red-400', bg: 'bg-red-500/20' },
+    cancelled: { label: '已取消', color: 'text-amber-400', bg: 'bg-amber-500/20' },
 };
 
 // ── Strategy Selection Modal ──
@@ -72,11 +73,10 @@ const StrategyDialog: React.FC<{
                 <div className="space-y-3">
                     {/* Strategy A: Strict */}
                     <label
-                        className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
-                            strategy === 'strict'
-                                ? 'border-indigo-500 bg-indigo-500/10'
-                                : 'border-slate-700 hover:border-slate-600'
-                        }`}
+                        className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${strategy === 'strict'
+                            ? 'border-indigo-500 bg-indigo-500/10'
+                            : 'border-slate-700 hover:border-slate-600'
+                            }`}
                     >
                         <input
                             type="radio"
@@ -96,11 +96,10 @@ const StrategyDialog: React.FC<{
 
                     {/* Strategy B: Skip Failed */}
                     <label
-                        className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
-                            strategy === 'skip_failed'
-                                ? 'border-indigo-500 bg-indigo-500/10'
-                                : 'border-slate-700 hover:border-slate-600'
-                        }`}
+                        className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${strategy === 'skip_failed'
+                            ? 'border-indigo-500 bg-indigo-500/10'
+                            : 'border-slate-700 hover:border-slate-600'
+                            }`}
                     >
                         <input
                             type="radio"
@@ -142,7 +141,7 @@ const StrategyDialog: React.FC<{
 // Main BatchImagePanel
 // ═══════════════════════════════════════════════════════════════
 const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
-    allShots, projectId, characterAnchor, visualStyle, referenceImageDataUrl, imagesByShot, onImagesGenerated,
+    allShots, projectId, characterAnchor, visualStyle, referenceImageDataUrl, imagesByShot, onImagesGenerated, onSetGlobalAnchor
 }) => {
     const { settings, isAuthenticated, hasEnoughCredits, openPricingModal, refreshBalance } = useAppContext();
 
@@ -188,7 +187,7 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
         if ((data as any).anchor_image_url) {
             setAnchorImageUrl((data as any).anchor_image_url);
         }
-        
+
         // Emit partial results immediately as images complete
         if (data.job.status === 'completed' || data.job.status === 'failed' || data.job.status === 'cancelled') {
             const results = data.items
@@ -201,7 +200,7 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
             if (results.length > 0) {
                 onImagesGenerated(results);
             }
-            refreshBalance().catch(() => {});
+            refreshBalance().catch(() => { });
         }
     }, [onImagesGenerated, refreshBalance]);
 
@@ -416,11 +415,10 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                                     <button
                                         key={n}
                                         onClick={() => setCount(effectiveN)}
-                                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${
-                                            count === effectiveN
-                                                ? 'bg-indigo-600 text-white border-indigo-500'
-                                                : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-slate-600'
-                                        }`}
+                                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${count === effectiveN
+                                            ? 'bg-indigo-600 text-white border-indigo-500'
+                                            : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-slate-600'
+                                            }`}
                                     >
                                         {effectiveN}
                                     </button>
@@ -458,11 +456,10 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                             <button
                                 onClick={handleStart}
                                 disabled={isStarting || allShots.length === 0}
-                                className={`px-6 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-2 shadow-lg ${
-                                    isStarting
-                                        ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                                        : 'bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white shadow-indigo-500/20'
-                                }`}
+                                className={`px-6 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-2 shadow-lg ${isStarting
+                                    ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                                    : 'bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white shadow-indigo-500/20'
+                                    }`}
                             >
                                 {isStarting && <LoaderIcon className="w-4 h-4 animate-spin" />}
                                 {isStarting ? '启动中...' : `🚀 生成前 ${Math.min(count, allShots.length)} 张图`}
@@ -471,11 +468,10 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                             <button
                                 onClick={() => setShowStrategyDialog(true)}
                                 disabled={isStarting || !canContinue}
-                                className={`px-6 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-2 shadow-lg ${
-                                    isStarting || !canContinue
-                                        ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                                        : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-500/20'
-                                }`}
+                                className={`px-6 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-2 shadow-lg ${isStarting || !canContinue
+                                    ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                                    : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-500/20'
+                                    }`}
                             >
                                 {isStarting && <LoaderIcon className="w-4 h-4 animate-spin" />}
                                 {isStarting ? '启动中...' : `⏭ 继续生成下 ${Math.min(count, imageStatus.shotsMissing.length)} 张`}
@@ -511,11 +507,10 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                             <span className="text-indigo-400">📍</span>
                             <span>本次生成范围: <span className="text-white font-bold">{rangeLabel}</span></span>
                             {job.strategy && (
-                                <span className={`ml-auto text-[10px] px-2 py-0.5 rounded-full border ${
-                                    job.strategy === 'strict'
-                                        ? 'text-indigo-400 border-indigo-500/30 bg-indigo-500/10'
-                                        : 'text-amber-400 border-amber-500/30 bg-amber-500/10'
-                                }`}>
+                                <span className={`ml-auto text-[10px] px-2 py-0.5 rounded-full border ${job.strategy === 'strict'
+                                    ? 'text-indigo-400 border-indigo-500/30 bg-indigo-500/10'
+                                    : 'text-amber-400 border-amber-500/30 bg-amber-500/10'
+                                    }`}>
                                     {job.strategy === 'strict' ? '🔒 严格顺序' : '⏭ 跳过失败'}
                                 </span>
                             )}
@@ -529,14 +524,14 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                                 {isRunning && <LoaderIcon className="w-3 h-3 animate-spin text-indigo-400" />}
                                 <span className={
                                     job.status === 'completed' ? 'text-green-400 font-bold' :
-                                    job.status === 'failed' ? 'text-red-400 font-bold' :
-                                    job.status === 'cancelled' ? 'text-amber-400 font-bold' :
-                                    'text-indigo-400'
+                                        job.status === 'failed' ? 'text-red-400 font-bold' :
+                                            job.status === 'cancelled' ? 'text-amber-400 font-bold' :
+                                                'text-indigo-400'
                                 }>
                                     {job.status === 'completed' ? '✓ 本批完成' :
-                                     job.status === 'failed' ? '✗ 执行失败' :
-                                     job.status === 'cancelled' ? '⚠ 已取消' :
-                                     `处理中 ${job.done}/${job.total}`}
+                                        job.status === 'failed' ? '✗ 执行失败' :
+                                            job.status === 'cancelled' ? '⚠ 已取消' :
+                                                `处理中 ${job.done}/${job.total}`}
                                 </span>
                             </div>
                             <div className="flex items-center gap-3">
@@ -547,12 +542,11 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                         </div>
                         <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
                             <div
-                                className={`h-full rounded-full transition-all duration-500 ${
-                                    job.status === 'completed' ? 'bg-green-500' :
+                                className={`h-full rounded-full transition-all duration-500 ${job.status === 'completed' ? 'bg-green-500' :
                                     job.status === 'failed' ? 'bg-red-500' :
-                                    job.status === 'cancelled' ? 'bg-amber-500' :
-                                    'bg-gradient-to-r from-indigo-600 to-violet-500'
-                                }`}
+                                        job.status === 'cancelled' ? 'bg-amber-500' :
+                                            'bg-gradient-to-r from-indigo-600 to-violet-500'
+                                    }`}
                                 style={{ width: `${progressPercent}%` }}
                             />
                         </div>
@@ -621,12 +615,11 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                             return (
                                 <div
                                     key={item.id}
-                                    className={`rounded-xl border overflow-hidden transition-all group/thumb ${
-                                        item.status === 'succeeded' ? 'border-green-500/30' :
+                                    className={`rounded-xl border overflow-hidden transition-all group/thumb ${item.status === 'succeeded' ? 'border-green-500/30' :
                                         item.status === 'failed' ? 'border-red-500/30' :
-                                        item.status === 'running' ? 'border-indigo-500/50 ring-1 ring-indigo-500/20' :
-                                        'border-slate-800'
-                                    }`}
+                                            item.status === 'running' ? 'border-indigo-500/50 ring-1 ring-indigo-500/20' :
+                                                'border-slate-800'
+                                        }`}
                                 >
                                     <div className="aspect-video relative">
                                         {item.status === 'succeeded' && item.image_url ? (

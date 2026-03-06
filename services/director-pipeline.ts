@@ -46,22 +46,16 @@ async function extractLastFrameServerSide(videoUrl: string): Promise<string> {
     throw new Error('Frame extraction returned no frame data');
   }
 
-  if (data.fallback) {
-    console.warn(`⚠️ [FrameExtract] ffmpeg unavailable on server. Raw URL returned.`);
-    // ★ CRITICAL FIX: If we got a video URL back (not a base64 image), we CANNOT
-    // pass it to Replicate as first_frame_image — Replicate will reject MP4/video URLs.
-    // Throw so the chain stops cleanly rather than sending garbage to the API.
-    const frame = data.frame as string;
-    const isVideoUrl = /\.(mp4|webm|mov|avi)/i.test(frame) || frame.includes('replicate.delivery');
-    if (isVideoUrl && !frame.startsWith('data:')) {
-      throw new Error(
-        '⚠️ 暑帧截取失败（服务器无ffmpeg）。\n\n请在设置里切换到“wanvideo”模型重试，或联系客服升级为支持ffmpeg的服务器版本。'
-      );
-    }
-  } else {
-    console.log(`✅ [FrameExtract] Server-side frame extraction success`);
+  // ★ Validate: frame MUST be a base64 data URL, not a raw video URL
+  const frame = data.frame as string;
+  const isVideoUrl = /\.(mp4|webm|mov|avi)/i.test(frame) || (frame.includes('replicate.delivery') && !frame.startsWith('data:'));
+  if (isVideoUrl) {
+    throw new Error(
+      '⚠️ 尾帧截取失败（服务器无ffmpeg）。\n\n请在设置里切换到“wanvideo”模型重试，或联系客服升级为支持ffmpeg的服务器版本。'
+    );
   }
 
+  console.log(`✅ [FrameExtract] Server-side frame extraction success`);
   return data.frame;
 }
 
