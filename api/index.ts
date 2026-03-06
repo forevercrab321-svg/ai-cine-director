@@ -1703,10 +1703,10 @@ async function callReplicateImage(params: {
 
     // Switch to PuLID face-cloning model if requested
     const modelPath = isFaceCloning
-        ? "bytedance/flux-pulid"
+        ? "bytedance/flux-pulid:8baa7ef2255075b46f4d91cd238c21d31181b3e6a864463f967960bb0112525b"
         : params.model;
 
-    const isModelPath = modelPath.includes('/') && !modelPath.match(/^[a-f0-9]{64}$/);
+    const isModelPath = modelPath.includes('/') && !modelPath.includes(':');
     const targetUrl = isModelPath
         ? `${REPLICATE_API_BASE}/models/${modelPath}/predictions`
         : `${REPLICATE_API_BASE}/predictions`;
