@@ -202,20 +202,23 @@ app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), asyn
             if (supabaseUrl && supabaseKey) {
                 const supabase = createClient(supabaseUrl, supabaseKey);
 
-                const { data: profile } = await supabase.from('profiles').select('credits').eq('id', userId).single();
-                const newBalance = (profile?.credits || 0) + creditsToGrant;
-
-                let updateData: any = { credits: newBalance };
+                let updateData: any = {};
                 if (isSubscription && planTier) {
                     updateData.is_pro = true;
                     // Update is_pro and plan_type for subscription users
-                    if (isSubscription && planTier) {
-                        updateData.is_pro = true;
-                        updateData.plan_type = planTier;
-                    }
+                    updateData.plan_type = planTier;
+                    await supabase.from('profiles').update(updateData).eq('id', userId);
                 }
 
-                await supabase.from('profiles').update(updateData).eq('id', userId);
+                // Append atomic add_credits if available to prevent race conditions
+                try {
+                    const { error: rpcErr } = await supabase.rpc('add_credits_to_user', { target_user_id: userId, amount_to_add: creditsToGrant });
+                    if (rpcErr) throw rpcErr;
+                } catch (e) {
+                    // Fallback to select+update if RPC is missing
+                    const { data: profile } = await supabase.from('profiles').select('credits').eq('id', userId).single();
+                    await supabase.from('profiles').update({ credits: (profile?.credits || 0) + creditsToGrant }).eq('id', userId);
+                }
 
                 await supabase.from('credits_ledger').insert({
                     user_id: userId,
@@ -1546,6 +1549,12 @@ Output as valid JSON.`;
                         // 最核心改动：非零的索引严格留空
                         image_prompt: finalImagePrompt,
                         video_motion_prompt: shot.video_prompt || "smooth motion",
+                        // ★ 添加一致性元数据
+                        _consistency_check: i === 0 ? {
+                            has_anchor_prefix: finalImagePrompt.toLowerCase().startsWith(anchorLower.substring(0, 20)),
+                            total_critical_keywords: anchor ? anchorLower.split(' ').filter(k => k.length > 3).length : 0,
+                            critical_keywords_present: anchor ? anchorLower.split(' ').filter(k => k.length > 3).filter(k => (finalImagePrompt + ' ' + (shot.video_prompt || '')).toLowerCase().includes(k)).length : 0
+                        } : undefined
                     });
                 }
             }

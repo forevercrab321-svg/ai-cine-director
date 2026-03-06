@@ -204,7 +204,7 @@ async function test1MissingAnchorAutoCorrection() {
 
     // Verify backend auto-generated a default character anchor
     const hasCharacterAnchor = project.character_anchor && project.character_anchor.length > 0;
-    
+
     // Verify all scenes exist
     const hasScenesArray = Array.isArray(project.scenes) && project.scenes.length > 0;
 
@@ -322,23 +322,24 @@ async function test3CharacterConsistencyKeywords() {
     }
 
     // Check first 3 scenes for consistency
-    const sceneChecks = project.scenes.slice(0, 3).map((scene: any, idx: number) => {
-      const desc = (scene.visual_description || '').toLowerCase();
+    const firstShots = project.scenes.filter((s: any) => s.image_prompt && s.image_prompt.length > 0);
+    const sceneChecks = firstShots.slice(0, 3).map((scene: any, idx: number) => {
+      const imgPrompt = (scene.image_prompt || '').toLowerCase();
       const motionPrompt = (scene.video_motion_prompt || '').toLowerCase();
-      
+
       // Check if anchor is prepended
-      const hasAnchorPrefix = desc.startsWith(anchor.toLowerCase().substring(0, 20));
-      
+      const hasAnchorPrefix = imgPrompt.startsWith(anchor.toLowerCase().substring(0, 20));
+
       // Count how many required keywords are present
-      const foundKeywords = requiredKeywords.filter(kw => 
-        desc.includes(kw.toLowerCase()) || motionPrompt.includes(kw.toLowerCase())
+      const foundKeywords = requiredKeywords.filter(kw =>
+        imgPrompt.includes(kw.toLowerCase()) || motionPrompt.includes(kw.toLowerCase())
       );
-      
+
       // Check consistency metadata
       const consistencyCheck = scene._consistency_check;
       const hasMetadata = !!consistencyCheck;
       const prefixCheckPassed = consistencyCheck?.has_anchor_prefix === true;
-      const keywordCoverage = consistencyCheck 
+      const keywordCoverage = consistencyCheck
         ? Math.round((consistencyCheck.critical_keywords_present / consistencyCheck.total_critical_keywords) * 100)
         : 0;
 
@@ -369,7 +370,7 @@ async function test3CharacterConsistencyKeywords() {
     const allScenesHaveAnchor = sceneChecks.every(s => s.hasAnchorPrefix);
     const allScenesHaveMetadata = sceneChecks.every(s => s.hasMetadata);
     const avgKeywordCoverage = Math.round(sceneChecks.reduce((sum, s) => sum + s.keywordCoverage, 0) / sceneChecks.length);
-    
+
     const isPassed = allScenesHaveAnchor && allScenesHaveMetadata && avgKeywordCoverage >= 70;
 
     recordResult(
@@ -425,7 +426,8 @@ async function test4ImagePromptConsistency() {
     }
 
     // Check if image_prompt was generated and includes anchor
-    const imagePromptChecks = project.scenes.slice(0, 2).map((scene: any, idx: number) => {
+    const firstShots = project.scenes.filter((s: any) => s.image_prompt && s.image_prompt.length > 0);
+    const imagePromptChecks = firstShots.slice(0, 2).map((scene: any, idx: number) => {
       const imagePrompt = scene.image_prompt || '';
       const hasAnchor = imagePrompt.includes(anchor.substring(0, 30));
       const hasVisualDescription = imagePrompt.includes(scene.visual_description?.substring(0, 20) || '');
