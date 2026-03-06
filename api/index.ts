@@ -1703,7 +1703,7 @@ async function callReplicateImage(params: {
 
     // Switch to PuLID face-cloning model if requested
     const modelPath = isFaceCloning
-        ? "zsxkib/flux-pulid"
+        ? "bytedance/flux-pulid"
         : params.model;
 
     const isModelPath = modelPath.includes('/') && !modelPath.match(/^[a-f0-9]{64}$/);
