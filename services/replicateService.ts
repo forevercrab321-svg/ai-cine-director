@@ -142,8 +142,13 @@ interface VideoOptions {
 
 function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string, options: VideoOptions = {}, promptEngineVersion?: 'v1' | 'v2'): Record<string, any> {
   // ★ 角色一致性：最高优先级指令 — 放在 prompt 最前面，模型优先读取
-  // ★ 增强版：更强制性的指令，防止任何角色变化
-  const CONSISTENCY_CORE = "CRITICAL IDENTITY LOCK: The character in this video MUST be IDENTICAL to the character in the input image. Same face structure, same eye color, same hair style and color, same skin tone, same body proportions, same clothing outfit. NO changes allowed. Maintain 100% visual consistency. Smooth natural motion ONLY. DO NOT alter, morph, replace, or transform any character features.";
+  // ★ 增强版v2：更强制性的指令，防止任何角色变化
+  const CONSISTENCY_CORE = "🎬 CRITICAL IDENTITY LOCK: The character in this video MUST maintain EXACT SAME identity as: " 
+    + "(1) If reference image provided: SAME face structure, SAME eye color/shape, SAME hair style/color, SAME skin tone, SAME body proportions, SAME clothing/outfit. "
+    + "(2) If text anchor provided: Follow anchor description EXACTLY with ZERO deviations. "
+    + "🔒 FORBIDDEN: DO NOT alter, morph, replace, transform, regenerate, or change ANY character features. "
+    + "🎭 This is a professional film production. Character must be IDENTICAL across all frames. "
+    + "Smooth natural motion ONLY. Maintain 100% visual consistency.";
 
   let finalPrompt = prompt;
   // PROMPT ENGINE VERSION SWITCH
@@ -155,9 +160,15 @@ function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string
       console.log(`[PromptEngine] Using v2, prompt:`, finalPrompt.slice(0, 500));
     }
   } else {
-    // v1: legacy — 把一致性指令焊在 prompt 最前方
-    // ★ 只有当我们确实提供了一张图时，才加入 "匹配原图" 的死板指令
-    finalPrompt = imageUrl ? `${CONSISTENCY_CORE} ${prompt}` : prompt;
+    // v1: legacy — 极致一致性逻辑
+    // ★ 有图时优先用图锁定，有anchor时文字锁定，两者都有时双重锁定
+    if (startImageUrl && characterAnchor) {
+      finalPrompt = `${CONSISTENCY_CORE} ${prompt}. ALSO respect: ${characterAnchor}`;
+    } else if (startImageUrl) {
+      finalPrompt = `${CONSISTENCY_CORE} ${prompt}`;
+    } else if (characterAnchor) {
+      finalPrompt = `${prompt}. ${CONSISTENCY_CORE.replace('reference image', 'described character').replace('input image', 'described character')}`;
+    }
     if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV !== 'production') {
       console.log(`[PromptEngine] Using v1, prompt:`, finalPrompt.slice(0, 500));
     }
@@ -240,13 +251,23 @@ export const startVideoTask = async (
   promptOptions?: any,
   promptEngineVersion?: 'v1' | 'v2'
 ): Promise<ReplicateResponse> => {
-  // ★ 角色锚点加固指令 - 放在 prompt 末尾作为强制约束
-  // 增强版：多重强制确保角色不变
-  // CRITICAL FIX: IF an image is provided (`startImageUrl`), we MUST NOT pass the `characterAnchor` text description.
-  // The Video models will get confused by seeing an old man's picture, but reading a prompt forcing it to match "A 25-yr old young man".
-  const finalPrompt = (characterAnchor && !startImageUrl)
-    ? `${prompt}. CHARACTER IDENTITY LOCK: The character appearance must EXACTLY match: ${characterAnchor}. Same face, hair, eyes, skin, body, clothing. Zero modifications permitted. This is a film production requirement.`
-    : prompt;
+  // ★ 角色锚点加固指令 - 极致一致性逻辑
+  // 🎯 原则：有图时用图+文字双重锁定，无图时用文字锁定
+  let finalPrompt = prompt;
+  
+  // 情况1: 有参考图 + 有文字anchor = 双重锁定 (最保险)
+  if (startImageUrl && characterAnchor) {
+    finalPrompt = `${CONSISTENCY_CORE} ${prompt}. ALSO respect this character description: ${characterAnchor}`;
+  } 
+  // 情况2: 只有参考图 = 用图锁定
+  else if (startImageUrl) {
+    finalPrompt = `${CONSISTENCY_CORE} ${prompt}`;
+  }
+  // 情况3: 只有文字anchor = 用文字锁定
+  else if (characterAnchor) {
+    finalPrompt = `${prompt}. ${CONSISTENCY_CORE.replace('reference image', 'character description').replace('input image', 'described character')}`;
+  }
+  // 情况4: 都没有 = 正常生成
 
   let modelIdentifier = modelType.includes('/')
     ? modelType
