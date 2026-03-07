@@ -162,7 +162,14 @@ function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string
       console.log(`[PromptEngine] Using v1, prompt:`, finalPrompt.slice(0, 500));
     }
   }
-  const duration = options.duration || 6;
+  // ★ 修复: 确保 duration 只能是 6 或 10 (Replicate API 要求)
+  // 如果用户选择了 4/5/8 秒，自动转换为 6/10 秒
+  let safeDuration = options.duration || 6;
+  if (safeDuration !== 6 && safeDuration !== 10) {
+    safeDuration = safeDuration >= 8 ? 10 : 6;
+    console.log(`[Replicate] Duration corrected from ${options.duration} to ${safeDuration}`);
+  }
+  const duration = safeDuration;
   const aspectRatio = options.aspectRatio || '16:9';
   const audioPrompt = options.audioPrompt || '';  // 获取音频描述
 

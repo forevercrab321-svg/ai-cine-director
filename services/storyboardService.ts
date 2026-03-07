@@ -56,7 +56,6 @@ export const saveStoryboard = async (
                 audio_description: scene.audio_description,
                 shot_type: scene.shot_type,
                 image_prompt: scene.image_prompt,
-                video_prompt: scene.video_prompt || scene.video_motion_prompt, // Legacy support
                 video_motion_prompt: scene.video_motion_prompt || scene.video_prompt,
                 image_url: scene.image_url,
                 video_url: scene.video_url
