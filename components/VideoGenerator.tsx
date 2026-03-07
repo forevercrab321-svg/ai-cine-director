@@ -137,6 +137,9 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
 
   // ★ 核心状态锁
   const [isRenderingChain, setIsRenderingChain] = useState(false);
+  
+  // ★ 多帧关键帧模式
+  const [multiFrameMode, setMultiFrameMode] = useState<'standard' | 'linked'>('standard');
 
   // ★ 一键成片状态
   const [videoEditJob, setVideoEditJob] = useState<{
@@ -283,58 +286,112 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
       }
 
       setChainError(null); // Clear previous errors
-      const newVideoUrls = await generateSceneChain(
-        project.id,
-        project.scenes,
-        finalAnchor,
-        settings.videoModel,
-        settings.imageModel,
-        referenceImageDataUrl,
-        sceneVideoUrls, // ★ Pass existing videos so the pipeline can resume gracefully
-        (progress) => {
-          const scene = project.scenes[progress.index];
+      
+      // ★ 多帧链式模式 - 使用新的 multi-frame API
+      if (multiFrameMode === 'linked') {
+        console.log('[MultiFrame] Using enhanced multi-frame API for maximum consistency');
+        
+        // 准备多帧数据
+        const frames = project.scenes.map((scene: any, index: number) => ({
+          prompt: scene.video_motion_prompt || scene.video_prompt || scene.shot_type || `Cinematic motion, scene ${index + 1}`,
+          imageUrl: index === 0 ? sceneImages[scene.scene_number] || scene.image_url : undefined,
+          duration: settings.videoDuration || 6
+        }));
+
+        const response = await fetch('/api/replicate/multi-frame', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            frames,
+            model: settings.videoModel,
+            aspectRatio: settings.aspectRatio,
+            characterAnchor: finalAnchor,
+            continuityMode: 'link'
+          })
+        });
+
+        if (!response.ok) {
+          const err = await response.json();
+          throw new Error(err.error || 'Multi-frame generation failed');
+        }
+
+        const result = await response.json();
+        console.log('[MultiFrame] Results:', result);
+        
+        // 处理结果
+        for (const frameResult of result.results) {
+          const scene = project.scenes[frameResult.frameIndex];
           const sNum = scene.scene_number;
-          if (progress.stage === "image_done") {
-            setSceneImages(prev => ({ ...prev, [sNum]: progress.imageUrl }));
-            const sceneIndex = project.scenes.findIndex(s => s.scene_number === sNum);
-            if (onUpdateScene && sceneIndex !== -1) onUpdateScene(sceneIndex, 'image_url', progress.imageUrl);
+          
+          if (frameResult.success && frameResult.videoUrl) {
+            setSceneVideoUrls(prev => ({ ...prev, [sNum]: frameResult.videoUrl }));
             setSceneStatus(prev => ({
               ...prev,
-              [sNum]: { status: "ready", message: "✅ 尾帧/图片已就绪" },
+              [sNum]: { status: "succeeded", message: "✅ 生成成功" }
             }));
-          } else if (progress.stage === "video_starting") {
+          } else {
             setSceneStatus(prev => ({
               ...prev,
-              [sNum]: { status: "starting", message: "🚀 正在请求视频..." }
+              [sNum]: { status: "failed", error: frameResult.error }
             }));
-          } else if (progress.stage === "video_polling") {
-            setActiveVideoJobs(prev => ({
-              ...prev,
-              [sNum]: { id: progress.predictionId, startTime: Date.now() }
-            }));
-            setScenePredictionIds(prev => ({ ...prev, [sNum]: progress.predictionId }));
-            setSceneStatus(prev => ({
-              ...prev,
-              [sNum]: { status: "processing", message: "⏳ 正在生成中..." }
-            }));
-          } else if (progress.stage === "video_done") {
-            setSceneVideoUrls(prev => ({ ...prev, [sNum]: progress.videoUrl }));
-            const sceneIndex = project.scenes.findIndex(s => s.scene_number === sNum);
-            if (onUpdateScene && sceneIndex !== -1) onUpdateScene(sceneIndex, 'video_url', progress.videoUrl);
-            setSceneStatus(prev => ({
-              ...prev,
-              [sNum]: { status: "done", message: "✅ 渲染完成" }
-            }));
-            setActiveVideoJobs(prev => {
-              const next = { ...prev };
-              delete next[sNum];
-              return next;
-            });
-            setChainProgress(prev => ({ ...prev, completed: prev.completed + 1 }));
-            // ★ AUTO-AUDIO: fire ElevenLabs in parallel (non-blocking — does not stall chain)
-            generateAutoAudio(sNum, scene);
           }
         }
+        
+        setChainProgress({ completed: result.results.length, total: project.scenes.length });
+      } else {
+        // 标准模式 - 使用原有的 chain 生成
+        const newVideoUrls = await generateSceneChain(
+          project.id,
+          project.scenes,
+          finalAnchor,
+          settings.videoModel,
+          settings.imageModel,
+          referenceImageDataUrl,
+          sceneVideoUrls, // ★ Pass existing videos so the pipeline can resume gracefully
+          (progress) => {
+            const scene = project.scenes[progress.index];
+            const sNum = scene.scene_number;
+            if (progress.stage === "image_done") {
+              setSceneImages(prev => ({ ...prev, [sNum]: progress.imageUrl }));
+              const sceneIndex = project.scenes.findIndex(s => s.scene_number === sNum);
+              if (onUpdateScene && sceneIndex !== -1) onUpdateScene(sceneIndex, 'image_url', progress.imageUrl);
+              setSceneStatus(prev => ({
+                ...prev,
+                [sNum]: { status: "ready", message: "✅ 尾帧/图片已就绪" },
+              }));
+            } else if (progress.stage === "video_starting") {
+              setSceneStatus(prev => ({
+                ...prev,
+                [sNum]: { status: "starting", message: "🚀 正在请求视频..." }
+              }));
+            } else if (progress.stage === "video_polling") {
+              setActiveVideoJobs(prev => ({
+                ...prev,
+                [sNum]: { id: progress.predictionId, startTime: Date.now() }
+              }));
+              setScenePredictionIds(prev => ({ ...prev, [sNum]: progress.predictionId }));
+              setSceneStatus(prev => ({
+                ...prev,
+                [sNum]: { status: "processing", message: "⏳ 正在生成中..." }
+              }));
+            } else if (progress.stage === "video_done") {
+              setSceneVideoUrls(prev => ({ ...prev, [sNum]: progress.videoUrl }));
+              const sceneIndex = project.scenes.findIndex(s => s.scene_number === sNum);
+              if (onUpdateScene && sceneIndex !== -1) onUpdateScene(sceneIndex, 'video_url', progress.videoUrl);
+              setSceneStatus(prev => ({
+                ...prev,
+                [sNum]: { status: "done", message: "✅ 渲染完成" }
+              }));
+              setActiveVideoJobs(prev => {
+                const next = { ...prev };
+                delete next[sNum];
+                return next;
+              });
+              setChainProgress(prev => ({ ...prev, completed: prev.completed + 1 }));
+              generateAutoAudio(sNum, scene);
+            }
+          }
+        );
       );
 
       // ★ Auto-finalize the video into a full movie automatically after the chain is successfully completed.
@@ -664,6 +721,24 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
                   ? "自动合成全片中..."
                   : "🚀 一键锁链出全片"}
             </button>
+
+            {/* ★ 多帧关键帧模式切换 */}
+            <div className="flex items-center gap-2 px-3 py-2 bg-slate-800/50 rounded-lg">
+              <span className="text-xs text-slate-400">模式:</span>
+              <button
+                onClick={() => setMultiFrameMode(m => m === 'standard' ? 'linked' : 'standard')}
+                className={`px-3 py-1 rounded text-xs font-bold transition-all ${
+                  multiFrameMode === 'linked' 
+                    ? 'bg-indigo-600 text-white' 
+                    : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                }`}
+              >
+                {multiFrameMode === 'linked' ? '🔗 链式' : '⚡ 标准'}
+              </button>
+              {multiFrameMode === 'linked' && (
+                <span className="text-[10px] text-indigo-400">极致一致</span>
+              )}
+            </div>
 
             {/* 下载按钮 */}
             {(Object.keys(sceneImages).length > 0 ||
