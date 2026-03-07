@@ -439,6 +439,7 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                         >
                             <option value="flux">Flux 1.1 Pro (6 credits)</option>
                             <option value="flux_schnell">Flux Schnell (1 credit)</option>
+                            <option value="nano_banana">Nano Banana (2 credits) ✨</option>
                         </select>
                     </div>
 
