@@ -794,3 +794,46 @@ export interface BatchJobItem {
   started_at?: string;
   completed_at?: string;
 }
+
+// ============================================
+// 多帧关键帧系统类型
+// ============================================
+
+export interface MultiFrameConfig {
+  enabled: boolean;                    // 是否启用多帧模式
+  continuityMode: 'link' | 'independent'; // 链式或独立
+  keyframes: MultiFrameKeyframe[];     // 关键帧配置
+}
+
+export interface MultiFrameKeyframe {
+  index: number;                       // 帧序号 (0, 1, 2...)
+  imageUrl?: string;                   // 关键帧图片 (可选，不提供则使用前一段尾帧)
+  prompt: string;                      // 该段视频的描述
+  duration?: VideoDuration;            // 时长
+  useAsKeyframe?: boolean;            // 是否作为下一段的关键帧
+}
+
+export interface MultiFrameResult {
+  frameIndex: number;
+  videoUrl: string;
+  lastFrameUrl: string;
+  thumbnailUrl?: string;
+  success: boolean;
+  error?: string;
+  duration: number;
+  model: VideoModel;
+}
+
+export type MultiFrameProgressStatus = 
+  | 'preparing'
+  | 'generating'
+  | 'extracting'
+  | 'done'
+  | 'error';
+
+export interface MultiFrameProgress {
+  frameIndex: number;
+  status: MultiFrameProgressStatus;
+  message?: string;
+  progress?: number; // 0-100
+}

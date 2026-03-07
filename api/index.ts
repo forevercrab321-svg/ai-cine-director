@@ -3773,4 +3773,77 @@ app.post('/api/audio/mix', requireAuth, async (req: any, res: any) => {
     }
 });
 
+// ============================================
+// 多帧关键帧视频生成 API
+// POST /api/replicate/multi-frame
+// ============================================
+
+app.post('/api/replicate/multi-frame', requireAuth, async (req: any, res: any) => {
+    try {
+        const user = req.user;
+        const { 
+            frames,
+            model,
+            aspectRatio,
+            characterAnchor,
+            continuityMode
+        } = req.body;
+
+        if (!frames || !Array.isArray(frames) || frames.length === 0) {
+            return res.status(400).json({ error: 'frames array is required' });
+        }
+        if (!model) {
+            return res.status(400).json({ error: 'model is required' });
+        }
+
+        console.log(`[/api/replicate/multi-frame] Starting: ${frames.length} frames, model: ${model}`);
+
+        const { generateMultiFrameVideo } = await import('../services/multiFrameService');
+
+        const results = await generateMultiFrameVideo(
+            {
+                frames: frames.map((f: any) => ({
+                    prompt: f.prompt,
+                    imageUrl: f.imageUrl,
+                    duration: f.duration || 6
+                })),
+                model: model,
+                aspectRatio: aspectRatio || '16:9',
+                characterAnchor,
+                startImageUrl: frames[0]?.imageUrl,
+                continuityMode: continuityMode || 'link'
+            },
+            (frameIndex, status, message) => {
+                console.log(`[MultiFrame] Frame ${frameIndex + 1}: ${status}`);
+            }
+        );
+
+        const { getVideoCost } = await import('../services/replicateService');
+        const totalCost = results.filter(r => r.success).reduce((sum, r) => sum + getVideoCost(model), 0);
+
+        const { data: profile } = await supabase
+            .from('profiles')
+            .select('credits')
+            .eq('id', user.id)
+            .single();
+
+        const currentCredits = profile?.credits || 0;
+        if (currentCredits < totalCost) {
+            return res.status(402).json({ 
+                error: 'INSUFFICIENT_CREDITS',
+                required: totalCost,
+                available: currentCredits
+            });
+        }
+
+        await supabase.rpc('deduct_credits', { p_user_id: user.id, p_amount: totalCost });
+
+        res.json({ ok: true, results, totalCost, continuityMode: continuityMode || 'link' });
+
+    } catch (err: any) {
+        console.error('[/api/replicate/multi-frame Error]', err);
+        res.status(500).json({ error: err.message || 'Multi-frame generation failed' });
+    }
+});
+
 export default app;
