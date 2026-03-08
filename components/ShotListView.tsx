@@ -197,28 +197,25 @@ const SceneSection: React.FC<{
 
                 if (i === 0) {
                     // ★ 硬切：首镜必须重铸人物，拒绝用任何上一帧的污染模糊图
-                    // 最高优先级：当前场次人物定妆图 Base64
+                    // 优先级 1: 用户已经为这个镜头生成的图片 (包含场景背景)
+                    // 优先级 2: 重新使用场次定妆图/全局大头照等作为 Face Anchor 现场生一张
                     const sceneAnchorRef = scene.scene_reference_image_base64 || referenceImageDataUrl;
-                    if (scene.scene_reference_image_base64) {
-                        currentStartImage = scene.scene_reference_image_base64;
-                        setChainLog(`[首镜] ★ 已读取场次专属人物定妆图！`);
-                    } else {
-                        const existingImg = imagesByShot[shot.shot_id]?.[0]?.url;
-                        if (existingImg) {
-                            currentStartImage = existingImg;
-                            setChainLog(`[首镜] 已读取预生成源头原画...`);
-                        } else {
-                            setChainLog(`[首镜] 正在强制生成绝对清晰首帧 (Hard Cut)...`);
-                            currentStartImage = await generateImage(
-                                shot.image_prompt || scene.visual_description,
-                                'flux_schnell', 'none', '16:9', project.character_anchor,
-                                sceneAnchorRef // ★ 场次定妆图优先，回退全局照片
-                            );
+                    const existingImg = imagesByShot[shot.shot_id]?.[0]?.url;
 
-                            // ★ 嗅探全片首帧并霸权锁定！
-                            if (onSetGlobalAnchor && !sceneAnchorRef) {
-                                onSetGlobalAnchor(currentStartImage);
-                            }
+                    if (existingImg) {
+                        currentStartImage = existingImg;
+                        setChainLog(`[首镜] 已读取源头原画...`);
+                    } else {
+                        setChainLog(`[首镜] 正在强制生成绝对清晰首帧 (Face Clone)...`);
+                        currentStartImage = await generateImage(
+                            shot.image_prompt || scene.visual_description,
+                            'flux_schnell', 'none', '16:9', project.character_anchor,
+                            sceneAnchorRef // ★ 场次定妆图优先，回退全局照片作为人脸参考垫图
+                        );
+
+                        // ★ 嗅探全片首帧并霸权锁定！
+                        if (onSetGlobalAnchor && !sceneAnchorRef) {
+                            onSetGlobalAnchor(currentStartImage);
                         }
                     }
                 } else {
@@ -600,19 +597,21 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                     // 全剧【唯一奇点】：第一场戏的第一个镜头，或者每个Scene的第一个镜头
                     if (i === 0) {
                         // ★ 硬切：每个场景的第一镜必须重铸人物，拒绝继承前一场的尾帧！
-                        // 最高优先级：当前场次专属定妆图 Base64 → 全局角色照片 → 系统自动扣取的全片首帧
+                        // 优先级 1: 存量用户生成图片 (带有背景)
+                        // 优先级 2: 场次专属定妆图 Base64 → 全局角色照片 → 自动提取的首帧
                         const sceneAnchorRef = scene.scene_reference_image_base64 || referenceImageDataUrl || globalAutoAnchorBase64;
-                        if (scene.scene_reference_image_base64) {
-                            // 用户专门上传了定妆图，直接作为本场奇点
-                            currentStartImage = scene.scene_reference_image_base64;
-                            setChainLog(`场 ${scene.scene_number} 首镜：★ 已读取场次专属定妆图！`);
+                        const existingImg = imagesByShot[shot.shot_id]?.[0]?.url;
+
+                        if (existingImg) {
+                            currentStartImage = existingImg;
+                            setChainLog(`场 ${scene.scene_number} 首镜：★ 已读取源头原画！`);
                         } else {
-                            // 否则，强制生图模型重新生成一张干净的首帧，避免误差累积
-                            setChainLog(`场 ${scene.scene_number} 首镜：正在重新生成绝对清晰的首帧图 (Hard Cut)...`);
+                            // 强制生图模型重新生成一张干净的首帧，避免误差累积
+                            setChainLog(`场 ${scene.scene_number} 首镜：正在重新生成绝对清晰的首帧图 (Face Clone)...`);
                             currentStartImage = await generateImage(
                                 shot.image_prompt || scene.visual_description,
                                 'flux_schnell', 'none', '16:9', project.character_anchor,
-                                sceneAnchorRef // ★ 场次定妆图优先，回退全局照片，再回退自动嗅探的全片第一帧
+                                sceneAnchorRef // ★ 场次定妆图优先，回退全局照片，再回退自动嗅探的全片第一帧作为【垫图】
                             );
 
                             // ★ 【核心一致性机制】：如果是全片首场首镜，且没有局部或全局垫图，则自动缓存为全片霸权锚点
