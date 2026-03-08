@@ -5,6 +5,9 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 
+import ffmpegPathObj from '@ffmpeg-installer/ffmpeg';
+const ffmpegExecPath = ffmpegPathObj.path;
+
 const execAsync = promisify(exec);
 
 export interface TimelineTrack {
@@ -53,16 +56,22 @@ function buildFilterGraph(timeline: TimelineTrack[], mode: 'basic' | 'pro'): str
         audioStreamLabels.push(`[a${inputIdx}]`);
     });
 
-    // Mix them together
+    // Mix them together (FFmpeg amix crashes if inputs=1)
     const mixCount = audioStreamLabels.length;
-    filter += `${audioStreamLabels.join('')}amix=inputs=${mixCount}:duration=first:dropout_transition=2`;
+    if (mixCount > 1) {
+        filter += `${audioStreamLabels.join('')}amix=inputs=${mixCount}:duration=first:dropout_transition=2`;
+    } else if (mixCount === 1) {
+        filter += `${audioStreamLabels[0]}anull`; // no-op filter to pass it through safely
+    }
 
     if (mode === 'pro') {
         // Add lightweight mastering (e.g. compand/loudnorm)
         filter += `,loudnorm=I=-14:LRA=11:TP=-1.5`;
     }
 
-    filter += `[aout];`;
+    // Do NOT add a trailing semicolon to the filtergraph!
+    // FFmpeg strictly requires no trailing semicolon or it throws "No such filter: ''"
+    filter += `[aout]`;
 
     return filter;
 }
@@ -88,13 +97,13 @@ export async function mixAndMaster(
     const inputs = prepareFfmpegInputs(sourceVideoUrl, plan.timeline);
     const filterGraph = buildFilterGraph(plan.timeline, plan.mode);
 
-    // Assemble the ffmpeg command.
+    // Assemble the ffmpeg command using the bundled statically-linked binary
     // -y : overwrite
     // -c:v copy : Keep original video encoding (fast and lossless for video)
     // -c:a aac : Encode final mix to AAC
     // -map 0:v : take video from 1st input
     // -map "[aout]" : take audio from filtergraph
-    const command = `ffmpeg -y ${inputs} -filter_complex "${filterGraph}" -map 0:v -map "[aout]" -c:v copy -c:a aac -b:a 192k "${outputFilePath}"`;
+    const command = `"${ffmpegExecPath}" -y ${inputs} -filter_complex "${filterGraph}" -map 0:v -map "[aout]" -c:v copy -c:a aac -b:a 192k "${outputFilePath}"`;
 
     try {
         console.log(`[AudioEngine:Mixer] Executing FFmpeg: ${command}`);

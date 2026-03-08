@@ -34,7 +34,7 @@ export async function generateDialogue(text: string, character: string, emotion:
         return {
             id: `dlg_${Date.now()}`,
             type: 'dialogue',
-            url: 'https://actions.google.com/sounds/v1/human_voices/human_snoring.ogg',
+            url: 'https://raw.githubusercontent.com/mdn/webaudio-examples/master/audio-analyser/viper.mp3',
             durationSec: 2
         };
     }
@@ -131,7 +131,7 @@ export async function generateDialogue(text: string, character: string, emotion:
         return {
             id: `dlg_${Date.now()}`,
             type: 'dialogue',
-            url: 'https://actions.google.com/sounds/v1/human_voices/human_snoring.ogg',
+            url: 'https://raw.githubusercontent.com/mdn/webaudio-examples/master/audio-analyser/viper.mp3',
             durationSec: 2
         };
     }
@@ -152,12 +152,12 @@ export async function generateSFX(description: string): Promise<AudioAsset> {
     // - Built-in SFX library
     
     const sfxLibrary: Record<string, string> = {
-        'explosion': 'https://actions.google.com/sounds/v1/explosions/explosion.ogg',
-        'gun': 'https://actions.google.com/sounds/v1/weapons/gun_semiauto.ogg',
-        'footstep': 'https://actions.google.com/sounds/v1/human_voices/walking_on_snow.ogg',
-        'car': 'https://actions.google.com/sounds/v1/vehicles/car_horn.ogg',
-        'door': 'https://actions.google.com/sounds/v1/doors/door_creak.ogg',
-        'default': 'https://actions.google.com/sounds/v1/impacts/crash.ogg'
+        'explosion': 'https://raw.githubusercontent.com/mdn/webaudio-examples/master/audio-analyser/viper.mp3',
+        'gun': 'https://raw.githubusercontent.com/mdn/webaudio-examples/master/audio-analyser/viper.mp3',
+        'footstep': 'https://raw.githubusercontent.com/mdn/webaudio-examples/master/audio-analyser/viper.mp3',
+        'car': 'https://raw.githubusercontent.com/mdn/webaudio-examples/master/audio-analyser/viper.mp3',
+        'door': 'https://raw.githubusercontent.com/mdn/webaudio-examples/master/audio-analyser/viper.mp3',
+        'default': 'https://raw.githubusercontent.com/mdn/webaudio-examples/master/audio-analyser/viper.mp3'
     };
 
     // Try to match description with SFX library
@@ -194,7 +194,7 @@ export async function getMusicTrack(vibe: string): Promise<AudioAsset> {
         return {
             id: `bgm_${Date.now()}`,
             type: 'music',
-            url: 'https://actions.google.com/sounds/v1/ambiences/coffee_shop.ogg',
+            url: 'https://raw.githubusercontent.com/mdn/webaudio-examples/master/audio-analyser/viper.mp3',
             durationSec: 10
         };
     }
@@ -276,7 +276,7 @@ export async function getMusicTrack(vibe: string): Promise<AudioAsset> {
         return {
             id: `bgm_${Date.now()}`,
             type: 'music',
-            url: 'https://actions.google.com/sounds/v1/ambiences/coffee_shop.ogg',
+            url: 'https://raw.githubusercontent.com/mdn/webaudio-examples/master/audio-analyser/viper.mp3',
             durationSec: 10
         };
     }
@@ -290,14 +290,14 @@ export async function generateAmbience(sceneDescription: string): Promise<AudioA
 
     // Map scene descriptions to ambience sounds
     const ambienceLibrary: Record<string, string> = {
-        'rain': 'https://actions.google.com/sounds/v1/weather/rain_heavy_loud.ogg',
-        'storm': 'https://actions.google.com/sounds/v1/weather/thunder_crack.ogg',
-        'wind': 'https://actions.google.com/sounds/v1/weather/wind_howling.ogg',
-        'city': 'https://actions.google.com/sounds/v1/ambiences/city_traffic.ogg',
-        'forest': 'https://actions.google.com/sounds/v1/ambiences/forest_morning.ogg',
-        'ocean': 'https://actions.google.com/sounds/v1/ambiences/ocean_waves.ogg',
-        'fire': 'https://actions.google.com/sounds/v1/ambiences/fireplace.ogg',
-        'default': 'https://actions.google.com/sounds/v1/ambiences/coffee_shop.ogg'
+        'rain': 'https://raw.githubusercontent.com/mdn/webaudio-examples/master/audio-analyser/viper.mp3',
+        'storm': 'https://raw.githubusercontent.com/mdn/webaudio-examples/master/audio-analyser/viper.mp3',
+        'wind': 'https://raw.githubusercontent.com/mdn/webaudio-examples/master/audio-analyser/viper.mp3',
+        'city': 'https://raw.githubusercontent.com/mdn/webaudio-examples/master/audio-analyser/viper.mp3',
+        'forest': 'https://raw.githubusercontent.com/mdn/webaudio-examples/master/audio-analyser/viper.mp3',
+        'ocean': 'https://raw.githubusercontent.com/mdn/webaudio-examples/master/audio-analyser/viper.mp3',
+        'fire': 'https://raw.githubusercontent.com/mdn/webaudio-examples/master/audio-analyser/viper.mp3',
+        'default': 'https://raw.githubusercontent.com/mdn/webaudio-examples/master/audio-analyser/viper.mp3'
     };
 
     const lowerDesc = sceneDescription.toLowerCase();

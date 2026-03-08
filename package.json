@@ -15,6 +15,7 @@
     "stress-test:watch": "nodemon --watch scripts/stress-test.ts --exec npm run stress-test"
   },
   "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@ffprobe-installer/ffprobe": "^2.1.2",
     "@google/genai": "^1.40.0",
     "@stripe/stripe-js": "^8.7.0",
