@@ -51,15 +51,21 @@ export const saveStoryboard = async (
         const scenesPayload = project.scenes.map(scene => {
             const payload: any = {
                 storyboard_id: storyboardId,
-                scene_number: scene.scene_number,
-                visual_description: scene.visual_description,
-                audio_description: scene.audio_description,
-                shot_type: scene.shot_type,
-                image_prompt: scene.image_prompt,
-                video_motion_prompt: scene.video_motion_prompt || scene.video_prompt,
-                image_url: scene.image_url,
-                video_url: scene.video_url
+                scene_number: scene.scene_number || 1,
+                visual_description: scene.visual_description || '',
+                audio_description: scene.audio_description || '',
+                shot_type: scene.shot_type || '',
+                image_prompt: scene.image_prompt || '',
+                image_url: scene.image_url || null,
+                video_url: scene.video_url || null
             };
+
+            // 只有当 video_motion_prompt 有值时才添加
+            if (scene.video_motion_prompt) {
+                payload.video_motion_prompt = scene.video_motion_prompt;
+            } else if (scene.video_prompt) {
+                payload.video_motion_prompt = scene.video_prompt;
+            }
 
             // Only attach ID if it's a valid existing UUID
             if (scene.id && scene.id.includes('-')) {
