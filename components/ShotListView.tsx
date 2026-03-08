@@ -206,12 +206,25 @@ const SceneSection: React.FC<{
                         currentStartImage = existingImg;
                         setChainLog(`[首镜] 已读取源头原画...`);
                     } else {
-                        setChainLog(`[首镜] 正在强制生成绝对清晰首帧 (Face Clone)...`);
-                        currentStartImage = await generateImage(
-                            shot.image_prompt || scene.visual_description,
-                            'flux_schnell', 'none', '16:9', project.character_anchor,
-                            sceneAnchorRef // ★ 场次定妆图优先，回退全局照片作为人脸参考垫图
-                        );
+                        try {
+                            setChainLog(`[首镜] 正在强制生成绝对清晰首帧 (Face Clone)...`);
+                            currentStartImage = await generateImage(
+                                shot.image_prompt || scene.visual_description,
+                                'flux_schnell', 'none', '16:9', project.character_anchor,
+                                sceneAnchorRef // ★ 场次定妆图优先，回退全局照片作为人脸参考垫图
+                            );
+                        } catch (genErr: any) {
+                            if (genErr.message?.includes('Face alignment failed') || genErr.message?.includes('未能检测到清晰的人物面部')) {
+                                setChainLog(`[首镜] ⚠️ 人脸锚点无法对齐 (可能上一场未露正脸)! 正在回退至文本模式生成首镜...`);
+                                currentStartImage = await generateImage(
+                                    shot.image_prompt || scene.visual_description,
+                                    'flux_schnell', 'none', '16:9', project.character_anchor,
+                                    null // 移除无效垫图，纯文字走起
+                                );
+                            } else {
+                                throw genErr;
+                            }
+                        }
 
                         // ★ 嗅探全片首帧并霸权锁定！
                         if (onSetGlobalAnchor && !sceneAnchorRef) {
@@ -607,12 +620,25 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                             setChainLog(`场 ${scene.scene_number} 首镜：★ 已读取源头原画！`);
                         } else {
                             // 强制生图模型重新生成一张干净的首帧，避免误差累积
-                            setChainLog(`场 ${scene.scene_number} 首镜：正在重新生成绝对清晰的首帧图 (Face Clone)...`);
-                            currentStartImage = await generateImage(
-                                shot.image_prompt || scene.visual_description,
-                                'flux_schnell', 'none', '16:9', project.character_anchor,
-                                sceneAnchorRef // ★ 场次定妆图优先，回退全局照片，再回退自动嗅探的全片第一帧作为【垫图】
-                            );
+                            try {
+                                setChainLog(`场 ${scene.scene_number} 首镜：正在重新生成绝对清晰的首帧图 (Face Clone)...`);
+                                currentStartImage = await generateImage(
+                                    shot.image_prompt || scene.visual_description,
+                                    'flux_schnell', 'none', '16:9', project.character_anchor,
+                                    sceneAnchorRef // ★ 场次定妆图优先，回退全局照片，再回退自动嗅探的全片第一帧作为【垫图】
+                                );
+                            } catch (genErr: any) {
+                                if (genErr.message?.includes('Face alignment failed') || genErr.message?.includes('未能检测到清晰的人物面部')) {
+                                    setChainLog(`场 ${scene.scene_number} 首镜：⚠️ 锚点图无清晰正脸！已自动卸载垫图，回退至纯文本引擎继续生成...`);
+                                    currentStartImage = await generateImage(
+                                        shot.image_prompt || scene.visual_description,
+                                        'flux_schnell', 'none', '16:9', project.character_anchor,
+                                        null // 放弃破损的垫图
+                                    );
+                                } else {
+                                    throw genErr;
+                                }
+                            }
 
                             // ★ 【核心一致性机制】：如果是全片首场首镜，且没有局部或全局垫图，则自动缓存为全片霸权锚点
                             if (sIdx === 0 && !scene.scene_reference_image_base64 && !referenceImageDataUrl) {

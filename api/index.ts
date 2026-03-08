@@ -953,6 +953,9 @@ app.post('/api/replicate/generate-image', requireAuth, async (req: any, res: any
         res.json({ url: resultUrl });
     } catch (err: any) {
         console.error('[/api/replicate/generate-image Error]', err);
+        if (err.message === 'FACE_ALIGN_FAIL') {
+            return res.status(400).json({ error: '未能检测到清晰的人物面部，请重新上传正脸无遮挡的单人照！(Face alignment failed)' });
+        }
         res.status(500).json({ error: err.message || 'Server error' });
     }
 });
@@ -1788,7 +1791,13 @@ async function callReplicateImage(params: {
         prediction = await pollRes.json();
     }
 
-    if (prediction.status !== 'succeeded') throw new Error(prediction.error || 'Image generation failed');
+    if (prediction.status !== 'succeeded') {
+        const errorMsg = String(prediction.error || '');
+        if (errorMsg.includes('facexlib align face fail') || errorMsg.includes('face_align')) {
+            throw new Error('FACE_ALIGN_FAIL');
+        }
+        throw new Error(errorMsg || 'Image generation failed');
+    }
     const output = prediction.output;
     return { url: Array.isArray(output) ? output[0] : output, predictionId: prediction.id };
 }
@@ -2347,6 +2356,9 @@ app.post('/api/shot-images/:shotId/generate', async (req: any, res: any) => {
         });
     } catch (error: any) {
         console.error('[ShotImage Generate] Error:', error.message);
+        if (error.message === 'FACE_ALIGN_FAIL') {
+            return res.status(400).json({ error: '未能检测到清晰的人物面部，请重新上传正脸无遮挡的单人照！(Face alignment failed)' });
+        }
         res.status(500).json({ error: error.message || 'Image generation failed' });
     }
 });
