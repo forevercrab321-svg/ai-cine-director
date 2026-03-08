@@ -3781,7 +3781,7 @@ app.post('/api/audio/mix', requireAuth, async (req: any, res: any) => {
 app.post('/api/replicate/multi-frame', requireAuth, async (req: any, res: any) => {
     try {
         const user = req.user;
-        const { 
+        const {
             frames,
             model,
             aspectRatio,
@@ -3818,25 +3818,27 @@ app.post('/api/replicate/multi-frame', requireAuth, async (req: any, res: any) =
             }
         );
 
-        const { getVideoCost } = await import('../services/replicateService');
-        const totalCost = results.filter(r => r.success).reduce((sum, r) => sum + getVideoCost(model), 0);
+        // ★ Use inline cost lookup from VIDEO_MODEL_COSTS (already defined at top of file)
+        const costPerVideo = (VIDEO_MODEL_COSTS as Record<string, number>)[model] ?? 22;
+        const totalCost = results.filter(r => r.success).length * costPerVideo;
 
-        const { data: profile } = await supabase
+        const supabaseAdmin = getSupabaseAdmin();
+        const { data: profile } = await supabaseAdmin
             .from('profiles')
             .select('credits')
             .eq('id', user.id)
             .single();
 
-        const currentCredits = profile?.credits || 0;
+        const currentCredits = (profile as any)?.credits || 0;
         if (currentCredits < totalCost) {
-            return res.status(402).json({ 
+            return res.status(402).json({
                 error: 'INSUFFICIENT_CREDITS',
                 required: totalCost,
                 available: currentCredits
             });
         }
 
-        await supabase.rpc('deduct_credits', { p_user_id: user.id, p_amount: totalCost });
+        await (supabaseAdmin.rpc as any)('deduct_credits', { p_user_id: user.id, p_amount: totalCost });
 
         res.json({ ok: true, results, totalCost, continuityMode: continuityMode || 'link' });
 

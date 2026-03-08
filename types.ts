@@ -213,6 +213,7 @@ export interface Scene {
 
   image_prompt?: string;
   video_motion_prompt?: string;
+  video_prompt?: string; // ★ Gemini API may return this; used as fallback for video_motion_prompt
   image_url?: string;
   video_url?: string;
   audio_url?: string;
@@ -824,7 +825,7 @@ export interface MultiFrameResult {
   model: VideoModel;
 }
 
-export type MultiFrameProgressStatus = 
+export type MultiFrameProgressStatus =
   | 'preparing'
   | 'generating'
   | 'extracting'

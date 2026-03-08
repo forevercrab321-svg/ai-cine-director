@@ -26,15 +26,15 @@ function generateMockShots(params: {
 }): { scene_title: string; shots: Shot[] } {
     const numShots = params.num_shots || 5;
     const shots: Shot[] = [];
-    
+
     const shotTypes = [
-        { camera: 'wide', movement: 'static' as const, lens: '35mm' },
-        { camera: 'medium', movement: 'push-in' as const, lens: '50mm' },
-        { camera: 'close', movement: 'static' as const, lens: '85mm' },
-        { camera: 'ecu', movement: 'pull-out' as const, lens: '135mm' },
-        { camera: 'over-shoulder', movement: 'tracking' as const, lens: '70mm' },
-    ];
-    
+        { camera: 'wide', movement: 'static', lens: '35mm' },
+        { camera: 'medium', movement: 'push-in', lens: '50mm' },
+        { camera: 'close', movement: 'static', lens: '85mm' },
+        { camera: 'ecu', movement: 'pull-out', lens: '135mm' },
+        { camera: 'over-shoulder', movement: 'tracking', lens: '70mm' },
+    ] as const;
+
     for (let i = 0; i < numShots; i++) {
         const shotType = shotTypes[i % shotTypes.length];
         shots.push({
@@ -45,7 +45,7 @@ function generateMockShots(params: {
             duration_sec: 4,
             location_type: 'INT',
             location: 'Location to be determined',
-            time_of_day: 'day',
+            time_of_day: 'noon',
             characters: ['Character'],
             action: params.visual_description.slice(0, 100),
             dialogue: '',
@@ -69,7 +69,7 @@ function generateMockShots(params: {
             updated_at: new Date().toISOString(),
         });
     }
-    
+
     return {
         scene_title: `Scene ${params.scene_number}`,
         shots,

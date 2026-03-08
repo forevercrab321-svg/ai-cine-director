@@ -3,8 +3,8 @@
  * 实现类似 Runway/Kling 的多帧链接生成
  */
 
-import { VideoModel, VideoOptions, VideoDuration } from '../types';
-import { generateVideo, extractLastFrameWithFallback, type ReplicateResponse } from './replicateService';
+import { VideoModel, VideoDuration } from '../types';
+import { startVideoTask, checkPredictionStatus, extractLastFrameWithFallback, type ReplicateResponse } from './replicateService';
 
 export interface MultiFrameOptions {
   frames: {
@@ -26,6 +26,19 @@ export interface FrameResult {
   success: boolean;
   error?: string;
   replicateResponse?: ReplicateResponse;
+}
+
+// Helper: poll a prediction until terminal state
+async function pollUntilDone(predictionId: string, maxWaitMs = 300_000): Promise<ReplicateResponse> {
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    const status = await checkPredictionStatus(predictionId);
+    if (status.status === 'succeeded' || status.status === 'failed' || status.status === 'canceled') {
+      return status;
+    }
+    await new Promise(r => setTimeout(r, 3000));
+  }
+  throw new Error('Video generation timed out');
 }
 
 /**
@@ -53,7 +66,7 @@ export async function generateMultiFrameVideo(
 
       // 确定起始图片
       let startImage: string | undefined;
-      
+
       if (options.continuityMode === 'link' && previousFrameUrl) {
         // 链式模式: 使用上一帧的尾帧
         startImage = previousFrameUrl;
@@ -76,25 +89,32 @@ export async function generateMultiFrameVideo(
           `${frame.prompt}`;
       }
 
-      // 生成视频
-      const videoResult = await generateVideo(
-        options.model,
+      // 生成视频: start task → poll until done
+      const prediction = await startVideoTask(
         enhancedPrompt,
-        startImage,
-        {
-          duration: frame.duration || 6,
-          aspectRatio: options.aspectRatio || '16:9',
-          characterAnchor: options.characterAnchor,
-          promptEngineVersion: 'v1'
-        }
+        startImage || '',
+        options.model,
+        'none',       // videoStyle — not used at this level
+        'storyboard', // generationMode
+        'standard',   // quality
+        (frame.duration || 6) as VideoDuration,
+        12,           // fps
+        '720p',       // resolution
+        options.characterAnchor,
+        options.aspectRatio || '16:9',
       );
+
+      // Poll until the prediction finishes
+      const videoResult = prediction.status === 'succeeded' || prediction.status === 'failed'
+        ? prediction // already terminal (Prefer: wait succeeded)
+        : await pollUntilDone(prediction.id);
 
       console.log(`[MultiFrame] Frame ${i + 1} generated, status: ${videoResult.status}`);
 
       if (videoResult.status === 'succeeded' && videoResult.output) {
         // 获取输出视频URL
-        const videoUrl = Array.isArray(videoResult.output) 
-          ? videoResult.output[0] 
+        const videoUrl = Array.isArray(videoResult.output)
+          ? videoResult.output[0]
           : videoResult.output;
 
         let lastFrameUrl: string = '';
@@ -125,7 +145,7 @@ export async function generateMultiFrameVideo(
       } else {
         const errorMsg = videoResult.error || 'Video generation failed';
         console.error(`[MultiFrame] Frame ${i + 1} failed:`, errorMsg);
-        
+
         results.push({
           frameIndex: i,
           videoUrl: '',
@@ -145,7 +165,7 @@ export async function generateMultiFrameVideo(
 
     } catch (err: any) {
       console.error(`[MultiFrame] Frame ${i + 1} exception:`, err);
-      
+
       results.push({
         frameIndex: i,
         videoUrl: '',
@@ -186,7 +206,7 @@ export async function chainExistingVideos(
 
     try {
       const lastFrameUrl = await extractLastFrameWithFallback(videoUrls[i]);
-      
+
       results.push({
         frameIndex: i,
         videoUrl: videoUrls[i],
@@ -197,7 +217,7 @@ export async function chainExistingVideos(
       onProgress?.(i, 'done', 'Frame extracted');
     } catch (err: any) {
       console.warn(`[ChainVideos] Failed to extract frame ${i + 1}:`, err.message);
-      
+
       results.push({
         frameIndex: i,
         videoUrl: videoUrls[i],
