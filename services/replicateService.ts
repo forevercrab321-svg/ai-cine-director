@@ -253,6 +253,12 @@ export const startVideoTask = async (
   promptOptions?: any,
   promptEngineVersion?: 'v1' | 'v2'
 ): Promise<ReplicateResponse> => {
+  // ★ 角色一致性：最高优先级指令
+  const CONSISTENCY_CORE = "CRITICAL IDENTITY LOCK: The character in this video MUST maintain EXACT SAME identity. " 
+    + "Same face, eyes, hair, skin, body, clothing. "
+    + "DO NOT alter, morph, replace, or transform ANY character features. "
+    + "This is a professional film production. Maintain 100% visual consistency.";
+
   // ★ 角色锚点加固指令 - 极致一致性逻辑
   // 🎯 原则：有图时用图+文字双重锁定，无图时用文字锁定
   let finalPrompt = prompt;
