@@ -261,6 +261,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
   const handleRenderChain = async () => {
     if (!isAuthenticated) return alert("请先登录以生成分镜序列。");
     if (isRenderingChain) return;
+    if (!project.scenes || project.scenes.length === 0) return alert("请先生成分镜脚本。");
 
     // 1. Check if user has enough credits.
     const totalVideosCost = (MODEL_COSTS[settings.videoModel] || 28) * project.scenes.length;
@@ -607,7 +608,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
               {project.project_title}
             </h2>
             <div className="flex gap-2 text-[10px] uppercase font-bold tracking-wider text-slate-500 items-center">
-              <span>{project.scenes.length} Scenes</span>
+              <span>{project.scenes?.length || 0} Scenes</span>
               <span>•</span>
               <span>{settings.videoStyle}</span>
               <span>•</span>
@@ -788,7 +789,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
 
 
       <div className="space-y-8">
-        {project.scenes.map((scene, index) => (
+        {project.scenes && project.scenes.map((scene, index) => (
           <div key={scene.scene_number} className="relative">
             <SceneCard
               scene={scene}
