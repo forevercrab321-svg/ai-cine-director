@@ -1742,9 +1742,12 @@ async function callReplicateImage(params: {
         true_cfg: 1.0,
     } : {
         prompt: params.prompt, aspect_ratio: params.aspectRatio, output_format: 'jpg',
-        prompt_upsampling: false,  // ★ LOCK: Prevent Flux from rewriting prompts differently per image
         output_quality: 90,        // ★ LOCK: Consistent quality across all shots
     };
+
+    if (!isFaceCloning && (modelPath.includes('flux-1.1-pro') || modelPath.includes('flux-pro'))) {
+        input.prompt_upsampling = false; // ★ LOCK: Prevent Flux from rewriting prompts differently per image
+    }
 
     if (params.seed != null && !isFaceCloning) input.seed = params.seed;
 

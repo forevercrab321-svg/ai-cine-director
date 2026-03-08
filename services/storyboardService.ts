@@ -57,32 +57,45 @@ export const saveStoryboard = async (
                 shot_type: scene.shot_type || '',
                 image_prompt: scene.image_prompt || '',
                 image_url: scene.image_url || null,
-                video_url: scene.video_url || null
+                video_url: scene.video_url || null,
+                video_motion_prompt: scene.video_motion_prompt || scene.video_prompt || null
             };
 
-            // 只有当 video_motion_prompt 有值时才添加
-            if (scene.video_motion_prompt) {
-                payload.video_motion_prompt = scene.video_motion_prompt;
-            } else if (scene.video_prompt) {
-                payload.video_motion_prompt = scene.video_prompt;
-            }
-
-            // Only attach ID if it's a valid existing UUID
+            // PostgREST strict schema: all objects in array must have same keys.
+            // If it's a new scene, we still need to provide 'id' but as undefined/omitted. 
+            // Wait, JSON.stringify removes undefined, so the key vanishes.
+            // If we omit it for new, we must omit it for ALL new. But if it's a mix of new and old,
+            // we MUST separate them or provide undefined. The safest way is to just let Supabase JS handle it, 
+            // but we must ensure we don't selectively add keys to some objects.
             if (scene.id && scene.id.includes('-')) {
                 payload.id = scene.id;
             }
             return payload;
         });
 
-        // Use upsert on the 'id' column constraint
-        const { data: scenesData, error: scenesError } = await supabase
-            .from('scenes')
-            .upsert(scenesPayload, { onConflict: 'id' })
-            .select();
+        // Supabase bulk upsert requires uniform keys for all objects. If some have 'id' and some don't, it fails.
+        // It's safer to split into updates (with id) and inserts (without id)
+        const scenesToUpdate = scenesPayload.filter(s => s.id);
+        const scenesToInsert = scenesPayload.filter(s => !s.id);
 
-        if (scenesError) {
-            console.error('[Supabase Upsert] Error saving scenes:', scenesError);
-            throw scenesError;
+        let scenesData: any[] = [];
+
+        if (scenesToUpdate.length > 0) {
+            const { data, error } = await supabase
+                .from('scenes')
+                .upsert(scenesToUpdate, { onConflict: 'id' })
+                .select();
+            if (error) throw error;
+            if (data) scenesData = scenesData.concat(data);
+        }
+
+        if (scenesToInsert.length > 0) {
+            const { data, error } = await supabase
+                .from('scenes')
+                .insert(scenesToInsert)
+                .select();
+            if (error) throw error;
+            if (data) scenesData = scenesData.concat(data);
         }
 
         // Sort scenes by scene_number
