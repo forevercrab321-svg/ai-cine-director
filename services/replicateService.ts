@@ -141,14 +141,12 @@ interface VideoOptions {
 }
 
 function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string, options: VideoOptions = {}, promptEngineVersion?: 'v1' | 'v2'): Record<string, any> {
-  // ★ 角色一致性：最高优先级指令 — 放在 prompt 最前面，模型优先读取
-  // ★ 增强版v2：更强制性的指令，防止任何角色变化
-  const CONSISTENCY_CORE = "🎬 CRITICAL IDENTITY LOCK: The character in this video MUST maintain EXACT SAME identity as: " 
-    + "(1) If reference image provided: SAME face structure, SAME eye color/shape, SAME hair style/color, SAME skin tone, SAME body proportions, SAME clothing/outfit. "
-    + "(2) If text anchor provided: Follow anchor description EXACTLY with ZERO deviations. "
-    + "🔒 FORBIDDEN: DO NOT alter, morph, replace, transform, regenerate, or change ANY character features. "
-    + "🎭 This is a professional film production. Character must be IDENTICAL across all frames. "
-    + "Smooth natural motion ONLY. Maintain 100% visual consistency.";
+  // ★ 角色一致性：最高优先级指令
+  // 定义在函数内部确保作用域正确
+  const CONSISTENCY_CORE = "CRITICAL IDENTITY LOCK: The character in this video MUST maintain EXACT SAME identity. " 
+    + "Same face, eyes, hair, skin, body, clothing. "
+    + "DO NOT alter, morph, replace, or transform ANY character features. "
+    + "This is a professional film production. Maintain 100% visual consistency.";
 
   let finalPrompt = prompt;
   // PROMPT ENGINE VERSION SWITCH
