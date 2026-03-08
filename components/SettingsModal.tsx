@@ -188,6 +188,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             >
               <option value="flux">Flux 1.1 Pro ({t(lang, 'qualityPro')})</option>
               <option value="flux_schnell">Flux Schnell ({t(lang, 'qualityDraft')})</option>
+              <option value="nano_banana">Nano Banana ✨ (2 credits)</option>
             </select>
           </div>
 
