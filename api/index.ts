@@ -85,7 +85,7 @@ const REPLICATE_MODEL_PATHS: Record<VideoModel | ImageModel, string> = {
     // Image models
     flux: "black-forest-labs/flux-1.1-pro",
     flux_schnell: "black-forest-labs/flux-schnell",
-    nano_banana: "google/gemini-nano-banana"
+    nano_banana: "black-forest-labs/flux-schnell" // Fallback since gemini-nano-banana is invalid
 };
 
 const IMAGE_MODEL_COSTS: Record<ImageModel, number> = {

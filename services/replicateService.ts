@@ -143,7 +143,7 @@ interface VideoOptions {
 function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string, options: VideoOptions = {}, promptEngineVersion?: 'v1' | 'v2'): Record<string, any> {
   // ★ 角色一致性：最高优先级指令
   // 定义在函数内部确保作用域正确
-  const CONSISTENCY_CORE = "CRITICAL IDENTITY LOCK: The character in this video MUST maintain EXACT SAME identity. " 
+  const CONSISTENCY_CORE = "CRITICAL IDENTITY LOCK: The character in this video MUST maintain EXACT SAME identity. "
     + "Same face, eyes, hair, skin, body, clothing. "
     + "DO NOT alter, morph, replace, or transform ANY character features. "
     + "This is a professional film production. Maintain 100% visual consistency.";
@@ -215,10 +215,13 @@ function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string
     // 其他模型
     case 'kling_2_5_pro':
       // Kling 2.5 Pro: 高质量 I2V，cfg_scale 控制与首帧的贴合度
-      return { prompt: finalPrompt, image: imageUrl, duration, cfg_scale: 0.5, seed: 142857 };
+      // ★ Safety: Kling strictly requires duration to be 5 or 10
+      const klingDuration = duration >= 8 ? 10 : 5;
+      return { prompt: finalPrompt, image: imageUrl, duration: klingDuration, cfg_scale: 0.5, seed: 142857 };
     case 'kling_2_1':
       // Kling 2.1: 稳定版
-      return { prompt: finalPrompt, image: imageUrl, duration, cfg_scale: 0.5, seed: 142857 };
+      const kling21Duration = duration >= 8 ? 10 : 5;
+      return { prompt: finalPrompt, image: imageUrl, duration: kling21Duration, cfg_scale: 0.5, seed: 142857 };
     case 'pixverse_v4_5':
       // Pixverse v4.5: 多风格
       return { prompt: finalPrompt, image: imageUrl, duration, seed: 142857 };
@@ -254,7 +257,7 @@ export const startVideoTask = async (
   promptEngineVersion?: 'v1' | 'v2'
 ): Promise<ReplicateResponse> => {
   // ★ 角色一致性：最高优先级指令
-  const CONSISTENCY_CORE = "CRITICAL IDENTITY LOCK: The character in this video MUST maintain EXACT SAME identity. " 
+  const CONSISTENCY_CORE = "CRITICAL IDENTITY LOCK: The character in this video MUST maintain EXACT SAME identity. "
     + "Same face, eyes, hair, skin, body, clothing. "
     + "DO NOT alter, morph, replace, or transform ANY character features. "
     + "This is a professional film production. Maintain 100% visual consistency.";
@@ -262,11 +265,11 @@ export const startVideoTask = async (
   // ★ 角色锚点加固指令 - 极致一致性逻辑
   // 🎯 原则：有图时用图+文字双重锁定，无图时用文字锁定
   let finalPrompt = prompt;
-  
+
   // 情况1: 有参考图 + 有文字anchor = 双重锁定 (最保险)
   if (startImageUrl && characterAnchor) {
     finalPrompt = `${CONSISTENCY_CORE} ${prompt}. ALSO respect this character description: ${characterAnchor}`;
-  } 
+  }
   // 情况2: 只有参考图 = 用图锁定
   else if (startImageUrl) {
     finalPrompt = `${CONSISTENCY_CORE} ${prompt}`;
