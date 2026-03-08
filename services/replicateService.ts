@@ -148,6 +148,10 @@ function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string
     + "DO NOT alter, morph, replace, or transform ANY character features. "
     + "This is a professional film production. Maintain 100% visual consistency.";
 
+  // 从options获取角色锚点
+  const characterAnchor = options.characterAnchor || '';
+  const startImageUrl = imageUrl;
+
   let finalPrompt = prompt;
   // PROMPT ENGINE VERSION SWITCH
   const version = promptEngineVersion || (typeof process !== 'undefined' && process.env && process.env.PROMPT_ENGINE_VERSION) || 'v1';
