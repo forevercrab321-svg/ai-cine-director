@@ -1765,91 +1765,65 @@ You MUST return this EXACT JSON structure with EXACTLY ${targetScenes} scenes:
         const anchor = project.character_anchor;
         const anchorLower = anchor.toLowerCase().trim();
 
-        // 核心目标：将嵌套的场景（Scene > Shots）展平为前端/DB所需的一维数组（project.scenes）
-        // 从而兼容当前的前端架构，确保“首镜才能生图，延续镜不能生图”的前后端规约
-        const flattenedShots: any[] = [];
-        let globalShotIndex = 1;
+        // ★ FIX: Convert AI's nested scenes properly - each AI scene becomes ONE frontend Scene
+        // Previous bug: was flattening ALL shots into individual "scenes", causing identical content
+        const convertedScenes: any[] = [];
 
         if (Array.isArray(parsedData.scenes)) {
-            for (const scn of parsedData.scenes) {
-                const setting = scn.location || '';
+            for (let sceneIdx = 0; sceneIdx < Math.min(parsedData.scenes.length, targetScenes); sceneIdx++) {
+                const scn = parsedData.scenes[sceneIdx];
+                const setting = scn.location || `Location ${sceneIdx + 1}`;
                 const shots = Array.isArray(scn.shots) ? scn.shots : [];
 
-                for (let i = 0; i < shots.length; i++) {
-                    const shot = shots[i];
+                // Use FIRST shot as the scene's primary content
+                const firstShot = shots[0] || {};
+                
+                const rawCharacters = Array.isArray(firstShot.characters) ? firstShot.characters : [];
+                let sceneCharacters = rawCharacters
+                    .map((c: any) => sanitizePromptInput(c, 120))
+                    .filter((c: string) => c && lockedCharacterNameSet.has(c.toLowerCase()));
 
-                    const rawCharacters = Array.isArray(shot.characters) ? shot.characters : [];
-                    let shotCharacters = rawCharacters
-                        .map((c: any) => sanitizePromptInput(c, 120))
-                        .filter((c: string) => c && lockedCharacterNameSet.has(c.toLowerCase()));
-
-                    if (shotCharacters.length === 0 && lockedCharacters.length > 0) {
-                        shotCharacters = [lockedCharacters[Math.min(i, lockedCharacters.length - 1)].name];
-                    }
-
-                    const shotCharacterPrefix = shotCharacters.length > 0
-                        ? `Characters on screen: ${shotCharacters.join(', ')}. `
-                        : (lockedCharacterLine ? `${lockedCharacterLine} ` : '');
-
-                    // 仅首镜可能包含 image_prompt；如果为空且是首镜，进行补偿提示词
-                    let rawImagePrompt = (shot.image_prompt || '').trim();
-                    if (i === 0 && rawImagePrompt.length < 5) {
-                        rawImagePrompt = shot.video_prompt || `Scene ${scn.scene_id} start`;
-                    }
-
-                    // 结合 Anchor 和 Setting 生成完整首镜 prompt
-                    let finalImagePrompt = '';
-                    if (i === 0) {
-                        // Strip repeated character anchor
-                        if (anchorLower.length > 20 && rawImagePrompt.toLowerCase().startsWith(anchorLower)) {
-                            rawImagePrompt = rawImagePrompt.slice(anchor.length).replace(/^[,;.:\s]+/, '').trim();
-                        }
-                        finalImagePrompt = anchor
-                            ? `${anchor}. ${shotCharacterPrefix}${setting ? 'Setting: ' + setting + '. ' : ''}${rawImagePrompt}. Single cinematic frame.`
-                            : `${rawImagePrompt}, ${setting}, cinematic shot`;
-                    }
-
-                    flattenedShots.push({
-                        scene_number: globalShotIndex++,
-                        scene_setting: setting,
-                        // 复用 visual_description 承载前端的原画说明要求，这里直接给动作和环境
-                        visual_description: `${shotCharacterPrefix}${(i === 0 ? rawImagePrompt : shot.video_prompt) || `Action ${globalShotIndex}`}`.trim(),
-                        audio_description: shot.audio_description || "",
-                        shot_type: shot.video_prompt || "cinematic action", // 兼容旧 pipeline
-                        characters: shotCharacters,
-                        // 最核心改动：非零的索引严格留空
-                        image_prompt: finalImagePrompt,
-                        video_motion_prompt: shot.video_prompt || "smooth motion",
-                        // ★ 添加一致性元数据
-                        _consistency_check: i === 0 ? {
-                            has_anchor_prefix: finalImagePrompt.toLowerCase().startsWith(anchorLower.substring(0, 20)),
-                            total_critical_keywords: anchor ? anchorLower.split(' ').filter(k => k.length > 3).length : 0,
-                            critical_keywords_present: anchor ? anchorLower.split(' ').filter(k => k.length > 3).filter(k => (finalImagePrompt + ' ' + (shot.video_prompt || '')).toLowerCase().includes(k)).length : 0
-                        } : undefined
-                    });
+                if (sceneCharacters.length === 0 && lockedCharacters.length > 0) {
+                    sceneCharacters = [lockedCharacters[0].name];
                 }
+
+                const characterPrefix = sceneCharacters.length > 0
+                    ? `Characters: ${sceneCharacters.join(', ')}. `
+                    : '';
+
+                // Build image prompt from FIRST shot
+                let rawImagePrompt = (firstShot.image_prompt || firstShot.video_prompt || `Scene at ${setting}`).trim();
+                
+                // Remove duplicate character anchor if present
+                if (anchorLower.length > 20 && rawImagePrompt.toLowerCase().startsWith(anchorLower)) {
+                    rawImagePrompt = rawImagePrompt.slice(anchor.length).replace(/^[,;.:\s]+/, '').trim();
+                }
+
+                const finalImagePrompt = anchor
+                    ? `${anchor}. ${characterPrefix}Setting: ${setting}. ${rawImagePrompt}. Cinematic establishing shot, 8k photorealistic.`
+                    : `${characterPrefix}${setting}. ${rawImagePrompt}. Cinematic establishing shot.`;
+
+                // Visual description for UI display
+                const visualDesc = `${characterPrefix}${setting}. ${rawImagePrompt}`;
+
+                // Audio from first shot
+                const audioDesc = firstShot.audio_description || scn.audio_description || `Ambient sound at ${setting}`;
+
+                convertedScenes.push({
+                    scene_number: sceneIdx + 1,
+                    scene_setting: setting,
+                    characters: sceneCharacters,
+                    visual_description: visualDesc,
+                    audio_description: audioDesc,
+                    shot_type: firstShot.video_prompt || "cinematic establishing shot",
+                    image_prompt: finalImagePrompt,
+                    video_motion_prompt: firstShot.video_prompt || "Camera slowly reveals the scene",
+                    video_prompt: firstShot.video_prompt,
+                });
             }
         }
 
-        // ★ 核心修复：限制场景和镜头数量
-        // 计算出前targetScenes个场景对应的镜头总数
-        let scenesInTarget = 0;
-        let shotsInTarget = 0;
-        for (const shot of flattenedShots) {
-            // 计算这个镜头属于第几个场景（基于shot中的scene_number）
-            const sceneNum = shot.scene_number || 1;
-            if (sceneNum > targetScenes) break; // 超出场景限制
-
-            shotsInTarget++;
-            if (shotsInTarget <= targetScenes * 10) { // 防止单个场景镜头过多（平均每个场景~10个镜头）
-                scenesInTarget = Math.ceil(shotsInTarget / 10);
-            } else {
-                break; // 镜头数达到极限
-            }
-        }
-
-        // 只返回目标范围内的镜头
-        project.scenes = flattenedShots.slice(0, Math.min(flattenedShots.length, targetScenes * 10));
+        project.scenes = convertedScenes.slice(0, targetScenes);
 
         if (!skipCreditCheck) {
             await supabaseUser.rpc('finalize_reserve', { ref_type: 'gemini', ref_id: jobRef });
