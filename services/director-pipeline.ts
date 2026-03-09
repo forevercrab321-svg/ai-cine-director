@@ -183,15 +183,10 @@ export const generateSceneChain = async (
     const rawVideoPrompt = shot.video_motion_prompt || shot.video_prompt || shot.shot_type || `Cinematic motion, scene ${i + 1}`;
     const richContext = shot.image_prompt ? `Visual Context: ${shot.image_prompt}. ` : '';
 
-    // 使用更自然的描述格式，避免触发API过滤
-    const characterNote = extractedAnchor
-      ? `Ensure main character matches identity: ${extractedAnchor}`
-      : '';
+    // We no longer manually append character note here because startVideoTask handles it dynamically.
+    const lockedVideoPrompt = `${richContext}Cinematic Action: ${rawVideoPrompt}`.trim();
 
-    // 格式更自然，不使用"LOCK"等可能触发过滤的词汇
-    const lockedVideoPrompt = `${richContext}Cinematic Action: ${rawVideoPrompt}. ${characterNote}`.trim();
-
-    console.log(`🔒 [Shot ${i + 1}] Character anchor: ${characterNote ? 'ACTIVE' : 'NONE'}`);
+    console.log(`🔒 [Shot ${i + 1}] Target Action: ${lockedVideoPrompt}`);
 
     // 注意：这里所有的视频都统一锁定同一个模型（例如 hailuo_02_fast），保证运动物理引擎一致
     // 传入音频提示（如果shot有音频描述）

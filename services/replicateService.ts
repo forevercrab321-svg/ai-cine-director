@@ -245,11 +245,12 @@ export const startVideoTask = async (
 ): Promise<ReplicateResponse> => {
   // ★ Clean, Narrative-First Video Prompts
   // Video models perform best when they receive a clean, descriptive narrative of the action.
-  // We append the character anchor gracefully at the end without shouting, to avoid wasting attention tokens.
+  // We append the character anchor gracefully at the end, but strictly enforce 3D and motion consistency.
   let finalPrompt = prompt;
 
   if (characterAnchor) {
-    finalPrompt = `${prompt} Ensure the main character matches this identity: ${characterAnchor}`;
+    // Add strong continuous consistency constraint, specifically targeting head turns
+    finalPrompt = `${prompt}. Character Identity: ${characterAnchor}. Critically important: Maintain the exact same facial features, identity, and clothing strictly consistent throughout the entire motion, regardless of angle changes or head turns.`;
   }
 
   let modelIdentifier = modelType.includes('/')
