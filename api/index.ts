@@ -1983,13 +1983,14 @@ const shotResponseSchema = {
                     mood: { type: Type.STRING }, sfx_vfx: { type: Type.STRING },
                     audio_notes: { type: Type.STRING }, continuity_notes: { type: Type.STRING },
                     image_prompt: { type: Type.STRING }, negative_prompt: { type: Type.STRING },
+                    video_prompt: { type: Type.STRING }, // ★ NEW: Dedicated physical video prompt
                 },
                 required: [
                     'shot_number', 'duration_sec', 'location_type', 'location',
                     'time_of_day', 'characters', 'action', 'dialogue',
                     'camera', 'lens', 'movement', 'composition',
                     'lighting', 'art_direction', 'mood', 'sfx_vfx',
-                    'audio_notes', 'continuity_notes', 'image_prompt', 'negative_prompt'
+                    'audio_notes', 'continuity_notes', 'image_prompt', 'negative_prompt', 'video_prompt'
                 ],
             },
         },
@@ -2057,20 +2058,23 @@ Visual Style: ${visual_style || 'Cinematic Realism'}
 ${character_anchor ? `Character Anchor (MUST appear in every shot's image_prompt): ${character_anchor}` : ''}
 
 **NARRATIVE & LOGIC RULES:**
-1. The sequence of shots must obey spatial constraints and physical logic. No teleporting or absurd actions.
-2. Ensure the emotional and narrative pacing is excellent. The sequence should feel like an award-winning cinematic moment.
+1. The sequence of shots must obey strict spatial constraints and physical logic. No teleporting, morphing, or absurd actions.
+2. Ensure the emotional and narrative pacing is excellent.
+3. "action": A brief narrative description of what happens.
 
 **CINEMATOGRAPHY RULES:**
-3. "camera" must be one of: wide, medium, close, ecu, over-shoulder, pov, aerial, two-shot
-4. "movement" must be one of: static, push-in, pull-out, pan-left, pan-right, tilt-up, tilt-down, dolly, tracking, crane, handheld, steadicam, whip-pan, zoom
-5. "time_of_day" must be one of: dawn, morning, noon, afternoon, golden-hour, dusk, night, blue-hour
-6. "location_type" must be one of: INT, EXT, INT/EXT
-7. "lighting" should use professional terms (e.g., chiaroscuro, volumetric, rim light, neon).
+4. "camera" must be one of: wide, medium, close, ecu, over-shoulder, pov, aerial, two-shot
+5. "movement" must be one of: static, push-in, pull-out, pan-left, pan-right, tilt-up, tilt-down, dolly, tracking, crane, handheld, steadicam, whip-pan, zoom
+6. "time_of_day", "location_type", "lighting": Must use professional terminology.
 
-**AI PROMPTING RULES (CRITICAL):**
-8. "image_prompt" must be an Elite-tier Midjourney/Flux prompt. It MUST vividly describe the Environment, Lighting, Camera Angle, Lens (e.g., 35mm, 85mm), and Subject Action in a highly evocative way.
-9. "negative_prompt" should prevent common AI artifacts (e.g., deformed hands, extra limbs, bad anatomy, text, watermarks).
-10. Language: image_prompt, negative_prompt, and technical fields ALWAYS in English. dialogue and audio_notes in ${language === 'zh' ? 'Chinese (Simplified)' : 'English'}.
+**AI VIDEO PROMPTING RULES (CRITICAL):**
+7. "video_prompt" MUST BE EXTREMELY SPECIFIC PHYSICAL KINETICS. AI video models do not understand abstract concepts, only physical motion.
+   - GOOD: "The camera slowly pushes forward. A woman in a red jacket turns her head sharply to the left, hair brushing her shoulder. She begins walking forward."
+   - BAD (Will cause hallucinations): "She discovers the truth and feels sad as time passes."
+   - RULE: Describe exact character limb movement, camera trajectory, and interaction with the environment. Prevent floating or sliding.
+8. "image_prompt" must be an Elite-tier Midjourney/Flux prompt. It MUST vividly describe the Environment, Lighting, Camera Angle, Lens, and Subject in a highly evocative way.
+9. "negative_prompt" should prevent common AI artifacts.
+10. Language: image_prompt, negative_prompt, video_prompt and technical fields ALWAYS in English. dialogue and audio_notes in ${language === 'zh' ? 'Chinese (Simplified)' : 'English'}.
 
 **Output:** JSON strictly following the provided schema. Return exactly ${targetShots} shots.`;
 
