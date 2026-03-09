@@ -213,7 +213,8 @@ const SceneSection: React.FC<{
                             currentStartImage = await generateImage(
                                 shot.image_prompt || scene.visual_description,
                                 'flux_schnell', 'none', '16:9', project.character_anchor,
-                                sceneAnchorRef // ★ 场次定妆图优先，回退全局照片作为人脸参考垫图
+                                sceneAnchorRef, // ★ 场次定妆图优先，回退全局照片作为人脸参考垫图
+                                project.story_entities
                             );
                         } catch (genErr: any) {
                             if (genErr.message?.includes('Face alignment failed') || genErr.message?.includes('未能检测到清晰的人物面部')) {
@@ -221,7 +222,8 @@ const SceneSection: React.FC<{
                                 currentStartImage = await generateImage(
                                     shot.image_prompt || scene.visual_description,
                                     'flux_schnell', 'none', '16:9', project.character_anchor,
-                                    null // 移除无效垫图，纯文字走起
+                                    null, // 移除无效垫图，纯文字走起
+                                    project.story_entities
                                 );
                             } else {
                                 throw genErr;
@@ -244,7 +246,7 @@ const SceneSection: React.FC<{
                 // ★ Combine the scene's full context with the specific action to prevent clothing/logic hallucinations
                 const richVideoPrompt = `Visual Context: ${shot.image_prompt || scene.visual_description || 'Cinematic scene'}. Cinematic Action: ${shot.action || "Camera continues the motion"}`;
                 const videoRes = await startVideoTask(
-                    richVideoPrompt, currentStartImage, videoModel, 'none', 'storyboard', 'standard', 6, 24, '720p', project.character_anchor, '16:9'
+                    richVideoPrompt, currentStartImage, videoModel, 'none', 'storyboard', 'standard', 6, 24, '720p', project.character_anchor, '16:9', { storyEntities: project.story_entities }
                 );
 
                 let videoUrl = "";
@@ -630,7 +632,8 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                                 currentStartImage = await generateImage(
                                     shot.image_prompt || scene.visual_description,
                                     'flux_schnell', 'none', '16:9', project.character_anchor,
-                                    sceneAnchorRef // ★ 场次定妆图优先，回退全局照片，再回退自动嗅探的全片第一帧作为【垫图】
+                                    sceneAnchorRef, // ★ 场次定妆图优先，回退全局照片，再回退自动嗅探的全片第一帧作为【垫图】
+                                    project.story_entities
                                 );
                             } catch (genErr: any) {
                                 if (genErr.message?.includes('Face alignment failed') || genErr.message?.includes('未能检测到清晰的人物面部')) {
@@ -638,7 +641,8 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                                     currentStartImage = await generateImage(
                                         shot.image_prompt || scene.visual_description,
                                         'flux_schnell', 'none', '16:9', project.character_anchor,
-                                        null // 放弃破损的垫图
+                                        null, // 放弃破损的垫图
+                                        project.story_entities
                                     );
                                 } else {
                                     throw genErr;
@@ -675,7 +679,7 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                     const richVideoPrompt = `Visual Context: ${shot.image_prompt || scene.visual_description || 'Cinematic scene'}. Cinematic Action: ${shot.action || "Camera continues the motion"}`;
                     // 发送视频请求
                     const videoRes = await startVideoTask(
-                        richVideoPrompt, currentStartImage, settings.videoModel, 'none', 'storyboard', 'standard', 6, 24, '720p', project.character_anchor, '16:9'
+                        richVideoPrompt, currentStartImage, settings.videoModel, 'none', 'storyboard', 'standard', 6, 24, '720p', project.character_anchor, '16:9', { storyEntities: project.story_entities }
                     );
 
                     // 轮询等待视频完成

@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
-import { v4 as uuidv4 } from 'uuid';
 import Stripe from 'stripe';
 
 
@@ -938,8 +937,8 @@ async function preprocessVideoInput(input: Record<string, any>): Promise<Record<
 // ───────────────────────────────────────────────────────────────
 app.post('/api/replicate/generate-image', requireAuth, async (req: any, res: any) => {
     try {
-        const { prompt, imageModel, visualStyle, aspectRatio, characterAnchor, referenceImageDataUrl } = req.body;
-        const authHeader = `Bearer ${req.accessToken} `;
+        const { prompt, imageModel, visualStyle, aspectRatio, characterAnchor, referenceImageDataUrl, storyEntities } = req.body;
+        const authHeader = `Bearer ${req.accessToken}`;
         const userId = req.user?.id;
         const userEmail = req.user?.email;
 
@@ -956,7 +955,7 @@ app.post('/api/replicate/generate-image', requireAuth, async (req: any, res: any
         }
 
         const skipCreditCheck = entitlement.mode === 'developer';
-        const jobRef = `replicate - img:${Date.now()}:${Math.random().toString(36).slice(2)} `;
+        const jobRef = `replicate-img:${Date.now()}:${Math.random().toString(36).slice(2)}`;
 
         const supabaseUser = createClient(
             (process.env.VITE_SUPABASE_URL || '').trim(),
@@ -970,21 +969,29 @@ app.post('/api/replicate/generate-image', requireAuth, async (req: any, res: any
             });
             if (reserveErr || !data) return res.status(402).json({ error: 'INSUFFICIENT_CREDITS', code: 'INSUFFICIENT_CREDITS' });
         } else {
-            logDeveloperAccess(userEmail, `replicate - img: generate: cost = ${cost} `);
+            logDeveloperAccess(userEmail, `replicate-img: generate: cost=${cost}`);
         }
 
         let resultUrl = '';
         try {
             const modelToRun = (REPLICATE_MODEL_PATHS as any)[imageModel] || REPLICATE_MODEL_PATHS['flux'];
-            // CRITICAL FIX: Even if we have a physical face clone anchor (referenceImageDataUrl),
-            // we MUST still send the text character anchor to lock the CLOTHING and BODY.
-            // PuLID only clones the face, not the outfit.
-            const consistencyInstructions = characterAnchor
-                ? `IMPORTANT: The character must look EXACTLY like this description: ${characterAnchor}. Same hair, same clothing, same features.DO NOT change the character's general appearance.`
+
+            // ★ Build strict consistency instructions from Story Entities
+            let entityRules = '';
+            if (Array.isArray(storyEntities) && storyEntities.length > 0) {
+                const lockedEntities = storyEntities.filter(e => e.is_locked);
+                if (lockedEntities.length > 0) {
+                    entityRules = `\n[IDENTITY LOCK] Ensure the following entities appear exactly as described: ` +
+                        lockedEntities.map(e => `[${e.type.toUpperCase()}: ${e.name}] ${e.description}`).join(' | ');
+                }
+            }
+
+            // Fallback to legacy character anchor if no new entities are passed
+            const legacyAnchorRule = (characterAnchor && !entityRules.includes('[CHARACTER:'))
+                ? `\n[IDENTITY LOCK] The character must look EXACTLY like this description: ${characterAnchor}. Same hair, same clothing, same features.`
                 : '';
-            const finalPrompt = characterAnchor
-                ? `${prompt}. ${consistencyInstructions}`
-                : prompt;
+
+            const finalPrompt = `${prompt} ${entityRules} ${legacyAnchorRule}`.trim();
 
             const result = await callReplicateImage({
                 prompt: finalPrompt,
@@ -1310,30 +1317,45 @@ app.get('/api/replicate/status/:id', requireAuth, async (req: any, res: any) => 
 const getGeminiAI = () => {
     const apiKey = process.env.GEMINI_API_KEY?.replace(/\s+/g, '');
     if (!apiKey) throw new Error('GEMINI_API_KEY not configured');
+    // @ts-ignore
     return new GoogleGenAI({ apiKey });
 };
 
 const geminiResponseSchema = {
+    // @ts-ignore
     type: Type.OBJECT,
     properties: {
+        // @ts-ignore
         project_title: { type: Type.STRING },
+        // @ts-ignore
         visual_style: { type: Type.STRING },
+        // @ts-ignore
         characterAnchor: { type: Type.STRING },
         scenes: {
+            // @ts-ignore
             type: Type.ARRAY,
             items: {
+                // @ts-ignore
                 type: Type.OBJECT,
                 properties: {
+                    // @ts-ignore
                     scene_id: { type: Type.INTEGER },
+                    // @ts-ignore
                     location: { type: Type.STRING },
                     shots: {
+                        // @ts-ignore
                         type: Type.ARRAY,
                         items: {
+                            // @ts-ignore
                             type: Type.OBJECT,
                             properties: {
+                                // @ts-ignore
                                 shot_index: { type: Type.INTEGER },
+                                // @ts-ignore
                                 image_prompt: { type: Type.STRING },
+                                // @ts-ignore
                                 video_prompt: { type: Type.STRING },
+                                // @ts-ignore
                                 audio_description: { type: Type.STRING },
                             },
                             required: ['shot_index', 'image_prompt', 'video_prompt'],
@@ -1493,6 +1515,7 @@ Your job is to write highly logical, emotionally engaging, and beautifully struc
    - *First shot* of a scene gets a FULL \`image_prompt\`. 
    - *Subsequent shots* in the same scene get an EMPTY \`image_prompt\` (to maintain physical chain consistency).
 2. \`video_prompt\`: Must describe pure physical motion for AI video generators (e.g., "The camera slowly pushes in as dust falls. The character turns their head in slow motion"). Focus on kinetics.
+3. \`story_entities\`: Explicitly identify the core characters, key props, and major locations from the premise. Write EXTREMELY detailed physical descriptions for them.
 
 **CHARACTER RULE:**
 ${identityAnchor ? `The protagonist MUST strictly match: "${identityAnchor}".` : `Invent a compelling character matching the style: "${visualStyle}".`}
@@ -1521,6 +1544,13 @@ You MUST respond with a JSON object strictly matching this structure with EXACTL
   "project_title": "string",
   "visual_style": "string",
   "characterAnchor": "string",
+  "story_entities": [
+    {
+      "type": "character|prop|location",
+      "name": "string",
+      "description": "highly detailed visual string"
+    }
+  ],
   "scenes": [
     {
       "scene_id": 1,
@@ -1577,11 +1607,21 @@ You MUST respond with a JSON object strictly matching this structure with EXACTL
         }
 
         // Extract and map the top-level project data
+        const entitiesRaw = Array.isArray(parsedData.story_entities) ? parsedData.story_entities : [];
+        const story_entities = entitiesRaw.map((e: any) => ({
+            id: crypto.randomUUID(),
+            type: e.type || 'character',
+            name: e.name || 'Unknown',
+            description: e.description || '',
+            is_locked: e.type === 'character' // Auto-lock characters for consistency by default
+        }));
+
         const project: any = {
             id: crypto.randomUUID(),
             project_title: parsedData.project_title,
             visual_style: parsedData.visual_style,
             character_anchor: parsedData.characterAnchor || parsedData.character_anchor || '',
+            story_entities: story_entities
         };
 
         // ★ CRITICAL: Force character_anchor to match identityAnchor if provided
@@ -1892,7 +1932,7 @@ async function callReplicateImage(params: {
 }
 
 function buildFinalPrompt(params: {
-    basePrompt: string; deltaInstruction?: string; characterAnchor?: string; style?: string; referencePolicy?: string;
+    basePrompt: string; deltaInstruction?: string; characterAnchor?: string; style?: string; referencePolicy?: string; storyEntities?: any[];
 }): string {
     const parts: string[] = [];
     // ★ POSITION 1: VISUAL STYLE ANCHOR — FIRST for maximum attention weight
@@ -1904,11 +1944,24 @@ function buildFinalPrompt(params: {
     } else {
         parts.push('Professional cinematic photography, consistent warm lighting, unified color grading, photorealistic, high quality, 35mm film');
     }
-    // ★ POSITION 2: CHARACTER ANCHOR
-    if (params.characterAnchor && params.referencePolicy !== 'none') {
+
+    // ★ POSITION 2: STORY ENTITY LOCKS
+    let hasEntityAnchor = false;
+    if (Array.isArray(params.storyEntities)) {
+        const lockedEntities = params.storyEntities.filter(e => e.is_locked);
+        if (lockedEntities.length > 0) {
+            const entityString = lockedEntities.map(e => `[${e.type.toUpperCase()}: ${e.name}] ${e.description}`).join(' | ');
+            parts.push(`[STORY ENTITY LOCK] ${entityString}`);
+            hasEntityAnchor = entityString.toLowerCase().includes('[character:');
+        }
+    }
+
+    // ★ POSITION 3: LEGACY CHARACTER ANCHOR (Fallback if storyEntities is missing/empty)
+    if (params.characterAnchor && params.referencePolicy !== 'none' && !hasEntityAnchor) {
         parts.push(`Same character throughout: ${params.characterAnchor}`);
     }
-    // ★ POSITION 3: SHOT-SPECIFIC CONTENT
+
+    // ★ POSITION 4: SHOT-SPECIFIC CONTENT
     parts.push(params.basePrompt);
     if (params.deltaInstruction) parts.push(`Edit: ${params.deltaInstruction}`);
     // ★ POSITION 4: IDENTITY LOCK SUFFIX — maximum consistency enforcement
@@ -2022,36 +2075,45 @@ async function runBatchWorker(state: BatchJobState, executor: TaskExecutor): Pro
 // POST /api/shots/generate — Break scene into detailed shots via Gemini
 // ───────────────────────────────────────────────────────────────
 
-const shotResponseSchema = {
+const directorSchema = {
+    // @ts-ignore
     type: Type.OBJECT,
     properties: {
+        // @ts-ignore
         scene_title: { type: Type.STRING },
-        shots: {
+        segments: {
+            // @ts-ignore
             type: Type.ARRAY,
             items: {
+                // @ts-ignore
                 type: Type.OBJECT,
                 properties: {
+                    // @ts-ignore
                     shot_number: { type: Type.INTEGER }, duration_sec: { type: Type.NUMBER },
+                    // @ts-ignore
                     location_type: { type: Type.STRING }, location: { type: Type.STRING },
+                    // @ts-ignore
                     time_of_day: { type: Type.STRING }, characters: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    // @ts-ignore
                     action: { type: Type.STRING }, dialogue: { type: Type.STRING },
+                    // @ts-ignore
                     camera: { type: Type.STRING }, lens: { type: Type.STRING },
+                    // @ts-ignore
                     movement: { type: Type.STRING }, composition: { type: Type.STRING },
+                    // @ts-ignore
                     lighting: { type: Type.STRING }, art_direction: { type: Type.STRING },
+                    // @ts-ignore
                     mood: { type: Type.STRING }, sfx_vfx: { type: Type.STRING },
+                    // @ts-ignore
                     audio_notes: { type: Type.STRING }, continuity_notes: { type: Type.STRING },
+                    // @ts-ignore
                     image_prompt: { type: Type.STRING }, negative_prompt: { type: Type.STRING },
+                    // @ts-ignore
                     video_prompt: { type: Type.STRING }, // ★ NEW: Dedicated physical video prompt
                 },
-                required: [
-                    'shot_number', 'duration_sec', 'location_type', 'location',
-                    'time_of_day', 'characters', 'action', 'dialogue',
-                    'camera', 'lens', 'movement', 'composition',
-                    'lighting', 'art_direction', 'mood', 'sfx_vfx',
-                    'audio_notes', 'continuity_notes', 'image_prompt', 'negative_prompt', 'video_prompt'
-                ],
-            },
-        },
+                required: ["shot_number", "duration_sec", "location_type", "location", "action", "camera", "movement", "lighting", "image_prompt", "video_prompt"]
+            }
+        }
     },
     required: ['scene_title', 'shots'],
 };

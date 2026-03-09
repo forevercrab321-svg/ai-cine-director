@@ -11,6 +11,7 @@ import VideoGenerator from './components/VideoGenerator';
 import ShotListView from './components/ShotListView';
 import AuthPage from './components/AuthPage';
 import ReferenceImageUploader from './components/ReferenceImageUploader';
+import CastPhotoGenerator from './components/CastPhotoGenerator';
 import { LoaderIcon } from './components/IconComponents';
 import { t } from './i18n';
 
@@ -370,6 +371,13 @@ const MainLayout: React.FC = () => {
                 </button>
               </div>
             </div>
+
+            {/* Cast Photo Generator Plugin */}
+            <CastPhotoGenerator
+              project={project}
+              currentGlobalAnchor={referenceImageDataUrl}
+              onSetGlobalAnchor={handleSetGlobalAnchor}
+            />
 
             {project.scenes.map((scene, i) => (
               <div key={i} className="bg-slate-900 p-6 rounded-xl border border-slate-800">

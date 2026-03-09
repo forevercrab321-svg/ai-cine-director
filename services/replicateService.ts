@@ -94,7 +94,8 @@ export const generateImage = async (
   visualStyle: string,
   aspectRatio: string = "16:9",
   characterAnchor: string = "",
-  referenceImageBase64?: string | null
+  referenceImageBase64?: string | null,
+  storyEntities?: any[]
 ): Promise<string> => {
   try {
     const headers = await getAuthHeaders();
@@ -109,6 +110,7 @@ export const generateImage = async (
         aspectRatio,
         characterAnchor,
         referenceImageDataUrl: referenceImageBase64,
+        storyEntities
       })
     });
 
@@ -248,7 +250,17 @@ export const startVideoTask = async (
   // We append the character anchor gracefully at the end, but strictly enforce 3D and motion consistency.
   let finalPrompt = prompt;
 
-  if (characterAnchor) {
+  let entityRules = '';
+  if (promptOptions?.storyEntities && Array.isArray(promptOptions.storyEntities)) {
+    const lockedEntities = promptOptions.storyEntities.filter((e: any) => e.is_locked);
+    if (lockedEntities.length > 0) {
+      entityRules = lockedEntities.map((e: any) => `[${e.type.toUpperCase()}: ${e.name}] ${e.description}`).join(' | ');
+      finalPrompt = `${prompt}. [IDENTITY LOCK] Ensure the following entities appear exactly as described: ${entityRules}. Critically important: Maintain exact features and clothing strictly consistent throughout the entire motion.`;
+    }
+  }
+
+  // Fallback to legacy character anchor if no entity rules exist
+  if (characterAnchor && !entityRules) {
     // Add strong continuous consistency constraint, specifically targeting head turns
     finalPrompt = `${prompt}. Character Identity: ${characterAnchor}. Critically important: Maintain the exact same facial features, identity, and clothing strictly consistent throughout the entire motion, regardless of angle changes or head turns.`;
   }

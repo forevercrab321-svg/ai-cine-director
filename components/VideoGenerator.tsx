@@ -558,6 +558,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
         // 传递 options 给新版 prompt engine
         {
           stylePreset: settings.videoStyle,
+          storyEntities: project.story_entities || []
         },
         promptEngineVersion
       );

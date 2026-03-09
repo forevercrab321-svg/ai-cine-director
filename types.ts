@@ -169,12 +169,22 @@ export interface EnhancedScene {
   shots: Shot[];
 }
 
+/** Explicitly extracted character/prop/location definition for consistency tracking */
+export interface StoryEntity {
+  id: string;               // UUID
+  type: 'character' | 'prop' | 'location';
+  name: string;             // e.g., "Main Protagonist", "Magic Sword", "Cyberpunk Alley"
+  description: string;      // The highly detailed visual string
+  is_locked: boolean;       // If true, enforced into prompts
+}
+
 /** Enhanced project with scenes containing shots */
 export interface EnhancedProject {
   id?: string;
   project_title: string;
   visual_style: string;
   character_anchor: string;
+  story_entities?: StoryEntity[];
   identity_strength?: number;
   scenes: EnhancedScene[];
 }
@@ -224,6 +234,7 @@ export interface StoryboardProject {
   project_title: string;
   visual_style: string;
   character_anchor: string;
+  story_entities?: StoryEntity[];
   identity_strength?: number;
   scenes: Scene[];
 }
