@@ -1769,11 +1769,21 @@ You MUST return this EXACT JSON structure with EXACTLY ${targetScenes} scenes:
         // Previous bug: was flattening ALL shots into individual "scenes", causing identical content
         const convertedScenes: any[] = [];
 
+        // ★ DEBUG: Log AI response structure
+        console.log(`[Gemini Generate] AI returned ${parsedData.scenes?.length || 0} scenes`);
+        if (parsedData.scenes && parsedData.scenes.length > 0) {
+            parsedData.scenes.slice(0, 3).forEach((s: any, idx: number) => {
+                console.log(`  Scene ${idx + 1}: location="${s.location || 'N/A'}", shots=${s.shots?.length || 0}`);
+            });
+        }
+
         if (Array.isArray(parsedData.scenes)) {
             for (let sceneIdx = 0; sceneIdx < Math.min(parsedData.scenes.length, targetScenes); sceneIdx++) {
                 const scn = parsedData.scenes[sceneIdx];
                 const setting = scn.location || `Location ${sceneIdx + 1}`;
                 const shots = Array.isArray(scn.shots) ? scn.shots : [];
+
+                console.log(`[Scene ${sceneIdx + 1}] Processing: location="${setting}", shots=${shots.length}`);
 
                 // Use FIRST shot as the scene's primary content
                 const firstShot = shots[0] || {};
@@ -1794,6 +1804,8 @@ You MUST return this EXACT JSON structure with EXACTLY ${targetScenes} scenes:
                 // Build image prompt from FIRST shot
                 let rawImagePrompt = (firstShot.image_prompt || firstShot.video_prompt || `Scene at ${setting}`).trim();
                 
+                console.log(`[Scene ${sceneIdx + 1}] Raw image_prompt from AI: "${rawImagePrompt.substring(0, 80)}..."`);
+                
                 // Remove duplicate character anchor if present
                 if (anchorLower.length > 20 && rawImagePrompt.toLowerCase().startsWith(anchorLower)) {
                     rawImagePrompt = rawImagePrompt.slice(anchor.length).replace(/^[,;.:\s]+/, '').trim();
@@ -1805,6 +1817,8 @@ You MUST return this EXACT JSON structure with EXACTLY ${targetScenes} scenes:
 
                 // Visual description for UI display
                 const visualDesc = `${characterPrefix}${setting}. ${rawImagePrompt}`;
+
+                console.log(`[Scene ${sceneIdx + 1}] Final visual_description: "${visualDesc.substring(0, 80)}..."`);
 
                 // Audio from first shot
                 const audioDesc = firstShot.audio_description || scn.audio_description || `Ambient sound at ${setting}`;
@@ -1822,6 +1836,8 @@ You MUST return this EXACT JSON structure with EXACTLY ${targetScenes} scenes:
                 });
             }
         }
+
+        console.log(`[Gemini Generate] Converted ${convertedScenes.length} scenes for frontend`);
 
         project.scenes = convertedScenes.slice(0, targetScenes);
 

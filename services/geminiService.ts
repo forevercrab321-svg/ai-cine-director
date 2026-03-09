@@ -8,7 +8,7 @@ import { supabase } from '../lib/supabaseClient';
 
 const API_BASE = '/api/gemini';
 
-// Mock data for offline/demo mode
+// Mock data for offline/demo mode - FIXED to show diverse scenes
 const generateMockStoryboard = (
   storyIdea: string,
   visualStyle: string,
@@ -19,23 +19,25 @@ const generateMockStoryboard = (
 ): StoryboardProject => {
   const scenes = [];
   const sceneSettings = [
-    { location: 'A modern city rooftop at sunset', time: 'golden hour' },
-    { location: 'A dark forest with mist', time: 'night' },
-    { location: 'An ancient temple', time: 'morning' },
-    { location: 'A futuristic laboratory', time: 'day' },
-    { location: 'An underwater base', time: 'underwater' },
+    { location: 'A modern city rooftop at sunset', time: 'golden hour', action: 'Character looks out over the city skyline, wind in hair' },
+    { location: 'A dark forest with mist', time: 'night', action: 'Character walks through trees, flashlight beam cutting through fog' },
+    { location: 'An ancient temple', time: 'morning', action: 'Character discovers mysterious artifacts on stone altar' },
+    { location: 'A futuristic laboratory', time: 'day', action: 'Character examines holographic displays, technology hums' },
+    { location: 'An underwater base', time: 'underwater', action: 'Character peers through reinforced glass at deep ocean creatures' },
   ];
   
   for (let i = 0; i < sceneCount; i++) {
     const sceneSetting = sceneSettings[i % sceneSettings.length];
+    const storyPrefix = i === 0 ? storyIdea.slice(0, 60) : `Continuing the story`;
+    
     scenes.push({
       id: `scene-${i + 1}`,
       scene_number: i + 1,
       scene_setting: `${sceneSetting.location} — ${sceneSetting.time}`,
-      visual_description: `${storyIdea.slice(0, 100)}... Scene ${i + 1} in ${visualStyle} style.`,
-      audio_description: 'Cinematic ambient music with tension.',
+      visual_description: `${storyPrefix}. Location: ${sceneSetting.location}. Action: ${sceneSetting.action}`,
+      audio_description: `Cinematic ambient music. Environment: ${sceneSetting.location}.`,
       shot_type: 'cinematic wide shot',
-      image_prompt: `${storyIdea}, ${visualStyle}, ${sceneSetting.location}, ${sceneSetting.time}`,
+      image_prompt: `${storyIdea.slice(0, 40)}, ${visualStyle}, ${sceneSetting.location}, ${sceneSetting.time}, ${sceneSetting.action}`,
     });
   }
   
