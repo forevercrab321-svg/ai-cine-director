@@ -1,9 +1,8 @@
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
-import { GoogleGenAI, Type } from '@google/genai';
-import fetch from 'node-fetch';
 import { createClient } from '@supabase/supabase-js';
+import dotenv from 'dotenv';
+import { v4 as uuidv4 } from 'uuid';
 import Stripe from 'stripe';
 
 
@@ -167,7 +166,7 @@ app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), asyn
         event = stripe.webhooks.constructEvent(req.body, sig as string, webhookSecret);
     } catch (err: any) {
         console.error('[Stripe Webhook] Signature verification failed:', err.message);
-        return res.status(400).send(`Webhook Error: ${err.message}`);
+        return res.status(400).send(`Webhook Error: ${err.message} `);
     }
 
     if (event.type === 'checkout.session.completed' || event.type === 'invoice.paid') {
@@ -279,7 +278,7 @@ const requireAuth = async (req: any, res: any, next: any) => {
 
     if (error || !user) {
         console.error('[Auth Error]', error);
-        return res.status(401).json({ error: `Invalid token: ${error?.message || 'No user found'}` });
+        return res.status(401).json({ error: `Invalid token: ${error?.message || 'No user found'} ` });
     }
     req.user = user;
     next();
@@ -451,20 +450,20 @@ app.post('/api/auth/send-otp', async (req: any, res: any) => {
 
         // 3) Send email via Resend HTTP API
         const emailHtml = `
-            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
-                <div style="text-align: center; margin-bottom: 32px;">
-                    <h1 style="font-size: 24px; font-weight: 800; color: #111; margin: 0;">🎬 CINE-DIRECTOR AI</h1>
-                    <p style="color: #666; font-size: 12px; letter-spacing: 2px; margin-top: 4px;">VISIONARY PRODUCTION SUITE</p>
-                </div>
-                <div style="background: #f8f9fa; border-radius: 16px; padding: 32px; text-align: center;">
-                    <h2 style="font-size: 20px; color: #111; margin: 0 0 12px;">Your Login Code</h2>
+    < div style = "font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;" >
+        <div style="text-align: center; margin-bottom: 32px;" >
+            <h1 style="font-size: 24px; font-weight: 800; color: #111; margin: 0;" >🎬 CINE - DIRECTOR AI </h1>
+                < p style = "color: #666; font-size: 12px; letter-spacing: 2px; margin-top: 4px;" > VISIONARY PRODUCTION SUITE </p>
+                    </div>
+                    < div style = "background: #f8f9fa; border-radius: 16px; padding: 32px; text-align: center;" >
+                        <h2 style="font-size: 20px; color: #111; margin: 0 0 12px;" > Your Login Code </h2>
                     ${emailOtp ? `<div style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #4f46e5; background: white; border-radius: 12px; padding: 16px; margin: 16px 0; font-family: monospace;">${emailOtp}</div>` : ''}
-                    <p style="color: #666; font-size: 14px; margin: 16px 0 0;">Or click the button below:</p>
-                    <a href="${actionLink}" style="display: inline-block; background: #4f46e5; color: white; text-decoration: none; padding: 14px 32px; border-radius: 999px; font-weight: 700; font-size: 14px; margin-top: 16px;">Log In to Studio</a>
-                </div>
-                <p style="color: #999; font-size: 11px; text-align: center; margin-top: 24px;">This link expires in 10 minutes. If you didn't request this, ignore this email.</p>
+<p style="color: #666; font-size: 14px; margin: 16px 0 0;" > Or click the button below: </p>
+    < a href = "${actionLink}" style = "display: inline-block; background: #4f46e5; color: white; text-decoration: none; padding: 14px 32px; border-radius: 999px; font-weight: 700; font-size: 14px; margin-top: 16px;" > Log In to Studio </a>
+        </div>
+        < p style = "color: #999; font-size: 11px; text-align: center; margin-top: 24px;" > This link expires in 10 minutes.If you didn't request this, ignore this email.</p>
             </div>
-        `;
+                `;
 
         // Try custom domain first, fallback to onboarding@resend.dev
         const senders = [
@@ -478,7 +477,7 @@ app.post('/api/auth/send-otp', async (req: any, res: any) => {
             const resendResp = await fetch('https://api.resend.com/emails', {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${resendKey}`,
+                    'Authorization': `Bearer ${resendKey} `,
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
@@ -496,7 +495,7 @@ app.post('/api/auth/send-otp', async (req: any, res: any) => {
             }
 
             lastErr = await resendResp.text();
-            console.warn(`[Send OTP] Resend failed with sender "${fromAddr}":`, resendResp.status, lastErr);
+            console.warn(`[Send OTP] Resend failed with sender "${fromAddr}": `, resendResp.status, lastErr);
             if (resendResp.status === 403) continue;
             break;
         }
@@ -598,7 +597,7 @@ const isDeveloper = (email: string | null | undefined): boolean => {
 };
 
 const logDeveloperAccess = (email: string, action: string) => {
-    console.log(`[GOD MODE] Developer "${email}" performed: ${action}`);
+    console.log(`[GOD MODE] Developer "${email}" performed: ${action} `);
 };
 
 // --- Legacy Admin Check (merged into isDeveloper — no separate list needed) ---
@@ -606,6 +605,57 @@ const isAdminUser = (email: string | undefined): boolean => {
     if (!email) return false;
     return isDeveloper(email);
 };
+
+// ═══════════════════════════════════════════════════════════════
+// MINIMAX AI SETUP (Replacing Gemini)
+// ═══════════════════════════════════════════════════════════════
+
+function getMinimaxApiKey() {
+    const key = process.env.VITE_MINIMAX_API_KEY || process.env.MINIMAX_API_KEY;
+    if (!key) throw new Error("MINIMAX_API_KEY is missing in environment variables.");
+    return key;
+}
+
+const MINIMAX_TEXT_API = 'https://api.minimax.io/v1/text/chatcompletion_v2';
+
+/**
+ * Raw fetch wrapper for Minimax Text API (Supports Vision)
+ */
+async function getMinimaxChatCompletion(systemInstruction: string, promptContent: any, options: {
+    model?: string;
+    temperature?: number;
+    responseFormat?: any;
+} = {}) {
+    const apiKey = getMinimaxApiKey();
+    const model = options.model || 'MiniMax-Text-01'; // Default model (MiniMax-Text-01 is abi 2.5)
+
+    const payload = {
+        model: model,
+        messages: [
+            { role: "system", name: "System", content: systemInstruction },
+            { role: "user", name: "User", content: promptContent }
+        ],
+        temperature: options.temperature || 0.7,
+        response_format: options.responseFormat ? { type: "json_object" } : undefined
+    };
+
+    const response = await fetch(MINIMAX_TEXT_API, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${apiKey} `,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Minimax API Error(${response.status}): ${errText} `);
+    }
+
+    const data = await response.json();
+    return data;
+}
 
 // ═══════════════════════════════════════════════════════════════
 // Entitlement Types
@@ -662,7 +712,7 @@ const checkEntitlement = async (
 
     // ★ AUTO-CREATE PROFILE if not exists (fix for new user signup)
     if (profileErr || !profile) {
-        console.log(`[Entitlement] Profile not found for ${userId} (${email}), upserting...`);
+        console.log(`[Entitlement] Profile not found for ${userId}(${email}), upserting...`);
 
         // Use UPSERT to handle race conditions (profile may already exist)
         const { data: newProfile, error: upsertErr } = await supabaseAdmin
@@ -688,7 +738,7 @@ const checkEntitlement = async (
             const retryProfileTyped = retryProfile as Profile | null;
             if (retryProfileTyped) {
                 profile = retryProfileTyped;
-                console.log(`[Entitlement] Retry SELECT succeeded, credits=${retryProfileTyped.credits}`);
+                console.log(`[Entitlement] Retry SELECT succeeded, credits = ${retryProfileTyped.credits} `);
             } else {
                 console.error('[Entitlement] Retry SELECT also failed — allowing with 0 credits');
                 // Don't block the user — allow with 0 credits, they'll hit NEED_PAYMENT naturally
@@ -697,7 +747,7 @@ const checkEntitlement = async (
         } else if (newProfile) {
             const newProfileTyped = newProfile as Profile;
             profile = newProfileTyped;
-            console.log(`[Entitlement] Upserted profile for ${email}, credits=${newProfileTyped.credits}`);
+            console.log(`[Entitlement] Upserted profile for ${email}, credits = ${newProfileTyped.credits}`);
         }
     }
 
@@ -726,7 +776,7 @@ const checkEntitlement = async (
             unlimited: false,
             credits: userCredits,
             plan,
-            reason: `Insufficient credits: need ${cost}, have ${userCredits}`,
+            reason: `Insufficient credits: need ${cost}, have ${userCredits} `,
             errorCode: 'INSUFFICIENT_CREDITS',
         };
     }
@@ -834,7 +884,7 @@ async function downloadImageAsBase64(url: string): Promise<string> {
     });
 
     if (!response.ok) {
-        throw new Error(`Image download failed: ${response.status} ${response.statusText}`);
+        throw new Error(`Image download failed: ${response.status} ${response.statusText} `);
     }
 
     // node-fetch v3: use arrayBuffer() then Buffer.from() — .buffer() was removed in v3
@@ -845,7 +895,7 @@ async function downloadImageAsBase64(url: string): Promise<string> {
 
     console.log('[ImageProxy] Downloaded image, size:', buffer.length, 'bytes, type:', contentType);
 
-    return `data:${contentType};base64,${base64}`;
+    return `data:${contentType}; base64, ${base64} `;
 }
 
 // Preprocess input for video models - convert image URLs to base64
@@ -874,7 +924,7 @@ async function preprocessVideoInput(input: Record<string, any>): Promise<Record<
                     console.log('[ImageProxy] Converted', field, 'to base64');
                 } catch (err: any) {
                     console.error('[ImageProxy] Failed to download image:', err.message);
-                    throw new Error(`图片已过期，请重新生成图片后再生成视频 (Image expired, please regenerate the image)`);
+                    throw new Error(`图片已过期，请重新生成图片后再生成视频(Image expired, please regenerate the image)`);
                 }
             }
         }
@@ -889,7 +939,7 @@ async function preprocessVideoInput(input: Record<string, any>): Promise<Record<
 app.post('/api/replicate/generate-image', requireAuth, async (req: any, res: any) => {
     try {
         const { prompt, imageModel, visualStyle, aspectRatio, characterAnchor, referenceImageDataUrl } = req.body;
-        const authHeader = `Bearer ${req.accessToken}`;
+        const authHeader = `Bearer ${req.accessToken} `;
         const userId = req.user?.id;
         const userEmail = req.user?.email;
 
@@ -906,7 +956,7 @@ app.post('/api/replicate/generate-image', requireAuth, async (req: any, res: any
         }
 
         const skipCreditCheck = entitlement.mode === 'developer';
-        const jobRef = `replicate-img:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+        const jobRef = `replicate - img:${Date.now()}:${Math.random().toString(36).slice(2)} `;
 
         const supabaseUser = createClient(
             (process.env.VITE_SUPABASE_URL || '').trim(),
@@ -920,7 +970,7 @@ app.post('/api/replicate/generate-image', requireAuth, async (req: any, res: any
             });
             if (reserveErr || !data) return res.status(402).json({ error: 'INSUFFICIENT_CREDITS', code: 'INSUFFICIENT_CREDITS' });
         } else {
-            logDeveloperAccess(userEmail, `replicate-img:generate:cost=${cost}`);
+            logDeveloperAccess(userEmail, `replicate - img: generate: cost = ${cost} `);
         }
 
         let resultUrl = '';
@@ -930,7 +980,7 @@ app.post('/api/replicate/generate-image', requireAuth, async (req: any, res: any
             // we MUST still send the text character anchor to lock the CLOTHING and BODY.
             // PuLID only clones the face, not the outfit.
             const consistencyInstructions = characterAnchor
-                ? `IMPORTANT: The character must look EXACTLY like this description: ${characterAnchor}. Same hair, same clothing, same features. DO NOT change the character's general appearance.`
+                ? `IMPORTANT: The character must look EXACTLY like this description: ${characterAnchor}. Same hair, same clothing, same features.DO NOT change the character's general appearance.`
                 : '';
             const finalPrompt = characterAnchor
                 ? `${prompt}. ${consistencyInstructions}`
@@ -1427,7 +1477,6 @@ app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
         }
         if (!storyIdea) return res.status(400).json({ error: 'Missing storyIdea' });
 
-        const ai = getGeminiAI();
         const systemInstruction = `You are an elite Hollywood Screenwriter and AI Cinematographer.
 Your job is to write highly logical, emotionally engaging, and beautifully structured visual scripts.
 
@@ -1450,7 +1499,7 @@ ${identityAnchor ? `The protagonist MUST strictly match: "${identityAnchor}".` :
 \`image_prompt\`, \`video_prompt\`, \`location\` MUST be in English. \`audio_description\` MUST be in ${language === 'zh' ? 'Chinese (Simplified)' : 'English'}.
 Return strictly valid JSON matching the schema.`;
 
-        let response;
+        let responseText = '';
         try {
             const promptContent = `Write a premium, award-winning SHORT DRAMA broken down into SCENES and SHOTS based on this premise: "${storyIdea}". 
 Visual Style: ${visualStyle}.
@@ -1458,56 +1507,25 @@ Target total shots across all scenes: ~${targetScenes}.
 
 Ensure the cinematic pacing is excellent. Scene 1 must hook the audience immediately. The narrative must be highly logical and STRICTLY obey the genre and tone of the premise, avoiding any absurd, silly, or tone-deaf choices. The visual prompts must be insanely detailed for A-tier AI image generation.`;
 
-            try {
-                // Try with schema first (Gemini 2.0 Flash)
-                response = await ai.models.generateContent({
-                    model: 'gemini-2.0-flash',
-                    contents: promptContent,
-                    config: { systemInstruction, responseMimeType: 'application/json', responseSchema: geminiResponseSchema, temperature: 0.7 },
-                });
-            } catch (schemaError: any) {
-                // If schema causes "too many states" error, fall back to text-only generation
-                if (schemaError.message?.includes('too many states') || schemaError.message?.includes('constraint')) {
-                    console.warn('[Gemini] Schema validation failed, falling back to text-only generation...');
-                    response = await ai.models.generateContent({
-                        model: 'gemini-2.0-flash',
-                        contents: promptContent + '\n\nOutput ONLY valid JSON, no schema validation needed.',
-                        config: { systemInstruction: systemInstruction + '\nOutput as raw JSON text only.' },
-                    });
-                } else {
-                    throw schemaError;
-                }
-            }
+            const minimaxResponse: any = await getMinimaxChatCompletion(
+                systemInstruction,
+                promptContent,
+                { temperature: 0.7, responseFormat: 'json_object' }
+            );
+
+            responseText = minimaxResponse.choices[0].message.content;
         } catch (initialError: any) {
-            if (initialError.message?.includes('429') || initialError.message?.includes('Resource exhausted')) {
-                const promptContent = `Write a premium, award-winning SHORT DRAMA broken down into SCENES and SHOTS based on this premise: "${storyIdea}". 
-Visual Style: ${visualStyle}.
-Target total shots across all scenes: ~${targetScenes}.
-
-Ensure the cinematic pacing is excellent. Scene 1 must hook the audience immediately. The narrative must be highly logical, avoiding absurd or silly choices, and the visual prompts must be insanely detailed for A-tier AI image generation.`;
-
-                // Try gemini-2.0-flash-lite as fallback (newer, faster, cheaper)
-                try {
-                    response = await ai.models.generateContent({
-                        model: 'gemini-2.0-flash-lite',
-                        contents: promptContent,
-                        config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.7 },
-                    });
-                } catch (liteError: any) {
-                    // If lite also fails, try with gemini-2.0-flash again with lower config
-                    console.warn('[Gemini] Lite model failed, retrying with flash...');
-                    response = await ai.models.generateContent({
-                        model: 'gemini-2.0-flash',
-                        contents: promptContent,
-                        config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.5 },
-                    });
-                }
-            } else {
-                throw initialError;
-            }
+            console.error('[Minimax Generate] Primary call failed, retrying...', initialError.message);
+            // Simple retry without JSON schema enforcement if it failed
+            const retryResponse: any = await getMinimaxChatCompletion(
+                systemInstruction + "\nOutput strictly valid JSON, no markdown formatting.",
+                `Write a premium SHORT DRAMA based on: "${storyIdea}". Target total shots: ~${targetScenes}.`,
+                { temperature: 0.5 }
+            );
+            responseText = retryResponse.choices[0].message.content;
         }
 
-        const text = response.text;
+        const text = responseText;
         if (!text) throw new Error('No response from AI Director.');
 
         // Try to parse JSON, with fallback for malformed responses
@@ -1676,22 +1694,30 @@ A [age]-year-old [ethnicity] [female/male] with [face shape] face, [skin tone] s
 3. Be specific about colors ("dusty rose" not just "pink")
 4. Include ALL visible clothing and accessories
 5. Output ONLY the description paragraph, nothing else`;
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.0-flash',
-            contents: { parts: [{ inlineData: { mimeType, data: cleanBase64 } }, { text: analyzePrompt }] },
-        });
 
-        const result = (response.text || '').trim();
-        console.log(`[Gemini Analyze] ✅ Result: ${result.substring(0, 120)}...`);
+        const imagePayload = base64Data.startsWith('data:') ? base64Data : `data:${mimeType};base64,${cleanBase64}`;
+        const contentArray = [
+            { type: "image_url", image_url: { url: imagePayload } },
+            { type: "text", text: analyzePrompt }
+        ];
+
+        const response: any = await getMinimaxChatCompletion(
+            "You are an expert character designer and AI vision assistant.",
+            contentArray,
+            { model: 'MiniMax-VL-01', temperature: 0.1 }
+        );
+
+        const result = (response.choices[0].message.content || '').trim();
+        console.log(`[Minimax Analyze] ✅ Result: ${result.substring(0, 120)}...`);
 
         if (!result || result.length < 20) {
-            console.error('[Gemini Analyze] ⚠️ Empty or too-short result from Gemini Vision');
-            return res.status(500).json({ error: 'Gemini Vision returned empty result', anchor: 'A cinematic character' });
+            console.error('[Minimax Analyze] ⚠️ Empty or too-short result from Minimax Vision');
+            return res.status(500).json({ error: 'Minimax Vision returned empty result', anchor: 'A cinematic character' });
         }
 
         res.json({ anchor: result });
     } catch (error: any) {
-        console.error('[Gemini Analyze] ❌ Error:', error.message);
+        console.error('[Minimax Analyze] ❌ Error:', error.message);
         res.status(500).json({ error: error.message || 'Analyze failed', anchor: 'A cinematic character' });
     }
 });
@@ -2080,35 +2106,25 @@ ${character_anchor ? `Character Anchor (MUST appear in every shot's image_prompt
 
 **Output:** JSON strictly following the provided schema. Return exactly ${targetShots} shots.`;
 
-        let response;
+        let responseText = '';
         try {
-            response = await ai.models.generateContent({
-                model: 'gemini-2.0-flash',
-                contents: `Break Scene ${scene_number || 1} into ${targetShots} shots. Scene description: ${visual_description}`,
-                config: { systemInstruction, responseMimeType: 'application/json', responseSchema: shotResponseSchema, temperature: 0.6 },
-            });
+            const minimaxResponse: any = await getMinimaxChatCompletion(
+                systemInstruction,
+                `Break Scene ${scene_number || 1} into ${targetShots} shots. Scene description: ${visual_description}`,
+                { temperature: 0.6, responseFormat: 'json_object' }
+            );
+            responseText = minimaxResponse.choices[0].message.content;
         } catch (initialError: any) {
-            if (initialError.message?.includes('429') || initialError.status === 429) {
-                // Try gemini-2.0-flash-lite as fallback (newer, faster, cheaper)
-                try {
-                    response = await ai.models.generateContent({
-                        model: 'gemini-2.0-flash-lite',
-                        contents: `Break Scene ${scene_number || 1} into ${targetShots} shots. Scene description: ${visual_description}`,
-                        config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.6 },
-                    });
-                } catch (liteError: any) {
-                    // If lite also fails, try again with flash
-                    console.warn('[Gemini] Lite model failed, retrying with flash...');
-                    response = await ai.models.generateContent({
-                        model: 'gemini-2.0-flash',
-                        contents: `Break Scene ${scene_number || 1} into ${targetShots} shots. Scene description: ${visual_description}`,
-                        config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.5 },
-                    });
-                }
-            } else throw initialError;
+            console.error('[Minimax Shots] Primary call failed, retrying...', initialError.message);
+            const retryResponse: any = await getMinimaxChatCompletion(
+                systemInstruction + "\nOutput strictly valid JSON, no markdown formatting.",
+                `Break Scene ${scene_number || 1} into ${targetShots} shots. Scene description: ${visual_description}`,
+                { temperature: 0.5 }
+            );
+            responseText = retryResponse.choices[0].message.content;
         }
 
-        const text = response.text;
+        const text = responseText;
         if (!text) throw new Error('No response from AI');
 
         // Try to parse JSON, with fallback for malformed responses
@@ -2237,35 +2253,25 @@ ${shotJson}
 **Output:** A flat JSON object with only the rewritten field keys and new values.
 `;
 
-        let response;
+        let responseText = '';
         try {
-            response = await ai.models.generateContent({
-                model: 'gemini-2.0-flash',
-                contents: `Rewrite fields [${fieldsStr}] for shot ${shotId}. ${user_instruction || ''}`,
-                config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.7 },
-            });
+            const minimaxResponse: any = await getMinimaxChatCompletion(
+                systemInstruction,
+                `Rewrite fields [${fieldsStr}] for shot ${shotId}. ${user_instruction || ''}`,
+                { temperature: 0.7, responseFormat: 'json_object' }
+            );
+            responseText = minimaxResponse.choices[0].message.content;
         } catch (initialError: any) {
-            if (initialError.message?.includes('429') || initialError.status === 429) {
-                // Try gemini-2.0-flash-lite as fallback
-                try {
-                    response = await ai.models.generateContent({
-                        model: 'gemini-2.0-flash-lite',
-                        contents: `Rewrite fields [${fieldsStr}] for shot ${shotId}. ${user_instruction || ''}`,
-                        config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.7 },
-                    });
-                } catch (liteError: any) {
-                    // Retry with flash
-                    console.warn('[Gemini] Lite model failed, retrying with flash...');
-                    response = await ai.models.generateContent({
-                        model: 'gemini-2.0-flash',
-                        contents: `Rewrite fields [${fieldsStr}] for shot ${shotId}. ${user_instruction || ''}`,
-                        config: { systemInstruction, responseMimeType: 'application/json', temperature: 0.5 },
-                    });
-                }
-            } else throw initialError;
+            console.error('[Minimax Rewrite] Primary call failed, retrying...', initialError.message);
+            const retryResponse: any = await getMinimaxChatCompletion(
+                systemInstruction + "\nOutput strictly valid JSON, no markdown formatting.",
+                `Rewrite fields [${fieldsStr}] for shot ${shotId}. ${user_instruction || ''}`,
+                { temperature: 0.5 }
+            );
+            responseText = retryResponse.choices[0].message.content;
         }
 
-        const text = response.text;
+        const text = responseText;
         if (!text) throw new Error('No response from AI');
 
         // Try to parse JSON, with fallback for malformed responses
