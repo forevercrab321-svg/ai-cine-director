@@ -34,10 +34,11 @@ interface ShotImageGridProps {
     projectId?: string;
     referenceImageDataUrl?: string; // ★ 新增：接收大哥照片的管道
     onSetGlobalAnchor?: (url: string) => void;
+    sceneDescription?: string; // ★ Full context for video prompts
 }
 
 const ShotImageGrid: React.FC<ShotImageGridProps> = ({
-    shot, images, onImagesChange, characterAnchor, visualStyle, projectId, referenceImageDataUrl, onSetGlobalAnchor
+    shot, images, onImagesChange, characterAnchor, visualStyle, projectId, referenceImageDataUrl, onSetGlobalAnchor, sceneDescription
 }) => {
     const { settings, userState, isAuthenticated, hasEnoughCredits, openPricingModal, refreshBalance, deductCredits } = useAppContext();
     const [isGenerating, setIsGenerating] = useState(false);
@@ -72,7 +73,8 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
         if (!userState.isAdmin) deductCredits(videoCost);
 
         try {
-            const motionPrompt = shot.action || shot.image_prompt || 'Cinematic motion';
+            // ★ Combine the scene's full context with the specific action to prevent clothing/logic hallucinations
+            const motionPrompt = `Visual Context: ${shot.image_prompt || sceneDescription || 'Cinematic scene'}. Cinematic Action: ${shot.action || 'Cinematic motion'}`;
             const prediction = await startVideoTask(
                 motionPrompt,
                 img.url,

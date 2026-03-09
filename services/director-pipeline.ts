@@ -179,19 +179,17 @@ export const generateSceneChain = async (
       onProgress({ index: i, stage: "video_starting" });
     }
 
-    // ★ CRITICAL: Backend creates `video_motion_prompt`, not `video_prompt`.
-    // Support both field names for forward and backward compatibility.
+    // ★ CRITICAL: Combine full visual context with the specific motion to prevent clothing/logic hallucinations
     const rawVideoPrompt = shot.video_motion_prompt || shot.video_prompt || shot.shot_type || `Cinematic motion, scene ${i + 1}`;
+    const richContext = shot.image_prompt ? `Visual Context: ${shot.image_prompt}. ` : '';
 
     // 使用更自然的描述格式，避免触发API过滤
     const characterNote = extractedAnchor
-      ? `Keep character appearance consistent with first frame: ${extractedAnchor}`
+      ? `Ensure main character matches identity: ${extractedAnchor}`
       : '';
 
     // 格式更自然，不使用"LOCK"等可能触发过滤的词汇
-    const lockedVideoPrompt = characterNote
-      ? `${rawVideoPrompt}. ${characterNote}`
-      : rawVideoPrompt;
+    const lockedVideoPrompt = `${richContext}Cinematic Action: ${rawVideoPrompt}. ${characterNote}`.trim();
 
     console.log(`🔒 [Shot ${i + 1}] Character anchor: ${characterNote ? 'ACTIVE' : 'NONE'}`);
 

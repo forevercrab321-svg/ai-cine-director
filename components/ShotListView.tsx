@@ -66,7 +66,8 @@ const ShotCard: React.FC<{
     projectId?: string;
     referenceImageDataUrl?: string; // ★ 新增接收照片
     onSetGlobalAnchor?: (url: string) => void;
-}> = ({ shot, shotIndex, videoUrl, isExpanded, onToggle, onEdit, onLockToggle, images, onImagesChange, characterAnchor, visualStyle, projectId, referenceImageDataUrl, onSetGlobalAnchor }) => {
+    sceneDescription?: string; // ★ Full context for video prompts
+}> = ({ shot, shotIndex, videoUrl, isExpanded, onToggle, onEdit, onLockToggle, images, onImagesChange, characterAnchor, visualStyle, projectId, referenceImageDataUrl, onSetGlobalAnchor, sceneDescription }) => {
     const camClass = cameraBadgeColor[shot.camera] || 'bg-slate-500/20 text-slate-300 border-slate-500/30';
     const moveEmoji = movementBadge[shot.movement] || '🎬';
 
@@ -107,6 +108,7 @@ const ShotCard: React.FC<{
                                     characterAnchor={characterAnchor} visualStyle={visualStyle} projectId={projectId}
                                     referenceImageDataUrl={referenceImageDataUrl} // ★ 传递给 Grid！
                                     onSetGlobalAnchor={onSetGlobalAnchor} // ★ 传递回调
+                                    sceneDescription={sceneDescription}
                                 />
                             </div>
                         </>
@@ -239,8 +241,10 @@ const SceneSection: React.FC<{
                 }
 
                 setChainLog(`[第 ${i + 1} 镜] 正在生成视频动态...`);
+                // ★ Combine the scene's full context with the specific action to prevent clothing/logic hallucinations
+                const richVideoPrompt = `Visual Context: ${shot.image_prompt || scene.visual_description || 'Cinematic scene'}. Cinematic Action: ${shot.action || "Camera continues the motion"}`;
                 const videoRes = await startVideoTask(
-                    shot.action || "", currentStartImage, videoModel, 'none', 'storyboard', 'standard', 6, 24, '720p', project.character_anchor, '16:9'
+                    richVideoPrompt, currentStartImage, videoModel, 'none', 'storyboard', 'standard', 6, 24, '720p', project.character_anchor, '16:9'
                 );
 
                 let videoUrl = "";
@@ -339,6 +343,7 @@ const SceneSection: React.FC<{
                             images={imagesByShot[shot.shot_id] || []} onImagesChange={(imgs) => onImagesChange(shot.shot_id, imgs)}
                             characterAnchor={project.character_anchor} visualStyle={project.visual_style} projectId={effectiveProjectId}
                             referenceImageDataUrl={referenceImageDataUrl} // ★ 传递照片给子组件
+                            sceneDescription={scene.visual_description}
                         />
                     ))}
                 </div>
@@ -666,9 +671,11 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                     }
 
                     setChainLog(`场 ${scene.scene_number} 镜 ${i + 1}：正在基于物理引擎渲染动态视频...`);
+                    // ★ Combine the context to prevent video hallucination
+                    const richVideoPrompt = `Visual Context: ${shot.image_prompt || scene.visual_description || 'Cinematic scene'}. Cinematic Action: ${shot.action || "Camera continues the motion"}`;
                     // 发送视频请求
                     const videoRes = await startVideoTask(
-                        shot.action || "", currentStartImage, settings.videoModel, 'none', 'storyboard', 'standard', 6, 24, '720p', project.character_anchor, '16:9'
+                        richVideoPrompt, currentStartImage, settings.videoModel, 'none', 'storyboard', 'standard', 6, 24, '720p', project.character_anchor, '16:9'
                     );
 
                     // 轮询等待视频完成
