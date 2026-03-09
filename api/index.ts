@@ -1505,7 +1505,29 @@ Return strictly valid JSON matching the schema.`;
 Visual Style: ${visualStyle}.
 Target total shots across all scenes: ~${targetScenes}.
 
-Ensure the cinematic pacing is excellent. Scene 1 must hook the audience immediately. The narrative must be highly logical and STRICTLY obey the genre and tone of the premise, avoiding any absurd, silly, or tone-deaf choices. The visual prompts must be insanely detailed for A-tier AI image generation.`;
+Ensure the cinematic pacing is excellent. Scene 1 must hook the audience immediately. The narrative must be highly logical and STRICTLY obey the genre and tone of the premise, avoiding any absurd, silly, or tone-deaf choices. The visual prompts must be insanely detailed for A-tier AI image generation.
+
+**REQUIRED JSON SCHEMA:**
+You MUST respond with a JSON object strictly matching this structure:
+{
+  "project_title": "string",
+  "visual_style": "string",
+  "characterAnchor": "string",
+  "scenes": [
+    {
+      "scene_id": 1,
+      "location": "string",
+      "shots": [
+        {
+          "shot_index": 1,
+          "image_prompt": "string",
+          "video_prompt": "string",
+          "audio_description": "string"
+        }
+      ]
+    }
+  ]
+}`;
 
             const minimaxResponse: any = await getMinimaxChatCompletion(
                 systemInstruction,
@@ -2104,7 +2126,36 @@ ${character_anchor ? `Character Anchor (MUST appear in every shot's image_prompt
 9. "negative_prompt" should prevent common AI artifacts.
 10. Language: image_prompt, negative_prompt, video_prompt and technical fields ALWAYS in English. dialogue and audio_notes in ${language === 'zh' ? 'Chinese (Simplified)' : 'English'}.
 
-**Output:** JSON strictly following the provided schema. Return exactly ${targetShots} shots.`;
+**REQUIRED JSON SCHEMA:**
+You MUST return EXACTLY ONE JSON object strictly matching this schema. Return exactly ${targetShots} shots inside the "shots" array:
+{
+  "scene_title": "string",
+  "shots": [
+    {
+      "shot_number": 1,
+      "duration_sec": 4.5,
+      "location_type": "string",
+      "location": "string",
+      "time_of_day": "string",
+      "characters": ["string"],
+      "action": "string",
+      "dialogue": "string",
+      "camera": "string",
+      "lens": "string",
+      "movement": "string",
+      "composition": "string",
+      "lighting": "string",
+      "art_direction": "string",
+      "mood": "string",
+      "sfx_vfx": "string",
+      "audio_notes": "string",
+      "continuity_notes": "string",
+      "image_prompt": "string",
+      "negative_prompt": "string",
+      "video_prompt": "string"
+    }
+  ]
+}`;
 
         let responseText = '';
         try {
@@ -2250,7 +2301,9 @@ ${shotJson}
 5. Be creative, ensure physical logic, and stay consistent with the visual style and scene context.
 6. Language: technical fields in English, dialogue in ${language === 'zh' ? 'Chinese' : 'English'}.
 
-**Output:** A flat JSON object with only the rewritten field keys and new values.
+**REQUIRED JSON STRUCTURE (CRITICAL):**
+Return EXACTLY ONE flat JSON object containing ONLY the rewritten keys and their new string values. Do not use markdown backticks. Do not add any explanatory text.
+Example: {"image_prompt": "new prompt here", "dialogue": "new line here"}
 `;
 
         let responseText = '';
