@@ -926,12 +926,13 @@ app.post('/api/replicate/generate-image', requireAuth, async (req: any, res: any
         let resultUrl = '';
         try {
             const modelToRun = (REPLICATE_MODEL_PATHS as any)[imageModel] || REPLICATE_MODEL_PATHS['flux'];
-            // CRITICAL FIX: If we have an absolute physical face clone anchor (referenceImageDataUrl),
-            // do NOT send the text-based description. Text overrides the image and confuses the backend model.
-            const consistencyInstructions = (characterAnchor && !referenceImageDataUrl)
-                ? `IMPORTANT: The character must look EXACTLY like this description: ${characterAnchor}. Same face, same hair, same clothing, same features. DO NOT change the character's appearance.`
+            // CRITICAL FIX: Even if we have a physical face clone anchor (referenceImageDataUrl),
+            // we MUST still send the text character anchor to lock the CLOTHING and BODY.
+            // PuLID only clones the face, not the outfit.
+            const consistencyInstructions = characterAnchor
+                ? `IMPORTANT: The character must look EXACTLY like this description: ${characterAnchor}. Same hair, same clothing, same features. DO NOT change the character's general appearance.`
                 : '';
-            const finalPrompt = (characterAnchor && !referenceImageDataUrl)
+            const finalPrompt = characterAnchor
                 ? `${prompt}. ${consistencyInstructions}`
                 : prompt;
 
@@ -1433,7 +1434,8 @@ Your job is to write highly logical, emotionally engaging, and beautifully struc
 **NARRATIVE & LOGIC RULES:**
 1. The script MUST have a clear, logical progression. Avoid silly or repetitive action. Build a hook, rising action, and a satisfying conclusion.
 2. Every scene must logically follow the previous one in time and space. Actions must make physical sense.
-3. Dialogue and sound design (\`audio_description\`) must feel authentic, dramatic, and purposeful.
+3. STRICT GENRE ADHERENCE: The entire script MUST strictly obey the implicit genre, tone, and setting established by the premise. Do NOT introduce elements that contradict the setting (e.g., fireworks in a post-apocalyptic doomsday scenario, or modern tech in medieval times).
+4. Dialogue and sound design (\`audio_description\`) must feel authentic, dramatic, and purposeful.
 
 **AI PROMPTING RULES (CRITICAL):**
 1. \`image_prompt\`: MUST be highly descriptive for Midjourney/Flux. Use professional cinematography terms: Lighting (e.g., volumetric, dramatic cinematic lighting, chiaroscuro), Camera Angle (e.g., low angle, medium shot, extreme close-up), Lens type (e.g., 35mm, 85mm), and precise Subject/Environment details. 
@@ -1454,7 +1456,7 @@ Return strictly valid JSON matching the schema.`;
 Visual Style: ${visualStyle}.
 Target total shots across all scenes: ~${targetScenes}.
 
-Ensure the cinematic pacing is excellent. Scene 1 must hook the audience immediately. The narrative must be highly logical, avoiding absurd or silly choices, and the visual prompts must be insanely detailed for A-tier AI image generation.`;
+Ensure the cinematic pacing is excellent. Scene 1 must hook the audience immediately. The narrative must be highly logical and STRICTLY obey the genre and tone of the premise, avoiding any absurd, silly, or tone-deaf choices. The visual prompts must be insanely detailed for A-tier AI image generation.`;
 
             try {
                 // Try with schema first (Gemini 2.0 Flash)
