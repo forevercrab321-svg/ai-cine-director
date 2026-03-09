@@ -431,6 +431,7 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                 shot_type: scene.shot_type,
                 visual_style: project.visual_style,
                 character_anchor: project.character_anchor,
+                story_entities: project.story_entities,
                 language: settings.lang,
                 num_shots: shotCount, // ★ 改为使用用户选择的shotCount，而不是硬编码的5
             });

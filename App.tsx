@@ -377,6 +377,7 @@ const MainLayout: React.FC = () => {
               project={project}
               currentGlobalAnchor={referenceImageDataUrl}
               onSetGlobalAnchor={handleSetGlobalAnchor}
+              autoGenerate={true}
             />
 
             {project.scenes.map((scene, i) => (

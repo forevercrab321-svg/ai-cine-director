@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { StoryboardProject, StoryEntity } from '../types';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { StoryboardProject } from '../types';
 import { generateImage } from '../services/replicateService';
 import { useAppContext } from '../context/AppContext';
 import { PhotoIcon, LoaderIcon, CheckCircleIcon } from './IconComponents';
@@ -9,21 +9,25 @@ interface CastPhotoGeneratorProps {
     project: StoryboardProject;
     onSetGlobalAnchor: (dataUrl: string) => void;
     currentGlobalAnchor: string | null;
+    autoGenerate?: boolean;
 }
 
-const CastPhotoGenerator: React.FC<CastPhotoGeneratorProps> = ({ project, onSetGlobalAnchor, currentGlobalAnchor }) => {
+const CastPhotoGenerator: React.FC<CastPhotoGeneratorProps> = ({ project, onSetGlobalAnchor, currentGlobalAnchor, autoGenerate = false }) => {
     const { settings, hasEnoughCredits, deductCredits, openPricingModal } = useAppContext();
     const [isGenerating, setIsGenerating] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const autoTriggeredRef = useRef(false);
 
-    // Filter only for characters to build the cast list
-    const characters = project.story_entities?.filter(e => e.type === 'character' && e.is_locked) || [];
+    // Filter only for characters to build the cast list - memoize to avoid recalculation
+    const characters = useMemo(() => {
+        return project.story_entities?.filter(e => e.type === 'character' && e.is_locked) || [];
+    }, [project.story_entities]);
 
     if (characters.length === 0) {
         return null; // Don't show the generator if there are no characters defined
     }
 
-    const handleGenerateCastPhoto = async () => {
+    const handleGenerateCastPhoto = useCallback(async () => {
         // generating an image costs 1 credit
         if (!hasEnoughCredits(1)) {
             openPricingModal();
@@ -62,7 +66,23 @@ const CastPhotoGenerator: React.FC<CastPhotoGeneratorProps> = ({ project, onSetG
         } finally {
             setIsGenerating(false);
         }
-    };
+    }, [hasEnoughCredits, openPricingModal, deductCredits, characters, project.visual_style, settings.imageModel, onSetGlobalAnchor]);
+
+    useEffect(() => {
+        autoTriggeredRef.current = false;
+    }, [project.id, project.project_title]);
+
+    useEffect(() => {
+        if (!autoGenerate || currentGlobalAnchor || isGenerating || characters.length === 0) return;
+        if (autoTriggeredRef.current) return;
+
+        const cacheKey = `auto-cast-anchor:${project.id || project.project_title}`;
+        if (typeof window !== 'undefined' && sessionStorage.getItem(cacheKey) === '1') return;
+
+        autoTriggeredRef.current = true;
+        if (typeof window !== 'undefined') sessionStorage.setItem(cacheKey, '1');
+        void handleGenerateCastPhoto();
+    }, [autoGenerate, currentGlobalAnchor, isGenerating, characters.length, project.id, project.project_title]);
 
     return (
         <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 mb-8 group relative overflow-hidden">

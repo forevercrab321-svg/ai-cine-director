@@ -3,6 +3,7 @@ import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import Stripe from 'stripe';
+import { GoogleGenAI, Type } from '@google/genai';
 
 
 // ═══════════════════════════════════════════════════════════════
@@ -121,6 +122,17 @@ function estimateCost(modelPath: string): number {
     if (modelPath.includes('seedance') || modelPath.includes('bytedance')) return 55;
     if (modelPath.includes('sora') || modelPath.includes('openai')) return 250;
     return 22; // 默认成本
+}
+
+function sanitizePromptInput(value: unknown, maxLength: number): string {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    return text.length > maxLength ? text.slice(0, maxLength) : text;
+}
+
+function normalizeEntityType(value: unknown): 'character' | 'prop' | 'location' {
+    const t = String(value || '').toLowerCase().trim();
+    if (t === 'prop' || t === 'location') return t;
+    return 'character';
 }
 
 interface StylePreset {
@@ -1456,6 +1468,13 @@ app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
     const jobRef = `gemini:${Date.now()}:${Math.random().toString(36).slice(2)}`;
     try {
         const { storyIdea, visualStyle, language, identityAnchor, sceneCount } = req.body;
+        const safeStoryIdea = sanitizePromptInput(storyIdea, 2500);
+        const safeVisualStyle = sanitizePromptInput(visualStyle, 300);
+        const safeIdentityAnchor = sanitizePromptInput(identityAnchor, 1000);
+        const safeLanguage = language === 'zh' ? 'zh' : 'en';
+
+        if (!safeStoryIdea) return res.status(400).json({ error: 'Missing storyIdea' });
+
         const targetScenes = Math.min(Math.max(Number(sceneCount) || 5, 1), 50);
         // Estimate approx 1-3 shots per scene for pacing
         const approxTotalShots = targetScenes * 2;
@@ -1499,8 +1518,6 @@ app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
             if (reserveErr) return res.status(500).json({ error: 'Credit verification failed' });
             if (!reserved) return res.status(402).json({ error: 'INSUFFICIENT_CREDITS', code: 'INSUFFICIENT_CREDITS' });
         }
-        if (!storyIdea) return res.status(400).json({ error: 'Missing storyIdea' });
-
         const systemInstruction = `You are an elite Hollywood Screenwriter and AI Cinematographer.
 Your job is to write highly logical, emotionally engaging, and beautifully structured visual scripts.
 
@@ -1516,18 +1533,19 @@ Your job is to write highly logical, emotionally engaging, and beautifully struc
    - *Subsequent shots* in the same scene get an EMPTY \`image_prompt\` (to maintain physical chain consistency).
 2. \`video_prompt\`: Must describe pure physical motion for AI video generators (e.g., "The camera slowly pushes in as dust falls. The character turns their head in slow motion"). Focus on kinetics.
 3. \`story_entities\`: Explicitly identify the core characters, key props, and major locations from the premise. Write EXTREMELY detailed physical descriptions for them.
+4. Build a LOCKED CAST first. Then strictly keep all scenes and shots limited to that cast. Do NOT invent any new character outside \`story_entities\`.
 
 **CHARACTER RULE:**
-${identityAnchor ? `The protagonist MUST strictly match: "${identityAnchor}".` : `Invent a compelling character matching the style: "${visualStyle}".`}
+${safeIdentityAnchor ? `The protagonist MUST strictly match: "${safeIdentityAnchor}".` : `Invent a compelling character matching the style: "${safeVisualStyle}".`}
 
 **LANGUAGE:**
-\`image_prompt\`, \`video_prompt\`, \`location\` MUST be in English. \`audio_description\` MUST be in ${language === 'zh' ? 'Chinese (Simplified)' : 'English'}.
+\`image_prompt\`, \`video_prompt\`, \`location\` MUST be in English. \`audio_description\` MUST be in ${safeLanguage === 'zh' ? 'Chinese (Simplified)' : 'English'}.
 Return strictly valid JSON matching the schema.`;
 
         let responseText = '';
         try {
-            const promptContent = `Write a premium, award-winning SHORT DRAMA broken down into exactly ${targetScenes} SCENES based on this premise: "${storyIdea}". 
-Visual Style: ${visualStyle}.
+            const promptContent = `Write a premium, award-winning SHORT DRAMA broken down into exactly ${targetScenes} SCENES based on this premise: "${safeStoryIdea}". 
+Visual Style: ${safeVisualStyle}.
 Target scenes: EXACTLY ${targetScenes}. Each scene should have 1-3 shots. 
 
 Ensure the cinematic pacing is excellent. Scene 1 must hook the audience immediately. The narrative must be highly logical and STRICTLY obey the genre and tone of the premise, avoiding any absurd, silly, or tone-deaf choices. The visual prompts must be insanely detailed for A-tier AI image generation.
@@ -1610,10 +1628,10 @@ You MUST respond with a JSON object strictly matching this structure with EXACTL
         const entitiesRaw = Array.isArray(parsedData.story_entities) ? parsedData.story_entities : [];
         const story_entities = entitiesRaw.map((e: any) => ({
             id: crypto.randomUUID(),
-            type: e.type || 'character',
-            name: e.name || 'Unknown',
-            description: e.description || '',
-            is_locked: e.type === 'character' // Auto-lock characters for consistency by default
+            type: normalizeEntityType(e.type),
+            name: sanitizePromptInput(e.name || 'Unknown', 120) || 'Unknown',
+            description: sanitizePromptInput(e.description || '', 1200),
+            is_locked: normalizeEntityType(e.type) === 'character' // Auto-lock characters for consistency by default
         }));
 
         const project: any = {
@@ -1625,9 +1643,34 @@ You MUST respond with a JSON object strictly matching this structure with EXACTL
         };
 
         // ★ CRITICAL: Force character_anchor to match identityAnchor if provided
-        if (identityAnchor && identityAnchor.trim().length > 10) {
-            project.character_anchor = identityAnchor.trim();
+        if (safeIdentityAnchor && safeIdentityAnchor.trim().length > 10) {
+            project.character_anchor = safeIdentityAnchor.trim();
         }
+
+        // Ensure we always have at least one locked character entity for continuity enforcement
+        const hasLockedCharacter = story_entities.some((e: any) => e.type === 'character' && e.is_locked && e.name);
+        if (!hasLockedCharacter && project.character_anchor) {
+            story_entities.unshift({
+                id: crypto.randomUUID(),
+                type: 'character',
+                name: 'Main Character',
+                description: project.character_anchor,
+                is_locked: true,
+            });
+        }
+
+        const lockedCharacters = story_entities
+            .filter((e: any) => e.type === 'character' && e.is_locked)
+            .map((e: any) => ({
+                name: sanitizePromptInput(e.name, 120),
+                description: sanitizePromptInput(e.description, 1200),
+            }))
+            .filter((e: any) => e.name.length > 0);
+
+        const lockedCharacterNameSet = new Set(lockedCharacters.map((c: any) => c.name.toLowerCase()));
+        const lockedCharacterLine = lockedCharacters.length > 0
+            ? `Locked Cast: ${lockedCharacters.map((c: any) => `${c.name} (${c.description})`).join(' | ')}.`
+            : '';
 
         const anchor = project.character_anchor;
         const anchorLower = anchor.toLowerCase().trim();
@@ -1645,6 +1688,19 @@ You MUST respond with a JSON object strictly matching this structure with EXACTL
                 for (let i = 0; i < shots.length; i++) {
                     const shot = shots[i];
 
+                    const rawCharacters = Array.isArray(shot.characters) ? shot.characters : [];
+                    let shotCharacters = rawCharacters
+                        .map((c: any) => sanitizePromptInput(c, 120))
+                        .filter((c: string) => c && lockedCharacterNameSet.has(c.toLowerCase()));
+
+                    if (shotCharacters.length === 0 && lockedCharacters.length > 0) {
+                        shotCharacters = [lockedCharacters[Math.min(i, lockedCharacters.length - 1)].name];
+                    }
+
+                    const shotCharacterPrefix = shotCharacters.length > 0
+                        ? `Characters on screen: ${shotCharacters.join(', ')}. `
+                        : (lockedCharacterLine ? `${lockedCharacterLine} ` : '');
+
                     // 仅首镜可能包含 image_prompt；如果为空且是首镜，进行补偿提示词
                     let rawImagePrompt = (shot.image_prompt || '').trim();
                     if (i === 0 && rawImagePrompt.length < 5) {
@@ -1659,7 +1715,7 @@ You MUST respond with a JSON object strictly matching this structure with EXACTL
                             rawImagePrompt = rawImagePrompt.slice(anchor.length).replace(/^[,;.:\s]+/, '').trim();
                         }
                         finalImagePrompt = anchor
-                            ? `${anchor}. ${setting ? 'Setting: ' + setting + '. ' : ''}${rawImagePrompt}. Single cinematic frame.`
+                            ? `${anchor}. ${shotCharacterPrefix}${setting ? 'Setting: ' + setting + '. ' : ''}${rawImagePrompt}. Single cinematic frame.`
                             : `${rawImagePrompt}, ${setting}, cinematic shot`;
                     }
 
@@ -1667,9 +1723,10 @@ You MUST respond with a JSON object strictly matching this structure with EXACTL
                         scene_number: globalShotIndex++,
                         scene_setting: setting,
                         // 复用 visual_description 承载前端的原画说明要求，这里直接给动作和环境
-                        visual_description: (i === 0 ? rawImagePrompt : shot.video_prompt) || `Action ${globalShotIndex}`,
+                        visual_description: `${shotCharacterPrefix}${(i === 0 ? rawImagePrompt : shot.video_prompt) || `Action ${globalShotIndex}`}`.trim(),
                         audio_description: shot.audio_description || "",
                         shot_type: shot.video_prompt || "cinematic action", // 兼容旧 pipeline
+                        characters: shotCharacters,
                         // 最核心改动：非零的索引严格留空
                         image_prompt: finalImagePrompt,
                         video_motion_prompt: shot.video_prompt || "smooth motion",
@@ -2122,8 +2179,23 @@ app.post('/api/shots/generate', async (req: any, res: any) => {
     try {
         const {
             scene_number, visual_description, audio_description, shot_type,
-            visual_style, character_anchor, language, num_shots
+            visual_style, character_anchor, language, num_shots, story_entities
         } = req.body;
+
+        const lockedCharacters = Array.isArray(story_entities)
+            ? story_entities
+                .filter((e: any) => normalizeEntityType(e?.type) === 'character' && !!e?.is_locked)
+                .map((e: any) => ({
+                    name: sanitizePromptInput(e?.name, 120),
+                    description: sanitizePromptInput(e?.description, 800),
+                }))
+                .filter((e: any) => e.name.length > 0)
+            : [];
+
+        const allowedCharacterSet = new Set(lockedCharacters.map((c: any) => c.name.toLowerCase()));
+        const lockedCastInstruction = lockedCharacters.length > 0
+            ? `Locked Cast (no new characters allowed): ${lockedCharacters.map((c: any) => `${c.name} (${c.description})`).join(' | ')}`
+            : '';
 
         const authHeader = req.headers.authorization;
         if (!authHeader) return res.status(401).json({ error: 'Missing Authorization header' });
@@ -2176,6 +2248,7 @@ Audio: ${audio_description || 'N/A'}
 Shot Direction: ${shot_type || 'N/A'}
 Visual Style: ${visual_style || 'Cinematic Realism'}
 ${character_anchor ? `Character Anchor (MUST appear in every shot's image_prompt): ${character_anchor}` : ''}
+${lockedCastInstruction ? `${lockedCastInstruction}` : ''}
 
 **NARRATIVE & LOGIC RULES:**
 1. The sequence of shots must obey strict spatial constraints and physical logic. No teleporting, morphing, or absurd actions.
@@ -2195,6 +2268,7 @@ ${character_anchor ? `Character Anchor (MUST appear in every shot's image_prompt
 8. "image_prompt" must be an Elite-tier Midjourney/Flux prompt. It MUST vividly describe the Environment, Lighting, Camera Angle, Lens, and Subject in a highly evocative way.
 9. "negative_prompt" should prevent common AI artifacts.
 10. Language: image_prompt, negative_prompt, video_prompt and technical fields ALWAYS in English. dialogue and audio_notes in ${language === 'zh' ? 'Chinese (Simplified)' : 'English'}.
+11. If Locked Cast is provided, "characters" for every shot MUST use only those exact names. Do not add extras or unnamed new people.
 
 **REQUIRED JSON SCHEMA:**
 You MUST return EXACTLY ONE JSON object strictly matching this schema. Return exactly ${targetShots} shots inside the "shots" array:
@@ -2267,23 +2341,39 @@ You MUST return EXACTLY ONE JSON object strictly matching this schema. Return ex
             }
         }
 
-        const enrichedShots = (result.shots || []).map((s: any, idx: number) => ({
+        const enrichedShots = (result.shots || []).map((s: any, idx: number) => {
+            const rawCharacters = Array.isArray(s.characters) ? s.characters : [];
+            let normalizedCharacters = rawCharacters
+                .map((c: any) => sanitizePromptInput(c, 120))
+                .filter((name: string) => {
+                    if (!name) return false;
+                    if (allowedCharacterSet.size === 0) return true;
+                    return allowedCharacterSet.has(name.toLowerCase());
+                });
+
+            if (normalizedCharacters.length === 0 && lockedCharacters.length > 0) {
+                normalizedCharacters = [lockedCharacters[Math.min(idx, lockedCharacters.length - 1)].name];
+            }
+
+            return {
             shot_id: crypto.randomUUID(),
             scene_id: '', scene_title: result.scene_title || `Scene ${scene_number || 1}`,
             shot_number: s.shot_number || idx + 1, duration_sec: s.duration_sec || 3,
             location_type: s.location_type || 'INT', location: s.location || '',
-            time_of_day: s.time_of_day || 'day', characters: s.characters || [],
+            time_of_day: s.time_of_day || 'day',
             action: s.action || '', dialogue: s.dialogue || '',
             camera: s.camera || 'medium', lens: s.lens || '50mm',
             movement: s.movement || 'static', composition: s.composition || '',
             lighting: s.lighting || '', art_direction: s.art_direction || '',
             mood: s.mood || '', sfx_vfx: s.sfx_vfx || '',
             audio_notes: s.audio_notes || '', continuity_notes: s.continuity_notes || '',
-            image_prompt: s.image_prompt || '', negative_prompt: s.negative_prompt || '',
+            image_prompt: s.image_prompt || '', video_prompt: s.video_prompt || '', negative_prompt: s.negative_prompt || '',
             seed_hint: null, reference_policy: 'anchor' as const,
             status: 'draft' as const, locked_fields: [], version: 1,
             updated_at: new Date().toISOString(),
-        }));
+            characters: normalizedCharacters,
+        };
+        });
 
         if (!skipCreditCheck) {
             await supabaseUser.rpc('finalize_reserve', { ref_type: 'shots', ref_id: jobRef });

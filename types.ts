@@ -43,6 +43,7 @@ export interface Shot {
 
   // Image Generation
   image_prompt: string;          // Full prompt for image generation
+  video_prompt?: string;         // Physical video motion prompt for AI video generation
   negative_prompt: string;       // Negative prompt (optional)
   seed_hint: number | null;      // Seed for consistency (optional)
   reference_policy: 'none' | 'anchor' | 'first-frame' | 'previous-frame';
@@ -211,6 +212,7 @@ export interface Scene {
   id?: string; // Database ID
   scene_number: number;
   scene_setting?: string; // Unique location/time for this scene (e.g., "A neon-lit alley — midnight")
+  characters?: string[];
   visual_description: string;
   audio_description: string;
   dialogue_text?: string;

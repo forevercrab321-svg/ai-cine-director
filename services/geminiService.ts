@@ -14,7 +14,8 @@ const generateMockStoryboard = (
   visualStyle: string,
   language: Language,
   mode: GenerationMode,
-  sceneCount: number = 5
+  sceneCount: number = 5,
+  identityAnchor?: string
 ): StoryboardProject => {
   const scenes = [];
   const sceneSettings = [
@@ -41,7 +42,14 @@ const generateMockStoryboard = (
   return {
     project_title: storyIdea.slice(0, 50),
     visual_style: visualStyle,
-    character_anchor: 'Main protagonist',
+    character_anchor: identityAnchor?.trim() || 'Main protagonist',
+    story_entities: [{
+      id: crypto.randomUUID(),
+      type: 'character',
+      name: 'Main Character',
+      description: identityAnchor?.trim() || 'Main protagonist in consistent costume and facial traits',
+      is_locked: true,
+    }],
     scenes,
   };
 };
@@ -81,7 +89,7 @@ export const generateStoryboard = async (
     if (!response.ok) {
       // Fallback to mock mode if backend unavailable
       console.warn('[Gemini] Backend unavailable, using mock mode');
-      return generateMockStoryboard(storyIdea, visualStyle, language, mode, sceneCount || 5);
+      return generateMockStoryboard(storyIdea, visualStyle, language, mode, sceneCount || 5, identityAnchor);
     }
 
     return await response.json();
@@ -89,7 +97,7 @@ export const generateStoryboard = async (
     console.error('Gemini Director Error:', error);
     // Fallback to mock mode
     console.log('[Gemini] Using mock mode as fallback');
-    return generateMockStoryboard(storyIdea, visualStyle, language, mode, sceneCount || 5);
+    return generateMockStoryboard(storyIdea, visualStyle, language, mode, sceneCount || 5, identityAnchor);
   }
 };
 

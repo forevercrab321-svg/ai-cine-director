@@ -3,7 +3,7 @@
  * All requests go through backend server, no API keys exposed.
  * Supports mock mode when backend is unavailable.
  */
-import { Shot, ShotRevision, ShotRewriteRequest, Language } from '../types';
+import { Shot, ShotRevision, ShotRewriteRequest, Language, StoryEntity } from '../types';
 import { supabase } from '../lib/supabaseClient';
 
 const API_BASE = '/api/shots';
@@ -60,6 +60,7 @@ function generateMockShots(params: {
             audio_notes: 'Ambient sound',
             continuity_notes: '',
             image_prompt: `${params.visual_description}, ${params.shot_type}, shot ${i + 1}`,
+            video_prompt: `Camera ${shotType.movement}. ${params.visual_description.slice(0, 80)}`,
             negative_prompt: '',
             seed_hint: null,
             reference_policy: 'none',
@@ -87,6 +88,7 @@ export async function generateShots(params: {
     shot_type: string;
     visual_style: string;
     character_anchor: string;
+    story_entities?: StoryEntity[];
     language: Language;
     num_shots?: number;
 }): Promise<{ scene_title: string; shots: Shot[] }> {
