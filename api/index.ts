@@ -1435,8 +1435,10 @@ app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
     try {
         const { storyIdea, visualStyle, language, identityAnchor, sceneCount } = req.body;
         const targetScenes = Math.min(Math.max(Number(sceneCount) || 5, 1), 50);
+        // Estimate approx 1-3 shots per scene for pacing
+        const approxTotalShots = targetScenes * 2;
 
-        console.log(`[Gemini Generate] identityAnchor present: ${!!identityAnchor}, length: ${identityAnchor?.length || 0}, first100: ${identityAnchor?.substring(0, 100) || 'NONE'}`);
+        console.log(`[Minimax Generate] Requesting exactly ${targetScenes} unique scenes...`);
 
         const authHeader = `Bearer ${req.accessToken}`;
         const userId = req.user?.id;
@@ -1501,14 +1503,20 @@ Return strictly valid JSON matching the schema.`;
 
         let responseText = '';
         try {
-            const promptContent = `Write a premium, award-winning SHORT DRAMA broken down into SCENES and SHOTS based on this premise: "${storyIdea}". 
+            const promptContent = `Write a premium, award-winning SHORT DRAMA broken down into exactly ${targetScenes} SCENES based on this premise: "${storyIdea}". 
 Visual Style: ${visualStyle}.
-Target total shots across all scenes: ~${targetScenes}.
+Target scenes: EXACTLY ${targetScenes}. Each scene should have 1-3 shots. 
 
 Ensure the cinematic pacing is excellent. Scene 1 must hook the audience immediately. The narrative must be highly logical and STRICTLY obey the genre and tone of the premise, avoiding any absurd, silly, or tone-deaf choices. The visual prompts must be insanely detailed for A-tier AI image generation.
 
+**CRITICAL RULES FOR SCENES:**
+1. EXACT YIELD: You MUST return EXACTLY ${targetScenes} scenes in your JSON array. No more, no less.
+2. NO REPETITION: Every single scene MUST be entirely unique in location, action, and dialogue. Do NOT repeat the same events or descriptions across different scenes.
+3. PROGRESSION: The story must move forward chronologically. Scene 2 must show what happens AFTER Scene 1. Scene 3 must show what happens AFTER Scene 2.
+4. UNIQUE CONTEXT: The \`location\` and \`image_prompt\` in each scene must reflect the changing story, not the same establishing shot over and over.
+
 **REQUIRED JSON SCHEMA:**
-You MUST respond with a JSON object strictly matching this structure:
+You MUST respond with a JSON object strictly matching this structure with EXACTLY ${targetScenes} items in the "scenes" array:
 {
   "project_title": "string",
   "visual_style": "string",
