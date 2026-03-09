@@ -6,12 +6,13 @@ export async function extractLastFrameFromVideo(videoUrl: string): Promise<strin
         video.muted = true;
         video.playsInline = true;
         video.preload = 'metadata';
-
-        // 30s timeout protection
+        // 3s timeout protection! 
+        // Replicate CDN often blocks CORS causing this to hang. 
+        // We want to fail FAST and fall back to the backend ffmpeg extractor immediately.
         const timeoutId = setTimeout(() => {
             cleanUp();
-            reject(new Error("Video frame extraction timed out after 30s."));
-        }, 30000);
+            reject(new Error("Video frame extraction timed out after 3s."));
+        }, 3000);
 
         const cleanUp = () => {
             clearTimeout(timeoutId);

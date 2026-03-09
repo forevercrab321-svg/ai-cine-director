@@ -1339,10 +1339,21 @@ app.post('/api/extract-frame', requireAuth, async (req: any, res: any) => {
         console.log('[FrameExtract] Running ffmpeg directly on URL...');
 
         // 2) Extract last frame via ffmpeg-static directly from URL
-        // Using -sseof -0.5 is risky with remote URLs if the server doesn't support range requests.
-        // Instead, we can try to get the last frame safely or just rely on Vercel network speed.
+        // Using -sseof -0.5 requires the CDN to support HTTP range requests.
         try {
             await execAsync(`"${ffmpegBin}" -y -sseof -0.5 -i "${videoUrl}" -vframes 1 -q:v 2 "${tmpFrame}" 2>/dev/null`);
+        } catch (fastErr: any) {
+            console.warn('[FrameExtract] Fast -sseof seek failed (likely no Range support). Falling back to fast first-frame extraction...', fastErr.message);
+            // Fallback: Just grab the first frame instantly. Better to have slight continuity drift than a broken chain.
+            try {
+                await execAsync(`"${ffmpegBin}" -y -i "${videoUrl}" -vframes 1 -q:v 2 "${tmpFrame}" 2>/dev/null`);
+            } catch (fallbackErr: any) {
+                console.error('[FrameExtract] Absolute fallback failed:', fallbackErr.message);
+                throw new Error(`Both end-seek and first-frame extractions failed. ${fallbackErr.message}`);
+            }
+        }
+
+        try {
             const frameBuffer = fs.default.readFileSync(tmpFrame);
             const base64 = frameBuffer.toString('base64');
 
@@ -1352,12 +1363,12 @@ app.post('/api/extract-frame', requireAuth, async (req: any, res: any) => {
             console.log('[FrameExtract] ffmpeg-static extraction success, frame size:', frameBuffer.length, 'bytes');
             return res.json({ frame: `data:image/jpeg;base64,${base64}` });
         } catch (ffmpegErr: any) {
-            console.error('[FrameExtract] ffmpeg failed:', ffmpegErr.message);
+            console.error('[FrameExtract] ffmpeg file read failed:', ffmpegErr.message);
             try { fs.default.unlinkSync(tmpFrame); } catch (_) { }
 
             // ★ Return clear error instead of raw video URL (which breaks Replicate)
             return res.status(500).json({
-                error: `Frame extraction failed: ffmpeg unavailable on this runtime. Error: ${ffmpegErr.message}`
+                error: `Frame extraction failed: ffmpeg unavailable or output unreadable on this runtime. Error: ${ffmpegErr.message}`
             });
         }
     } catch (err: any) {
