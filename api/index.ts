@@ -1416,17 +1416,34 @@ app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
         if (!storyIdea) return res.status(400).json({ error: 'Missing storyIdea' });
 
         const ai = getGeminiAI();
-        const systemInstruction = `You are a short drama screenwriter.
-Create scenes with shots. First shot of each scene: full image_prompt. Other shots: empty image_prompt (reuse last frame), only video_prompt (continuation motion).
-Every shot needs audio_description dialogue.
-${identityAnchor ? `Character: "${identityAnchor}".` : `Create characterAnchor matching style: "${visualStyle}".`}
-Language: image_prompt/video_prompt/location in English. audio_description/${language === 'zh' ? 'title in Chinese' : 'title in English'}.
-Output as valid JSON.`;
+        const systemInstruction = `You are an elite Hollywood Screenwriter and AI Cinematographer.
+Your job is to write highly logical, emotionally engaging, and beautifully structured visual scripts.
+
+**NARRATIVE & LOGIC RULES:**
+1. The script MUST have a clear, logical progression. Avoid silly or repetitive action. Build a hook, rising action, and a satisfying conclusion.
+2. Every scene must logically follow the previous one in time and space. Actions must make physical sense.
+3. Dialogue and sound design (\`audio_description\`) must feel authentic, dramatic, and purposeful.
+
+**AI PROMPTING RULES (CRITICAL):**
+1. \`image_prompt\`: MUST be highly descriptive for Midjourney/Flux. Use professional cinematography terms: Lighting (e.g., volumetric, dramatic cinematic lighting, chiaroscuro), Camera Angle (e.g., low angle, medium shot, extreme close-up), Lens type (e.g., 35mm, 85mm), and precise Subject/Environment details. 
+   - *First shot* of a scene gets a FULL \`image_prompt\`. 
+   - *Subsequent shots* in the same scene get an EMPTY \`image_prompt\` (to maintain physical chain consistency).
+2. \`video_prompt\`: Must describe pure physical motion for AI video generators (e.g., "The camera slowly pushes in as dust falls. The character turns their head in slow motion"). Focus on kinetics.
+
+**CHARACTER RULE:**
+${identityAnchor ? `The protagonist MUST strictly match: "${identityAnchor}".` : `Invent a compelling character matching the style: "${visualStyle}".`}
+
+**LANGUAGE:**
+\`image_prompt\`, \`video_prompt\`, \`location\` MUST be in English. \`audio_description\` MUST be in ${language === 'zh' ? 'Chinese (Simplified)' : 'English'}.
+Return strictly valid JSON matching the schema.`;
 
         let response;
         try {
-            const promptContent = `Write a SHORT DRAMA (短剧) broken down into SCENES and SHOTS for: ${storyIdea}. Style: ${visualStyle}. Total expected shots: ~${targetScenes}.
-★ CRITICAL: Scene 1 must START with the character ALREADY doing the core activity ("${storyIdea}"). Every shot must showcase a PHYSICAL CONTINUATION or a DIFFERENT moment of the activity.`;
+            const promptContent = `Write a premium, award-winning SHORT DRAMA broken down into SCENES and SHOTS based on this premise: "${storyIdea}". 
+Visual Style: ${visualStyle}.
+Target total shots across all scenes: ~${targetScenes}.
+
+Ensure the cinematic pacing is excellent. Scene 1 must hook the audience immediately. The narrative must be highly logical, avoiding absurd or silly choices, and the visual prompts must be insanely detailed for A-tier AI image generation.`;
 
             try {
                 // Try with schema first (Gemini 2.0 Flash)
@@ -1450,8 +1467,11 @@ Output as valid JSON.`;
             }
         } catch (initialError: any) {
             if (initialError.message?.includes('429') || initialError.message?.includes('Resource exhausted')) {
-                const promptContent = `Write a SHORT DRAMA (短剧) broken down into SCENES and SHOTS for: ${storyIdea}. Style: ${visualStyle}. Total expected shots: ~${targetScenes}.
-★ CRITICAL: Scene 1 must START with the character ALREADY doing the core activity ("${storyIdea}"). Every shot must showcase a PHYSICAL CONTINUATION or a DIFFERENT moment of the activity.`;
+                const promptContent = `Write a premium, award-winning SHORT DRAMA broken down into SCENES and SHOTS based on this premise: "${storyIdea}". 
+Visual Style: ${visualStyle}.
+Target total shots across all scenes: ~${targetScenes}.
+
+Ensure the cinematic pacing is excellent. Scene 1 must hook the audience immediately. The narrative must be highly logical, avoiding absurd or silly choices, and the visual prompts must be insanely detailed for A-tier AI image generation.`;
 
                 // Try gemini-2.0-flash-lite as fallback (newer, faster, cheaper)
                 try {
@@ -2015,8 +2035,8 @@ app.post('/api/shots/generate', async (req: any, res: any) => {
         const targetShots = num_shots || 5;
 
         const systemInstruction = `
-**Role:** You are an expert Director of Photography (DP) and 1st Assistant Director.
-**Task:** Break the following SCENE into exactly ${targetShots} detailed, production-ready SHOTS.
+**Role:** You are an elite Director of Photography (DP), Screenwriter, and AI Prompt Engineer.
+**Task:** Break the following SCENE into exactly ${targetShots} detailed, highly logical, and production-ready SHOTS.
 
 **Scene ${scene_number || 1}:**
 Visual: ${visual_description}
@@ -2025,21 +2045,23 @@ Shot Direction: ${shot_type || 'N/A'}
 Visual Style: ${visual_style || 'Cinematic Realism'}
 ${character_anchor ? `Character Anchor (MUST appear in every shot's image_prompt): ${character_anchor}` : ''}
 
-**RULES:**
-1. Each shot must be a distinct camera setup / angle / moment.
-2. "camera" must be one of: wide, medium, close, ecu, over-shoulder, pov, aerial, two-shot
-3. "movement" must be one of: static, push-in, pull-out, pan-left, pan-right, tilt-up, tilt-down, dolly, tracking, crane, handheld, steadicam, whip-pan, zoom
-4. "time_of_day" must be one of: dawn, morning, noon, afternoon, golden-hour, dusk, night, blue-hour
-5. "location_type" must be one of: INT, EXT, INT/EXT
-6. "image_prompt" must be a COMPLETE, self-contained prompt for image generation including the character anchor and all visual details.
-7. "negative_prompt" should list what to avoid (bad quality, deformed hands, etc.)
-8. "duration_sec" should be realistic (2-8 seconds per shot).
-9. "lighting" should describe key/fill/back lights, color temperature.
-10. "continuity_notes" should note what must match between adjacent shots.
-11. Language: image_prompt, negative_prompt, and technical fields ALWAYS in English. dialogue and audio_notes in ${language === 'zh' ? 'Chinese (Simplified)' : 'English'}.
+**NARRATIVE & LOGIC RULES:**
+1. The sequence of shots must obey spatial constraints and physical logic. No teleporting or absurd actions.
+2. Ensure the emotional and narrative pacing is excellent. The sequence should feel like an award-winning cinematic moment.
 
-**Output:** JSON strictly following the provided schema. Return exactly ${targetShots} shots.
-`;
+**CINEMATOGRAPHY RULES:**
+3. "camera" must be one of: wide, medium, close, ecu, over-shoulder, pov, aerial, two-shot
+4. "movement" must be one of: static, push-in, pull-out, pan-left, pan-right, tilt-up, tilt-down, dolly, tracking, crane, handheld, steadicam, whip-pan, zoom
+5. "time_of_day" must be one of: dawn, morning, noon, afternoon, golden-hour, dusk, night, blue-hour
+6. "location_type" must be one of: INT, EXT, INT/EXT
+7. "lighting" should use professional terms (e.g., chiaroscuro, volumetric, rim light, neon).
+
+**AI PROMPTING RULES (CRITICAL):**
+8. "image_prompt" must be an Elite-tier Midjourney/Flux prompt. It MUST vividly describe the Environment, Lighting, Camera Angle, Lens (e.g., 35mm, 85mm), and Subject Action in a highly evocative way.
+9. "negative_prompt" should prevent common AI artifacts (e.g., deformed hands, extra limbs, bad anatomy, text, watermarks).
+10. Language: image_prompt, negative_prompt, and technical fields ALWAYS in English. dialogue and audio_notes in ${language === 'zh' ? 'Chinese (Simplified)' : 'English'}.
+
+**Output:** JSON strictly following the provided schema. Return exactly ${targetShots} shots.`;
 
         let response;
         try {
@@ -2191,8 +2213,8 @@ ${shotJson}
 1. Return a JSON object with ONLY the rewritten fields.
 2. Do NOT include any fields that are locked or not in the rewrite list.
 3. Keep the same format/type as the original field values.
-4. If rewriting image_prompt, include the character anchor.
-5. Be creative but stay consistent with the visual style and scene context.
+4. If rewriting image_prompt, include the character anchor and make it HIGHLY DESCRIPTIVE using professional cinematic terminology (lighting, lenses, camera angles).
+5. Be creative, ensure physical logic, and stay consistent with the visual style and scene context.
 6. Language: technical fields in English, dialogue in ${language === 'zh' ? 'Chinese' : 'English'}.
 
 **Output:** A flat JSON object with only the rewritten field keys and new values.
