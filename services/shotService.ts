@@ -8,6 +8,18 @@ import { supabase } from '../lib/supabaseClient';
 
 const API_BASE = '/api/shots';
 
+function getAppSettings(): { useMockMode: boolean } {
+    if (typeof window === 'undefined') return { useMockMode: false };
+    try {
+        const saved = localStorage.getItem('appSettings');
+        if (!saved) return { useMockMode: false };
+        const parsed = JSON.parse(saved);
+        return { useMockMode: parsed.useMockMode ?? false };
+    } catch {
+        return { useMockMode: false };
+    }
+}
+
 async function getAuthHeaders(): Promise<Record<string, string>> {
     const { data: { session } } = await supabase.auth.getSession();
     const token = session?.access_token;
@@ -93,6 +105,7 @@ export async function generateShots(params: {
     num_shots?: number;
 }): Promise<{ scene_title: string; shots: Shot[] }> {
     const headers = await getAuthHeaders();
+    const { useMockMode } = getAppSettings();
 
     try {
         const response = await fetch(`${API_BASE}/generate`, {
@@ -102,17 +115,30 @@ export async function generateShots(params: {
         });
 
         if (!response.ok) {
-            // Fallback to mock mode
-            console.warn('[ShotService] Backend unavailable, using mock mode');
-            return generateMockShots(params);
+            let errorMessage = `Shot generation failed (${response.status})`;
+            try {
+                const errData = await response.json();
+                errorMessage = errData?.error || errData?.message || errorMessage;
+            } catch {
+                // keep default message
+            }
+
+            if (useMockMode) {
+                console.warn('[ShotService] Backend request failed, using mock mode:', errorMessage);
+                return generateMockShots(params);
+            }
+
+            throw new Error(errorMessage);
         }
 
         return await response.json();
     } catch (error) {
         console.error('[ShotService] Error:', error);
-        // Fallback to mock mode
-        console.log('[ShotService] Using mock mode as fallback');
-        return generateMockShots(params);
+        if (useMockMode) {
+            console.log('[ShotService] Using mock mode as fallback');
+            return generateMockShots(params);
+        }
+        throw error;
     }
 }
 
