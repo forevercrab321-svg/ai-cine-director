@@ -659,13 +659,58 @@ async function getMinimaxChatCompletion(systemInstruction: string, promptContent
         body: JSON.stringify(payload)
     });
 
-    if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Minimax API Error(${response.status}): ${errText} `);
+    const rawText = await response.text();
+    let data: any;
+    try {
+        data = JSON.parse(rawText);
+    } catch {
+        throw new Error(`Minimax API returned non-JSON response(${response.status}): ${rawText.slice(0, 300)}`);
     }
 
-    const data = await response.json();
+    if (!response.ok) {
+        throw new Error(`Minimax API Error(${response.status}): ${rawText.slice(0, 500)}`);
+    }
+
+    const statusCode = Number(data?.base_resp?.status_code ?? 0);
+    if (statusCode && statusCode !== 0) {
+        const statusMsg = data?.base_resp?.status_msg || data?.base_resp?.status_message || 'Unknown error';
+        throw new Error(`Minimax API business error(${statusCode}): ${statusMsg}`);
+    }
+
     return data;
+}
+
+function extractMinimaxText(responseData: any): string {
+    const content = responseData?.choices?.[0]?.message?.content;
+
+    if (typeof content === 'string' && content.trim()) {
+        return content.trim();
+    }
+
+    if (Array.isArray(content)) {
+        const merged = content
+            .map((part: any) => {
+                if (typeof part === 'string') return part;
+                if (typeof part?.text === 'string') return part.text;
+                return '';
+            })
+            .join(' ')
+            .trim();
+        if (merged) return merged;
+    }
+
+    const fallbackCandidates = [
+        responseData?.choices?.[0]?.text,
+        responseData?.reply,
+        responseData?.output_text,
+        responseData?.output?.text,
+        typeof responseData?.response === 'string' ? responseData.response : '',
+    ];
+
+    const fallback = fallbackCandidates.find((v) => typeof v === 'string' && v.trim().length > 0);
+    if (fallback) return fallback.trim();
+
+    throw new Error(`Minimax response missing text payload: ${JSON.stringify(responseData).slice(0, 500)}`);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1681,7 +1726,7 @@ You MUST return this EXACT JSON structure with EXACTLY ${targetScenes} scenes:
                 { temperature: 0.7, responseFormat: 'json_object' }
             );
 
-            responseText = minimaxResponse.choices[0].message.content;
+            responseText = extractMinimaxText(minimaxResponse);
         } catch (initialError: any) {
             console.error('[Minimax Generate] Primary call failed, retrying...', initialError.message);
             // Simple retry without JSON schema enforcement if it failed
@@ -1690,7 +1735,7 @@ You MUST return this EXACT JSON structure with EXACTLY ${targetScenes} scenes:
                 `Write a premium SHORT DRAMA based on: "${storyIdea}". Target total shots: ~${targetScenes}.`,
                 { temperature: 0.5 }
             );
-            responseText = retryResponse.choices[0].message.content;
+            responseText = extractMinimaxText(retryResponse);
         }
 
         const text = responseText;
@@ -1914,7 +1959,7 @@ A [age]-year-old [ethnicity] [female/male] with [face shape] face, [skin tone] s
             { model: 'MiniMax-VL-01', temperature: 0.1 }
         );
 
-        const result = (response.choices[0].message.content || '').trim();
+        const result = extractMinimaxText(response);
         console.log(`[Minimax Analyze] ✅ Result: ${result.substring(0, 120)}...`);
 
         if (!result || result.length < 20) {
@@ -2437,7 +2482,7 @@ You MUST return EXACTLY ONE JSON object strictly matching this schema. Return ex
                 `Break Scene ${scene_number || 1} into ${targetShots} shots. Scene description: ${visual_description}`,
                 { temperature: 0.6, responseFormat: 'json_object' }
             );
-            responseText = minimaxResponse.choices[0].message.content;
+            responseText = extractMinimaxText(minimaxResponse);
         } catch (initialError: any) {
             console.error('[Minimax Shots] Primary call failed, retrying...', initialError.message);
             const retryResponse: any = await getMinimaxChatCompletion(
@@ -2445,7 +2490,7 @@ You MUST return EXACTLY ONE JSON object strictly matching this schema. Return ex
                 `Break Scene ${scene_number || 1} into ${targetShots} shots. Scene description: ${visual_description}`,
                 { temperature: 0.5 }
             );
-            responseText = retryResponse.choices[0].message.content;
+            responseText = extractMinimaxText(retryResponse);
         }
 
         const text = responseText;
@@ -2602,7 +2647,7 @@ Example: {"image_prompt": "new prompt here", "dialogue": "new line here"}
                 `Rewrite fields [${fieldsStr}] for shot ${shotId}. ${user_instruction || ''}`,
                 { temperature: 0.7, responseFormat: 'json_object' }
             );
-            responseText = minimaxResponse.choices[0].message.content;
+            responseText = extractMinimaxText(minimaxResponse);
         } catch (initialError: any) {
             console.error('[Minimax Rewrite] Primary call failed, retrying...', initialError.message);
             const retryResponse: any = await getMinimaxChatCompletion(
@@ -2610,7 +2655,7 @@ Example: {"image_prompt": "new prompt here", "dialogue": "new line here"}
                 `Rewrite fields [${fieldsStr}] for shot ${shotId}. ${user_instruction || ''}`,
                 { temperature: 0.5 }
             );
-            responseText = retryResponse.choices[0].message.content;
+            responseText = extractMinimaxText(retryResponse);
         }
 
         const text = responseText;
