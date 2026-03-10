@@ -461,19 +461,19 @@ app.post('/api/auth/send-otp', async (req: any, res: any) => {
 
         // 3) Send email via Resend HTTP API
         const emailHtml = `
-    < div style = "font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;" >
-        <div style="text-align: center; margin-bottom: 32px;" >
-            <h1 style="font-size: 24px; font-weight: 800; color: #111; margin: 0;" >🎬 CINE - DIRECTOR AI </h1>
-                < p style = "color: #666; font-size: 12px; letter-spacing: 2px; margin-top: 4px;" > VISIONARY PRODUCTION SUITE </p>
-                    </div>
-                    < div style = "background: #f8f9fa; border-radius: 16px; padding: 32px; text-align: center;" >
-                        <h2 style="font-size: 20px; color: #111; margin: 0 0 12px;" > Your Login Code </h2>
-                    ${emailOtp ? `<div style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #4f46e5; background: white; border-radius: 12px; padding: 16px; margin: 16px 0; font-family: monospace;">${emailOtp}</div>` : ''}
-<p style="color: #666; font-size: 14px; margin: 16px 0 0;" > Or click the button below: </p>
-    < a href = "${actionLink}" style = "display: inline-block; background: #4f46e5; color: white; text-decoration: none; padding: 14px 32px; border-radius: 999px; font-weight: 700; font-size: 14px; margin-top: 16px;" > Log In to Studio </a>
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
+        <div style="text-align: center; margin-bottom: 32px;">
+            <h1 style="font-size: 24px; font-weight: 800; color: #111; margin: 0;">🎬 CINE-DIRECTOR AI</h1>
+            <p style="color: #666; font-size: 12px; letter-spacing: 2px; margin-top: 4px;">VISIONARY PRODUCTION SUITE</p>
         </div>
-        < p style = "color: #999; font-size: 11px; text-align: center; margin-top: 24px;" > This link expires in 10 minutes.If you didn't request this, ignore this email.</p>
-            </div>
+        <div style="background: #f8f9fa; border-radius: 16px; padding: 32px; text-align: center;">
+            <h2 style="font-size: 20px; color: #111; margin: 0 0 12px;">Your Login Code</h2>
+            ${emailOtp ? `<div style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #4f46e5; background: white; border-radius: 12px; padding: 16px; margin: 16px 0; font-family: monospace;">${emailOtp}</div>` : ''}
+            <p style="color: #666; font-size: 14px; margin: 16px 0 0;">Or click the button below:</p>
+            <a href="${actionLink}" style="display: inline-block; background: #4f46e5; color: white; text-decoration: none; padding: 14px 32px; border-radius: 999px; font-weight: 700; font-size: 14px; margin-top: 16px;">Log In to Studio</a>
+        </div>
+        <p style="color: #999; font-size: 11px; text-align: center; margin-top: 24px;">This link expires in 10 minutes. If you didn't request this, ignore this email.</p>
+    </div>
                 `;
 
         // Try custom domain first, fallback to onboarding@resend.dev
@@ -488,7 +488,7 @@ app.post('/api/auth/send-otp', async (req: any, res: any) => {
             const resendResp = await fetch('https://api.resend.com/emails', {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${resendKey} `,
+                    'Authorization': `Bearer ${resendKey}`,
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
@@ -653,7 +653,7 @@ async function getMinimaxChatCompletion(systemInstruction: string, promptContent
     const response = await fetch(MINIMAX_TEXT_API, {
         method: 'POST',
         headers: {
-            'Authorization': `Bearer ${apiKey} `,
+            'Authorization': `Bearer ${apiKey}`,
             'Content-Type': 'application/json'
         },
         body: JSON.stringify(payload)
@@ -906,7 +906,7 @@ async function downloadImageAsBase64(url: string): Promise<string> {
 
     console.log('[ImageProxy] Downloaded image, size:', buffer.length, 'bytes, type:', contentType);
 
-    return `data:${contentType}; base64, ${base64} `;
+    return `data:${contentType};base64,${base64}`;
 }
 
 // Preprocess input for video models - convert image URLs to base64
