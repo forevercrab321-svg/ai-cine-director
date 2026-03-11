@@ -135,6 +135,79 @@ function normalizeEntityType(value: unknown): 'character' | 'prop' | 'location' 
     return 'character';
 }
 
+function buildFallbackShotResult(params: {
+    sceneNumber: number;
+    targetShots: number;
+    visualDescription: string;
+    audioDescription?: string;
+    shotType?: string;
+    characterAnchor?: string;
+    lockedCharacters: Array<{ name: string; description: string }>;
+}) {
+    const cameras = ['wide', 'medium', 'over-shoulder', 'close', 'ecu', 'tracking', 'two-shot'];
+    const movements = ['static', 'push-in', 'pan-left', 'dolly', 'tilt-up', 'tracking', 'pull-out'];
+    const lenses = ['24mm anamorphic', '35mm', '50mm', '85mm', '100mm macro', '70mm'];
+    const beats = [
+        'establishes spatial relationship and threat distance',
+        'detective shifts weight and circles half-step clockwise',
+        'rival raises left hand and glances to rooftop edge',
+        'both characters close distance by one step and pause',
+        'detective reaches coat pocket while rival leans back',
+        'wind intensifies, coat fabric whips, both reframe stance',
+        'final pre-action freeze with micro head-turn and breath hold',
+    ];
+
+    const charNames = params.lockedCharacters.length > 0
+        ? params.lockedCharacters.map((c) => c.name)
+        : ['Main Character'];
+
+    const shots = Array.from({ length: Math.max(1, params.targetShots) }).map((_, idx) => {
+        const shotNo = idx + 1;
+        const camera = cameras[idx % cameras.length];
+        const movement = movements[idx % movements.length];
+        const lens = lenses[idx % lenses.length];
+        const beat = beats[idx % beats.length];
+        const primaryChar = charNames[idx % charNames.length];
+
+        const imagePrompt = [
+            params.characterAnchor || params.lockedCharacters[0]?.description || primaryChar,
+            `Scene ${params.sceneNumber}, shot ${shotNo}`,
+            params.visualDescription,
+            `camera ${camera}, lens ${lens}, movement ${movement}`,
+            'cinematic contrast lighting, high detail, coherent continuity',
+        ].filter(Boolean).join('. ');
+
+        return {
+            shot_number: shotNo,
+            duration_sec: 3 + (idx % 3),
+            location_type: 'EXT',
+            location: `Scene ${params.sceneNumber} location`,
+            time_of_day: 'dusk',
+            characters: charNames,
+            action: `Shot ${shotNo}: ${primaryChar} ${beat}.`,
+            dialogue: '',
+            camera,
+            lens,
+            movement,
+            composition: `Shot ${shotNo} framing with depth layering and clear eyeline continuity`,
+            lighting: 'noir rim light with practical city neon spill',
+            art_direction: params.shotType || 'cinematic staging',
+            mood: 'high tension',
+            sfx_vfx: 'subtle atmosphere haze',
+            audio_notes: params.audioDescription || 'wind and distant traffic',
+            continuity_notes: `Shot ${shotNo} must preserve costume, face, and spatial axis from shot ${Math.max(1, shotNo - 1)}.`,
+            image_prompt: imagePrompt,
+            negative_prompt: 'blurry, duplicate pose, extra limbs, identity drift',
+            video_prompt: `Shot ${shotNo}. Camera ${movement}. ${primaryChar} performs a distinct physical beat: ${beat}. Maintain exact character identity and rooftop blocking continuity.`,
+        };
+    });
+
+    return {
+        scene_title: `Scene ${params.sceneNumber}`,
+        shots,
+    };
+}
+
 interface StylePreset {
     id: string;
     label: string;
@@ -2360,7 +2433,6 @@ app.post('/api/shots/generate', async (req: any, res: any) => {
             logDeveloperAccess(userEmail, `shots:generate:cost=${COST}`);
         }
 
-        const ai = getGeminiAI();
         const targetShots = num_shots || 5;
 
         const systemInstruction = `
@@ -2476,6 +2548,7 @@ You MUST return EXACTLY ONE JSON object strictly matching this schema. Return ex
 }`;
 
         let responseText = '';
+        let result: any = null;
         try {
             const minimaxResponse: any = await getMinimaxChatCompletion(
                 systemInstruction,
@@ -2485,37 +2558,66 @@ You MUST return EXACTLY ONE JSON object strictly matching this schema. Return ex
             responseText = extractMinimaxText(minimaxResponse);
         } catch (initialError: any) {
             console.error('[Minimax Shots] Primary call failed, retrying...', initialError.message);
-            const retryResponse: any = await getMinimaxChatCompletion(
-                systemInstruction + "\nOutput strictly valid JSON, no markdown formatting.",
-                `Break Scene ${scene_number || 1} into ${targetShots} shots. Scene description: ${visual_description}`,
-                { temperature: 0.5 }
-            );
-            responseText = extractMinimaxText(retryResponse);
-        }
+            try {
+                const retryResponse: any = await getMinimaxChatCompletion(
+                    systemInstruction + "\nOutput strictly valid JSON, no markdown formatting.",
+                    `Break Scene ${scene_number || 1} into ${targetShots} shots. Scene description: ${visual_description}`,
+                    { temperature: 0.5 }
+                );
+                responseText = extractMinimaxText(retryResponse);
+            } catch (retryError: any) {
+                const msg = String(retryError?.message || retryError || '');
+                const isMinimaxAuthError = /business error\(1004\)|MINIMAX_API_KEY is missing|login fail/i.test(msg);
+                if (!isMinimaxAuthError) throw retryError;
 
-        const text = responseText;
-        if (!text) throw new Error('No response from AI');
-
-        // Try to parse JSON, with fallback for malformed responses
-        let result;
-        try {
-            result = JSON.parse(text);
-        } catch (parseError: any) {
-            console.warn('[Shots Generate] JSON parse failed, attempting to fix...', parseError.message);
-            // Try to extract JSON from the response
-            const jsonMatch = text.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                try {
-                    result = JSON.parse(jsonMatch[0]);
-                } catch (e2: any) {
-                    throw new Error(`AI response was not valid JSON: ${text.substring(0, 200)}...`);
-                }
-            } else {
-                throw new Error(`AI response was not valid JSON: ${text.substring(0, 200)}...`);
+                console.warn('[Shots Generate] Minimax unavailable, using deterministic fallback shot planner.');
+                result = buildFallbackShotResult({
+                    sceneNumber: Number(scene_number) || 1,
+                    targetShots,
+                    visualDescription: sanitizePromptInput(visual_description, 1800),
+                    audioDescription: sanitizePromptInput(audio_description, 400),
+                    shotType: sanitizePromptInput(shot_type, 200),
+                    characterAnchor: sanitizePromptInput(character_anchor, 1000),
+                    lockedCharacters,
+                });
             }
         }
 
-        const enrichedShots = (result.shots || []).map((s: any, idx: number) => {
+        if (!result) {
+            const text = responseText;
+            if (!text) throw new Error('No response from AI');
+
+            // Try to parse JSON, with fallback for malformed responses
+            try {
+                result = JSON.parse(text);
+            } catch (parseError: any) {
+                console.warn('[Shots Generate] JSON parse failed, attempting to fix...', parseError.message);
+                // Try to extract JSON from the response
+                const jsonMatch = text.match(/\{[\s\S]*\}/);
+                if (jsonMatch) {
+                    try {
+                        result = JSON.parse(jsonMatch[0]);
+                    } catch (e2: any) {
+                        throw new Error(`AI response was not valid JSON: ${text.substring(0, 200)}...`);
+                    }
+                } else {
+                    throw new Error(`AI response was not valid JSON: ${text.substring(0, 200)}...`);
+                }
+            }
+        }
+
+        const shotArray = Array.isArray(result?.shots) ? result.shots : [];
+        const sourceShots = shotArray.length > 0 ? shotArray : buildFallbackShotResult({
+            sceneNumber: Number(scene_number) || 1,
+            targetShots,
+            visualDescription: sanitizePromptInput(visual_description, 1800),
+            audioDescription: sanitizePromptInput(audio_description, 400),
+            shotType: sanitizePromptInput(shot_type, 200),
+            characterAnchor: sanitizePromptInput(character_anchor, 1000),
+            lockedCharacters,
+        }).shots;
+
+        const enrichedShots = sourceShots.map((s: any, idx: number) => {
             const rawCharacters = Array.isArray(s.characters) ? s.characters : [];
             let normalizedCharacters = rawCharacters
                 .map((c: any) => sanitizePromptInput(c, 120))
