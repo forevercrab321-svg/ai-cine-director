@@ -1451,6 +1451,45 @@ const getGeminiAI = () => {
     return new GoogleGenAI({ apiKey });
 };
 
+const GEMINI_TEXT_MODEL = 'gemini-2.0-flash';
+
+const getGeminiTextCompletion = async (promptContent: any, options: {
+    systemInstruction?: string;
+    temperature?: number;
+    responseMimeType?: string;
+    responseSchema?: any;
+    model?: string;
+    maxOutputTokens?: number;
+} = {}) => {
+    const ai = getGeminiAI();
+    const response: any = await ai.models.generateContent({
+        model: options.model || GEMINI_TEXT_MODEL,
+        contents: promptContent,
+        config: {
+            systemInstruction: options.systemInstruction,
+            temperature: options.temperature ?? 0.7,
+            responseMimeType: options.responseMimeType,
+            responseSchema: options.responseSchema,
+            maxOutputTokens: options.maxOutputTokens,
+        },
+    });
+
+    const directText = typeof response?.text === 'string' ? response.text.trim() : '';
+    if (directText) return directText;
+
+    const fallbackText = Array.isArray(response?.candidates)
+        ? response.candidates
+            .flatMap((candidate: any) => Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [])
+            .map((part: any) => typeof part?.text === 'string' ? part.text : '')
+            .join(' ')
+            .trim()
+        : '';
+
+    if (fallbackText) return fallbackText;
+
+    throw new Error(`Gemini returned empty response: ${JSON.stringify(response).slice(0, 500)}`);
+};
+
 const geminiResponseSchema = {
     // @ts-ignore
     type: Type.OBJECT,
@@ -1461,6 +1500,25 @@ const geminiResponseSchema = {
         visual_style: { type: Type.STRING },
         // @ts-ignore
         characterAnchor: { type: Type.STRING },
+        // ★ FIX: story_entities MUST be in schema — Gemini structured output only returns schema-declared fields.
+        // Without this, all character definitions are silently stripped, breaking the consistency lock chain.
+        story_entities: {
+            // @ts-ignore
+            type: Type.ARRAY,
+            items: {
+                // @ts-ignore
+                type: Type.OBJECT,
+                properties: {
+                    // @ts-ignore
+                    type: { type: Type.STRING },
+                    // @ts-ignore
+                    name: { type: Type.STRING },
+                    // @ts-ignore
+                    description: { type: Type.STRING },
+                },
+                required: ['type', 'name', 'description'],
+            },
+        },
         scenes: {
             // @ts-ignore
             type: Type.ARRAY,
@@ -1494,11 +1552,9 @@ const geminiResponseSchema = {
                 },
                 required: ['scene_id', 'location', 'shots'],
             },
-            // ★ 移除maxItems限制（会导致schema约束过多错误）
-            // 改用后端逻辑在生成后根据targetScenes进行切片过滤
         },
     },
-    required: ['project_title', 'visual_style', 'characterAnchor', 'scenes'],
+    required: ['project_title', 'visual_style', 'characterAnchor', 'story_entities', 'scenes'],
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -1594,10 +1650,8 @@ app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
         if (!safeStoryIdea) return res.status(400).json({ error: 'Missing storyIdea' });
 
         const targetScenes = Math.min(Math.max(Number(sceneCount) || 5, 1), 50);
-        // Estimate approx 1-3 shots per scene for pacing
-        const approxTotalShots = targetScenes * 2;
 
-        console.log(`[Minimax Generate] Requesting exactly ${targetScenes} unique scenes...`);
+        console.log(`[Gemini Generate] Requesting exactly ${targetScenes} unique scenes...`);
 
         const authHeader = `Bearer ${req.accessToken}`;
         const userId = req.user?.id;
@@ -1793,22 +1847,26 @@ You MUST return this EXACT JSON structure with EXACTLY ${targetScenes} scenes:
   ]
 }`;
 
-            const minimaxResponse: any = await getMinimaxChatCompletion(
-                systemInstruction,
+            responseText = await getGeminiTextCompletion(
                 promptContent,
-                { temperature: 0.7, responseFormat: 'json_object' }
+                {
+                    systemInstruction,
+                    temperature: 0.7,
+                    responseMimeType: 'application/json',
+                    responseSchema: geminiResponseSchema,
+                }
             );
-
-            responseText = extractMinimaxText(minimaxResponse);
         } catch (initialError: any) {
-            console.error('[Minimax Generate] Primary call failed, retrying...', initialError.message);
+            console.error('[Gemini Generate] Primary call failed, retrying...', initialError.message);
             // Simple retry without JSON schema enforcement if it failed
-            const retryResponse: any = await getMinimaxChatCompletion(
-                systemInstruction + "\nOutput strictly valid JSON, no markdown formatting.",
+            responseText = await getGeminiTextCompletion(
                 `Write a premium SHORT DRAMA based on: "${storyIdea}". Target total shots: ~${targetScenes}.`,
-                { temperature: 0.5 }
+                {
+                    systemInstruction: systemInstruction + "\nOutput strictly valid JSON, no markdown formatting.",
+                    temperature: 0.5,
+                    responseMimeType: 'application/json',
+                }
             );
-            responseText = extractMinimaxText(retryResponse);
         }
 
         const text = responseText;
@@ -1984,8 +2042,6 @@ app.post('/api/gemini/analyze', requireAuth, async (req: any, res: any) => {
     try {
         const { base64Data } = req.body;
         if (!base64Data) return res.status(400).json({ error: 'Missing base64Data' });
-        const ai = getGeminiAI();
-
         // ★ 从 data URL 或 base64 魔术字节检测 MIME 类型
         const cleanBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
         let mimeType = 'image/jpeg'; // 默认 JPEG（照片最常见）
@@ -2020,29 +2076,31 @@ A [age]-year-old [ethnicity] [female/male] with [face shape] face, [skin tone] s
 4. Include ALL visible clothing and accessories
 5. Output ONLY the description paragraph, nothing else`;
 
-        const imagePayload = base64Data.startsWith('data:') ? base64Data : `data:${mimeType};base64,${cleanBase64}`;
-        const contentArray = [
-            { type: "image_url", image_url: { url: imagePayload } },
-            { type: "text", text: analyzePrompt }
-        ];
-
-        const response: any = await getMinimaxChatCompletion(
-            "You are an expert character designer and AI vision assistant.",
-            contentArray,
-            { model: 'MiniMax-VL-01', temperature: 0.1 }
+        const result = await getGeminiTextCompletion(
+            [{
+                role: 'user',
+                parts: [
+                    { inlineData: { mimeType, data: cleanBase64 } },
+                    { text: analyzePrompt }
+                ]
+            }],
+            {
+                systemInstruction: 'You are an expert character designer and AI vision assistant.',
+                model: GEMINI_TEXT_MODEL,
+                temperature: 0.1,
+                maxOutputTokens: 500,
+            }
         );
-
-        const result = extractMinimaxText(response);
-        console.log(`[Minimax Analyze] ✅ Result: ${result.substring(0, 120)}...`);
+        console.log(`[Gemini Analyze] ✅ Result: ${result.substring(0, 120)}...`);
 
         if (!result || result.length < 20) {
-            console.error('[Minimax Analyze] ⚠️ Empty or too-short result from Minimax Vision');
-            return res.status(500).json({ error: 'Minimax Vision returned empty result', anchor: 'A cinematic character' });
+            console.error('[Gemini Analyze] ⚠️ Empty or too-short result from Gemini Vision');
+            return res.status(500).json({ error: 'Gemini Vision returned empty result', anchor: 'A cinematic character' });
         }
 
         res.json({ anchor: result });
     } catch (error: any) {
-        console.error('[Minimax Analyze] ❌ Error:', error.message);
+        console.error('[Gemini Analyze] ❌ Error:', error.message);
         res.status(500).json({ error: error.message || 'Analyze failed', anchor: 'A cinematic character' });
     }
 });
@@ -2336,7 +2394,7 @@ const directorSchema = {
     properties: {
         // @ts-ignore
         scene_title: { type: Type.STRING },
-        segments: {
+        shots: {
             // @ts-ignore
             type: Type.ARRAY,
             items: {
@@ -2550,27 +2608,28 @@ You MUST return EXACTLY ONE JSON object strictly matching this schema. Return ex
         let responseText = '';
         let result: any = null;
         try {
-            const minimaxResponse: any = await getMinimaxChatCompletion(
-                systemInstruction,
+            responseText = await getGeminiTextCompletion(
                 `Break Scene ${scene_number || 1} into ${targetShots} shots. Scene description: ${visual_description}`,
-                { temperature: 0.6, responseFormat: 'json_object' }
+                {
+                    systemInstruction,
+                    temperature: 0.6,
+                    responseMimeType: 'application/json',
+                    responseSchema: directorSchema,
+                }
             );
-            responseText = extractMinimaxText(minimaxResponse);
         } catch (initialError: any) {
-            console.error('[Minimax Shots] Primary call failed, retrying...', initialError.message);
+            console.error('[Gemini Shots] Primary call failed, retrying...', initialError.message);
             try {
-                const retryResponse: any = await getMinimaxChatCompletion(
-                    systemInstruction + "\nOutput strictly valid JSON, no markdown formatting.",
+                responseText = await getGeminiTextCompletion(
                     `Break Scene ${scene_number || 1} into ${targetShots} shots. Scene description: ${visual_description}`,
-                    { temperature: 0.5 }
+                    {
+                        systemInstruction: systemInstruction + "\nOutput strictly valid JSON, no markdown formatting.",
+                        temperature: 0.5,
+                        responseMimeType: 'application/json',
+                    }
                 );
-                responseText = extractMinimaxText(retryResponse);
             } catch (retryError: any) {
-                const msg = String(retryError?.message || retryError || '');
-                const isMinimaxAuthError = /business error\(1004\)|MINIMAX_API_KEY is missing|login fail/i.test(msg);
-                if (!isMinimaxAuthError) throw retryError;
-
-                console.warn('[Shots Generate] Minimax unavailable, using deterministic fallback shot planner.');
+                console.warn('[Shots Generate] Gemini unavailable, using deterministic fallback shot planner.', retryError?.message || retryError);
                 result = buildFallbackShotResult({
                     sceneNumber: Number(scene_number) || 1,
                     targetShots,
@@ -2708,7 +2767,6 @@ app.post('/api/shots/:shotId/rewrite', async (req: any, res: any) => {
             logDeveloperAccess(userEmail, `shots:rewrite:cost=${COST}`);
         }
 
-        const ai = getGeminiAI();
         const shotJson = JSON.stringify(current_shot, null, 2);
         const fieldsStr = fields_to_rewrite.join(', ');
         const lockedStr = (locked_fields || []).join(', ');
@@ -2744,20 +2802,24 @@ Example: {"image_prompt": "new prompt here", "dialogue": "new line here"}
 
         let responseText = '';
         try {
-            const minimaxResponse: any = await getMinimaxChatCompletion(
-                systemInstruction,
+            responseText = await getGeminiTextCompletion(
                 `Rewrite fields [${fieldsStr}] for shot ${shotId}. ${user_instruction || ''}`,
-                { temperature: 0.7, responseFormat: 'json_object' }
+                {
+                    systemInstruction,
+                    temperature: 0.7,
+                    responseMimeType: 'application/json',
+                }
             );
-            responseText = extractMinimaxText(minimaxResponse);
         } catch (initialError: any) {
-            console.error('[Minimax Rewrite] Primary call failed, retrying...', initialError.message);
-            const retryResponse: any = await getMinimaxChatCompletion(
-                systemInstruction + "\nOutput strictly valid JSON, no markdown formatting.",
+            console.error('[Gemini Rewrite] Primary call failed, retrying...', initialError.message);
+            responseText = await getGeminiTextCompletion(
                 `Rewrite fields [${fieldsStr}] for shot ${shotId}. ${user_instruction || ''}`,
-                { temperature: 0.5 }
+                {
+                    systemInstruction: systemInstruction + "\nOutput strictly valid JSON, no markdown formatting.",
+                    temperature: 0.5,
+                    responseMimeType: 'application/json',
+                }
             );
-            responseText = extractMinimaxText(retryResponse);
         }
 
         const text = responseText;
