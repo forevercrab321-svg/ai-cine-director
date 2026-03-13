@@ -246,7 +246,18 @@ const SceneSection: React.FC<{
                 // ★ Combine the scene's full context with the specific action to prevent clothing/logic hallucinations
                 const motionCore = (shot.video_prompt || shot.action || '').trim();
                 const fallbackMotion = `Camera ${shot.movement || 'static'}. Subject performs a distinct beat for shot ${shot.shot_number}.`;
-                const richVideoPrompt = `Shot ${shot.shot_number} of Scene ${scene.scene_number}. Visual Context: ${shot.image_prompt || scene.visual_description || 'Cinematic scene'}. Cinematic Action: ${motionCore || fallbackMotion}. Continuity: ${shot.continuity_notes || 'Maintain character identity and spatial continuity.'}`;
+                const lockedCastLine = (project.story_entities || [])
+                    .filter((e: any) => e?.type === 'character' && e?.is_locked)
+                    .map((e: any) => `${e.name}: ${e.description}`)
+                    .join(' | ');
+                const identityLock = (project.character_anchor || '').trim();
+                const hardContinuityRules = [
+                    shot.continuity_notes || 'Maintain character identity and spatial continuity.',
+                    identityLock ? `Identity Lock: ${identityLock}` : '',
+                    lockedCastLine ? `Locked Cast: ${lockedCastLine}` : '',
+                    'Hard Rules: no face drift, no wardrobe change, no age/gender swap, keep hairstyle/body proportions, preserve left-right screen direction and camera axis continuity.'
+                ].filter(Boolean).join(' ');
+                const richVideoPrompt = `Shot ${shot.shot_number} of Scene ${scene.scene_number}. Visual Context: ${shot.image_prompt || scene.visual_description || 'Cinematic scene'}. Cinematic Action: ${motionCore || fallbackMotion}. Continuity: ${hardContinuityRules}`;
                 const videoRes = await startVideoTask(
                     richVideoPrompt, currentStartImage, videoModel, 'none', 'storyboard', 'standard', 6, 24, '720p', project.character_anchor, '16:9', { storyEntities: project.story_entities }
                 );
@@ -681,7 +692,18 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                     // ★ Combine the context to prevent video hallucination
                     const motionCore = (shot.video_prompt || shot.action || '').trim();
                     const fallbackMotion = `Camera ${shot.movement || 'static'}. Subject performs a distinct beat for shot ${shot.shot_number}.`;
-                    const richVideoPrompt = `Shot ${shot.shot_number} of Scene ${scene.scene_number}. Visual Context: ${shot.image_prompt || scene.visual_description || 'Cinematic scene'}. Cinematic Action: ${motionCore || fallbackMotion}. Continuity: ${shot.continuity_notes || 'Maintain character identity and spatial continuity.'}`;
+                    const lockedCastLine = (project.story_entities || [])
+                        .filter((e: any) => e?.type === 'character' && e?.is_locked)
+                        .map((e: any) => `${e.name}: ${e.description}`)
+                        .join(' | ');
+                    const identityLock = (project.character_anchor || '').trim();
+                    const hardContinuityRules = [
+                        shot.continuity_notes || 'Maintain character identity and spatial continuity.',
+                        identityLock ? `Identity Lock: ${identityLock}` : '',
+                        lockedCastLine ? `Locked Cast: ${lockedCastLine}` : '',
+                        'Hard Rules: no face drift, no wardrobe change, no age/gender swap, keep hairstyle/body proportions, preserve left-right screen direction and camera axis continuity.'
+                    ].filter(Boolean).join(' ');
+                    const richVideoPrompt = `Shot ${shot.shot_number} of Scene ${scene.scene_number}. Visual Context: ${shot.image_prompt || scene.visual_description || 'Cinematic scene'}. Cinematic Action: ${motionCore || fallbackMotion}. Continuity: ${hardContinuityRules}`;
                     // 发送视频请求
                     const videoRes = await startVideoTask(
                         richVideoPrompt, currentStartImage, settings.videoModel, 'none', 'storyboard', 'standard', 6, 24, '720p', project.character_anchor, '16:9', { storyEntities: project.story_entities }

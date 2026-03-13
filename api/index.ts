@@ -135,6 +135,57 @@ function normalizeEntityType(value: unknown): 'character' | 'prop' | 'location' 
     return 'character';
 }
 
+function parseAiJsonWithRepair(rawText: string, contextLabel: string): any {
+    const input = String(rawText || '').trim();
+    if (!input) throw new Error(`[${contextLabel}] Empty AI response`);
+
+    const extractJsonBody = (text: string) => {
+        const noFence = text
+            .replace(/```json/gi, '')
+            .replace(/```/g, '')
+            .trim();
+        const start = noFence.indexOf('{');
+        const end = noFence.lastIndexOf('}');
+        if (start >= 0 && end > start) return noFence.slice(start, end + 1);
+        return noFence;
+    };
+
+    const normalizeBase = (text: string) => text
+        .replace(/[\u201C\u201D]/g, '"')
+        .replace(/[\u2018\u2019]/g, "'")
+        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+        .trim();
+
+    const toQuotedKeys = (text: string) => text.replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_\-]*)(\s*:)/g, '$1"$2"$3');
+    const dropTrailingCommas = (text: string) => text.replace(/,\s*([}\]])/g, '$1');
+    const singleQuoteKeys = (text: string) => text.replace(/([{,]\s*)'([^'\\]+?)'\s*:/g, '$1"$2":');
+    const singleQuoteValues = (text: string) => text.replace(/:\s*'([^'\\]*(?:\\.[^'\\]*)*)'/g, (_m, v) => {
+        const escaped = String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        return `: "${escaped}"`;
+    });
+
+    const body = extractJsonBody(input);
+    const candidates = [
+        body,
+        normalizeBase(body),
+        dropTrailingCommas(normalizeBase(body)),
+        toQuotedKeys(dropTrailingCommas(normalizeBase(body))),
+        singleQuoteValues(singleQuoteKeys(toQuotedKeys(dropTrailingCommas(normalizeBase(body))))),
+    ];
+
+    let lastError = '';
+    for (const candidate of candidates) {
+        if (!candidate || !candidate.trim()) continue;
+        try {
+            return JSON.parse(candidate);
+        } catch (err: any) {
+            lastError = err?.message || String(err);
+        }
+    }
+
+    throw new Error(`AI response was not valid JSON: ${body.substring(0, 240)}... (${lastError})`);
+}
+
 function buildFallbackShotResult(params: {
     sceneNumber: number;
     targetShots: number;
@@ -1872,22 +1923,12 @@ You MUST return this EXACT JSON structure with EXACTLY ${targetScenes} scenes:
         const text = responseText;
         if (!text) throw new Error('No response from AI Director.');
 
-        // Try to parse JSON, with fallback for malformed responses
         let parsedData;
         try {
-            parsedData = JSON.parse(text);
+            parsedData = parseAiJsonWithRepair(text, 'Gemini Generate');
         } catch (parseError: any) {
-            console.warn('[Gemini Generate] JSON parse failed, attempting to fix...', parseError.message);
-            const jsonMatch = text.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                try {
-                    parsedData = JSON.parse(jsonMatch[0]);
-                } catch (e2: any) {
-                    throw new Error(`AI response was not valid JSON: ${text.substring(0, 200)}...`);
-                }
-            } else {
-                throw new Error(`AI response was not valid JSON: ${text.substring(0, 200)}...`);
-            }
+            console.warn('[Gemini Generate] JSON parse failed after repair attempts:', parseError.message);
+            throw parseError;
         }
 
         // Extract and map the top-level project data
@@ -2646,22 +2687,11 @@ You MUST return EXACTLY ONE JSON object strictly matching this schema. Return ex
             const text = responseText;
             if (!text) throw new Error('No response from AI');
 
-            // Try to parse JSON, with fallback for malformed responses
             try {
-                result = JSON.parse(text);
+                result = parseAiJsonWithRepair(text, 'Shots Generate');
             } catch (parseError: any) {
-                console.warn('[Shots Generate] JSON parse failed, attempting to fix...', parseError.message);
-                // Try to extract JSON from the response
-                const jsonMatch = text.match(/\{[\s\S]*\}/);
-                if (jsonMatch) {
-                    try {
-                        result = JSON.parse(jsonMatch[0]);
-                    } catch (e2: any) {
-                        throw new Error(`AI response was not valid JSON: ${text.substring(0, 200)}...`);
-                    }
-                } else {
-                    throw new Error(`AI response was not valid JSON: ${text.substring(0, 200)}...`);
-                }
+                console.warn('[Shots Generate] JSON parse failed after repair attempts:', parseError.message);
+                throw parseError;
             }
         }
 
@@ -2701,7 +2731,8 @@ You MUST return EXACTLY ONE JSON object strictly matching this schema. Return ex
             movement: s.movement || 'static', composition: s.composition || '',
             lighting: s.lighting || '', art_direction: s.art_direction || '',
             mood: s.mood || '', sfx_vfx: s.sfx_vfx || '',
-            audio_notes: s.audio_notes || '', continuity_notes: s.continuity_notes || '',
+            audio_notes: s.audio_notes || '',
+            continuity_notes: s.continuity_notes || `Maintain exact identity lock. ${character_anchor || lockedCharacters.map(c => c.description).join(' | ') || 'Keep same protagonist face, hairstyle, body proportions, and wardrobe.'} Preserve left-right screen direction and no costume drift.`,
             image_prompt: s.image_prompt || '', video_prompt: s.video_prompt || '', negative_prompt: s.negative_prompt || '',
             seed_hint: null, reference_policy: 'anchor' as const,
             status: 'draft' as const, locked_fields: [], version: 1,
@@ -2825,22 +2856,12 @@ Example: {"image_prompt": "new prompt here", "dialogue": "new line here"}
         const text = responseText;
         if (!text) throw new Error('No response from AI');
 
-        // Try to parse JSON, with fallback for malformed responses
         let rewrittenFields;
         try {
-            rewrittenFields = JSON.parse(text);
+            rewrittenFields = parseAiJsonWithRepair(text, 'Shot Rewrite');
         } catch (parseError: any) {
-            console.warn('[Shot Rewrite] JSON parse failed, attempting to fix...', parseError.message);
-            const jsonMatch = text.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                try {
-                    rewrittenFields = JSON.parse(jsonMatch[0]);
-                } catch (e2: any) {
-                    throw new Error(`AI response was not valid JSON: ${text.substring(0, 200)}...`);
-                }
-            } else {
-                throw new Error(`AI response was not valid JSON: ${text.substring(0, 200)}...`);
-            }
+            console.warn('[Shot Rewrite] JSON parse failed after repair attempts:', parseError.message);
+            throw parseError;
         }
         for (const locked of (locked_fields || [])) delete rewrittenFields[locked];
         for (const key of Object.keys(rewrittenFields)) {
