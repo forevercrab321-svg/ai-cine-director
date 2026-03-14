@@ -2718,13 +2718,33 @@ You MUST return EXACTLY ONE JSON object strictly matching this schema. Return ex
 
         if (!result) {
             const text = responseText;
-            if (!text) throw new Error('No response from AI');
 
-            try {
-                result = parseAiJsonWithRepair(text, 'Shots Generate');
-            } catch (parseError: any) {
-                console.warn('[Shots Generate] JSON parse failed after repair attempts:', parseError.message);
-                throw parseError;
+            if (!text) {
+                console.warn('[Shots Generate] Empty AI response, using deterministic fallback shot planner.');
+                result = buildFallbackShotResult({
+                    sceneNumber: Number(scene_number) || 1,
+                    targetShots,
+                    visualDescription: sanitizePromptInput(visual_description, 1800),
+                    audioDescription: sanitizePromptInput(audio_description, 400),
+                    shotType: sanitizePromptInput(shot_type, 200),
+                    characterAnchor: sanitizePromptInput(character_anchor, 1000),
+                    lockedCharacters,
+                });
+            } else {
+                try {
+                    result = parseAiJsonWithRepair(text, 'Shots Generate');
+                } catch (parseError: any) {
+                    console.warn('[Shots Generate] JSON parse failed after repair attempts, using deterministic fallback shot planner:', parseError.message);
+                    result = buildFallbackShotResult({
+                        sceneNumber: Number(scene_number) || 1,
+                        targetShots,
+                        visualDescription: sanitizePromptInput(visual_description, 1800),
+                        audioDescription: sanitizePromptInput(audio_description, 400),
+                        shotType: sanitizePromptInput(shot_type, 200),
+                        characterAnchor: sanitizePromptInput(character_anchor, 1000),
+                        lockedCharacters,
+                    });
+                }
             }
         }
 
