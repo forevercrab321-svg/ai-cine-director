@@ -627,10 +627,11 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                     const shot = sceneShots[i];
                     console.log(`\n🎬 [Global Chain] Scene ${scene.scene_number} --- 开始制作第 ${i + 1} 镜 ---`);
                     let currentStartImage: string;
+                    const isFirstShotOfWholeFilm = sIdx === 0 && i === 0;
 
-                    // 全剧【唯一奇点】：第一场戏的第一个镜头，或者每个Scene的第一个镜头
-                    if (i === 0) {
-                        // ★ 硬切：每个场景的第一镜必须重铸人物，拒绝继承前一场的尾帧！
+                    // 全剧严格连续：仅首镜允许生图；其余镜头（含跨场）必须继承上一镜尾帧
+                    if (isFirstShotOfWholeFilm) {
+                        // ★ 首镜：允许用锚点生图初始化整片锁链
                         // 优先级 1: 存量用户生成图片 (带有背景)
                         // 优先级 2: 场次专属定妆图 Base64 → 全局角色照片 → 自动提取的首帧
                         const sceneAnchorRef = scene.scene_reference_image_base64 || referenceImageDataUrl || globalAutoAnchorBase64;
@@ -682,10 +683,20 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                             }));
                         }
                     } else {
-                        // ★ 软接：同一个Scene内部的连续镜头，坚决使用尾帧锁链
-                        setChainLog(`场 ${scene.scene_number} 镜 ${i + 1}：(同一场内) 正在强行拾取上一镜视频尾帧...`);
-                        if (!globalTailFrameBase64) throw new Error("链条断裂：未能获取到上一镜头尾帧，请检查是否有超时中断");
-                        currentStartImage = globalTailFrameBase64;
+                        setChainLog(`场 ${scene.scene_number} 镜 ${i + 1}：正在继承上一镜尾帧（全片无跳切）...`);
+                        if (globalTailFrameBase64) {
+                            currentStartImage = globalTailFrameBase64;
+                        } else {
+                            // ★ 安全兜底：如果尾帧意外丢失，立即回退锚点生图，避免整链崩溃
+                            const sceneAnchorRef = scene.scene_reference_image_base64 || referenceImageDataUrl || globalAutoAnchorBase64;
+                            setChainLog(`场 ${scene.scene_number} 镜 ${i + 1}：⚠️ 未找到上一镜尾帧，正在使用锚点紧急重建起始帧...`);
+                            currentStartImage = await generateImage(
+                                shot.image_prompt || scene.visual_description,
+                                'flux_schnell', 'none', '16:9', project.character_anchor,
+                                sceneAnchorRef,
+                                project.story_entities
+                            );
+                        }
                     }
 
                     setChainLog(`场 ${scene.scene_number} 镜 ${i + 1}：正在基于物理引擎渲染动态视频...`);

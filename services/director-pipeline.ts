@@ -122,6 +122,7 @@ export const generateSceneChain = async (
 ) => {
   let _previousVideoLastFrame: string | null = null; // Unused, but kept for TS compilation if needed
   let globalAutoAnchorBase64: string | null = null; // ★ 新增：全片霸权面部锚点
+  let globalTailFrameBase64: string | null = null; // ★ 全片连续基准：上一镜尾帧
   const videoUrls: string[] = [];
 
   for (let i = 0; i < storyboard.length; i++) {
@@ -141,33 +142,43 @@ export const generateSceneChain = async (
         onProgress({ index: i, stage: "video_done", videoUrl: existingUrl });
       }
 
-      // ★ 核心一致性补救：如果我们因为缓存跳过了全片第一场的生成，必须设法找回它的起步图作为后续的人脸垫图
-      if (i === 0 && !referenceImageBase64) {
-        globalAutoAnchorBase64 = shot.image_url || null;
-        console.log(`✅ [第 ${i + 1} 场 SKIP] 初始化霸权缓存首图: ${globalAutoAnchorBase64 ? '成功' : '失败'}`);
+      try {
+        globalTailFrameBase64 = await extractLastFrameServerSide(existingUrl);
+        if (i === 0 && !referenceImageBase64) {
+          globalAutoAnchorBase64 = shot.image_url || globalTailFrameBase64 || null;
+          console.log(`✅ [第 ${i + 1} 场 SKIP] 初始化全片连续锚点: ${globalAutoAnchorBase64 ? '成功' : '失败'}`);
+        }
+      } catch (extractErr: any) {
+        console.warn(`⚠️ [第 ${i + 1} 场 SKIP] 已有视频尾帧提取失败: ${extractErr?.message || extractErr}`);
       }
 
       continue; // Skip the heavy generation part
     }
 
-    // ★ 全片一致性升级：每个Scene生成新背景(Hard Cut)，但死死锁住首图的人脸！
-    console.log(`🚀 [第 ${i + 1} 场] 正在强制使用 ${imageModel} 引擎生成该场景的新起步图...`);
-    const masterFaceAnchor = referenceImageBase64 || globalAutoAnchorBase64;
-    const imgPrompt = shot.image_prompt || shot.visual_description || `Cinematic shot, Scene ${i + 1}`;
+    if (i === 0 || !globalTailFrameBase64) {
+      // ★ 首镜初始化：生图一次，建立全片连续锁链
+      console.log(`🚀 [第 ${i + 1} 场] 正在使用 ${imageModel} 生成首镜起步图...`);
+      const masterFaceAnchor = referenceImageBase64 || globalAutoAnchorBase64;
+      const imgPrompt = shot.image_prompt || shot.visual_description || `Cinematic shot, Scene ${i + 1}`;
 
-    currentStartImage = await generateImage(
-      imgPrompt,
-      imageModel,
-      "none",
-      "16:9",
-      extractedAnchor,
-      masterFaceAnchor // ★ pass image so Pulid clones the face perfectly into new environment
-    );
+      currentStartImage = await generateImage(
+        imgPrompt,
+        imageModel,
+        "none",
+        "16:9",
+        extractedAnchor,
+        masterFaceAnchor // ★ pass image so Pulid clones the face perfectly into new environment
+      );
 
-    // ★ 缓存全片第一帧人脸
-    if (i === 0 && !referenceImageBase64) {
-      globalAutoAnchorBase64 = currentStartImage;
-      console.log(`✅ [第 ${i + 1} 场] 已自动嗅探全片首帧，将作为后续场景的绝对脸部基准垫图！`);
+      // ★ 缓存全片第一帧人脸
+      if (i === 0 && !referenceImageBase64) {
+        globalAutoAnchorBase64 = currentStartImage;
+        console.log(`✅ [第 ${i + 1} 场] 已自动嗅探全片首帧，将作为后续场景的绝对脸部基准垫图！`);
+      }
+    } else {
+      // ★ 全片无跳切：后续场次与镜头统一继承上一镜尾帧
+      currentStartImage = globalTailFrameBase64;
+      console.log(`🔗 [第 ${i + 1} 场] 继承上一镜尾帧作为起点（全片无跳切）`);
     }
 
     if (onProgress) {
@@ -219,9 +230,12 @@ export const generateSceneChain = async (
       onProgress({ index: i, stage: "video_done", videoUrl: generatedVideoUrl });
     }
 
-    // 以前这里会提取尾帧给下一个Scene用，现在我们实施Hard Cut跳切场景，
-    // 因此这里不再需要为了下一个Scene去提取尾帧。
-    // 但是在这个闭环内，我们仍然留着日志打印完成。
+    try {
+      globalTailFrameBase64 = await extractLastFrameServerSide(generatedVideoUrl);
+    } catch (extractErr: any) {
+      console.warn(`⚠️ [第 ${i + 1} 场] 尾帧提取失败，将在下一场回退锚点生图: ${extractErr?.message || extractErr}`);
+      globalTailFrameBase64 = null;
+    }
   }
 
   console.log("🎉 全部锁链生成完毕，真正的一镜到底！");

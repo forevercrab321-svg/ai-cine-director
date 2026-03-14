@@ -129,6 +129,23 @@ function sanitizePromptInput(value: unknown, maxLength: number): string {
     return text.length > maxLength ? text.slice(0, maxLength) : text;
 }
 
+function extractCriticalKeywordsFromAnchor(anchor: string): string[] {
+    const cleaned = sanitizePromptInput(anchor, 1000).toLowerCase();
+    if (!cleaned) return [];
+
+    const segments = cleaned
+        .split(/[,;|]+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((s) => s.replace(/^(a|an|the)\s+/i, ''));
+
+    if (segments.length > 0) {
+        return Array.from(new Set(segments)).slice(0, 8);
+    }
+
+    return [cleaned.slice(0, 80)];
+}
+
 function normalizeEntityType(value: unknown): 'character' | 'prop' | 'location' {
     const t = String(value || '').toLowerCase().trim();
     if (t === 'prop' || t === 'location') return t;
@@ -1981,6 +1998,7 @@ You MUST return this EXACT JSON structure with EXACTLY ${targetScenes} scenes:
 
         const anchor = project.character_anchor;
         const anchorLower = anchor.toLowerCase().trim();
+        const anchorKeywords = extractCriticalKeywordsFromAnchor(anchor);
 
         // ★ FIX: Convert AI's nested scenes properly - each AI scene becomes ONE frontend Scene
         // Previous bug: was flattening ALL shots into individual "scenes", causing identical content
@@ -2040,6 +2058,16 @@ You MUST return this EXACT JSON structure with EXACTLY ${targetScenes} scenes:
                 // Audio from first shot
                 const audioDesc = firstShot.audio_description || scn.audio_description || `Ambient sound at ${setting}`;
 
+                const imagePromptLower = finalImagePrompt.toLowerCase();
+                const motionPromptLower = String(firstShot.video_prompt || '').toLowerCase();
+                const hasAnchorPrefix = anchorLower.length > 0
+                    ? imagePromptLower.startsWith(anchorLower.slice(0, Math.min(20, anchorLower.length)))
+                    : true;
+                const effectiveKeywords = anchorKeywords.length > 0
+                    ? anchorKeywords
+                    : (anchorLower ? [anchorLower] : []);
+                const criticalKeywordsPresent = effectiveKeywords.filter((kw) => imagePromptLower.includes(kw) || motionPromptLower.includes(kw)).length;
+
                 convertedScenes.push({
                     scene_number: sceneIdx + 1,
                     scene_setting: setting,
@@ -2050,6 +2078,11 @@ You MUST return this EXACT JSON structure with EXACTLY ${targetScenes} scenes:
                     image_prompt: finalImagePrompt,
                     video_motion_prompt: firstShot.video_prompt || "Camera slowly reveals the scene",
                     video_prompt: firstShot.video_prompt,
+                    _consistency_check: {
+                        has_anchor_prefix: hasAnchorPrefix,
+                        critical_keywords_present: criticalKeywordsPresent,
+                        total_critical_keywords: Math.max(1, effectiveKeywords.length),
+                    },
                 });
             }
         }
