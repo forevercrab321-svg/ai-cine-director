@@ -69,6 +69,62 @@ export interface StoryboardShot {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+interface RateLimitLikeError extends Error {
+  status?: number;
+  code?: string;
+  retryAfter?: number;
+}
+
+const parseRetryAfterFromMessage = (message?: string): number | undefined => {
+  if (!message) return undefined;
+  const zhMatch = message.match(/(\d+)\s*秒后/);
+  if (zhMatch) return Number(zhMatch[1]);
+
+  const enMatch = message.match(/(?:after|in)\s*(\d+)\s*(?:s|sec|secs|second|seconds)/i);
+  if (enMatch) return Number(enMatch[1]);
+
+  return undefined;
+};
+
+const isRateLimitError = (err: any): boolean => {
+  const message = String(err?.message || '');
+  return err?.status === 429
+    || err?.code === 'RATE_LIMITED'
+    || /rate\s*limit|too many|throttle|限流|请求过于频繁/i.test(message);
+};
+
+const getRetryDelayMs = (err: any, attempt: number): number => {
+  const hintedSeconds = Number((err as RateLimitLikeError)?.retryAfter)
+    || parseRetryAfterFromMessage((err as Error)?.message);
+
+  if (Number.isFinite(hintedSeconds) && hintedSeconds > 0) {
+    return Math.max(1000, hintedSeconds * 1000);
+  }
+
+  // Exponential backoff fallback: 2s, 4s, 8s...
+  return Math.min(2000 * Math.pow(2, attempt), 12000);
+};
+
+async function withRateLimitRetry<T>(label: string, task: () => Promise<T>, maxRetries = 3): Promise<T> {
+  let attempt = 0;
+
+  while (true) {
+    try {
+      return await task();
+    } catch (err: any) {
+      if (!isRateLimitError(err) || attempt >= maxRetries) {
+        throw err;
+      }
+
+      const delayMs = getRetryDelayMs(err, attempt);
+      const retryAfterSec = Math.ceil(delayMs / 1000);
+      console.warn(`⏳ [RateLimit] ${label} 被限流，${retryAfterSec} 秒后自动重试 (${attempt + 1}/${maxRetries})`);
+      await sleep(delayMs);
+      attempt += 1;
+    }
+  }
+}
+
 /**
  * 轮询等待视频生成完成并获取最终视频 URL
  * @param predictionId 模型生成任务的 ID
@@ -76,7 +132,11 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 async function waitForVideoCompletion(predictionId: string): Promise<string> {
   while (true) {
     await sleep(3000); // 轮询间隔：3秒
-    const prediction = await checkPredictionStatus(predictionId);
+    const prediction = await withRateLimitRetry(
+      `poll:${predictionId}`,
+      () => checkPredictionStatus(predictionId),
+      5
+    );
 
     if (prediction.status === "succeeded") {
       const output = prediction.output;
@@ -161,13 +221,17 @@ export const generateSceneChain = async (
       const masterFaceAnchor = referenceImageBase64 || globalAutoAnchorBase64;
       const imgPrompt = shot.image_prompt || shot.visual_description || `Cinematic shot, Scene ${i + 1}`;
 
-      currentStartImage = await generateImage(
-        imgPrompt,
-        imageModel,
-        "none",
-        "16:9",
-        extractedAnchor,
-        masterFaceAnchor // ★ pass image so Pulid clones the face perfectly into new environment
+      currentStartImage = await withRateLimitRetry(
+        `generateImage:scene-${i + 1}`,
+        () => generateImage(
+          imgPrompt,
+          imageModel,
+          "none",
+          "16:9",
+          extractedAnchor,
+          masterFaceAnchor // ★ pass image so Pulid clones the face perfectly into new environment
+        ),
+        3
       );
 
       // ★ 缓存全片第一帧人脸
@@ -202,19 +266,23 @@ export const generateSceneChain = async (
     // 注意：这里所有的视频都统一锁定同一个模型（例如 hailuo_02_fast），保证运动物理引擎一致
     // 传入音频提示（如果shot有音频描述）
     const audioPrompt = shot.audio_description || shot.dialogue_text || '';
-    const videoPrediction = await startVideoTask(
-      lockedVideoPrompt,
-      currentStartImage,
-      videoModel,  // ★ Use user-selected model instead of hardcoded hailuo_02_fast
-      "none" as VideoStyle,
-      "storyboard" as GenerationMode,
-      "standard" as VideoQuality,
-      6 as unknown as VideoDuration,  // Fixed: use number 6 instead of string "6s"
-      "24fps" as unknown as VideoFps,
-      "720p" as VideoResolution,
-      extractedAnchor,   // Still passed here so buildVideoInput can also append it
-      "16:9",
-      { audioPrompt }  // Pass audio prompt
+    const videoPrediction = await withRateLimitRetry(
+      `startVideoTask:scene-${i + 1}`,
+      () => startVideoTask(
+        lockedVideoPrompt,
+        currentStartImage,
+        videoModel,  // ★ Use user-selected model instead of hardcoded hailuo_02_fast
+        "none" as VideoStyle,
+        "storyboard" as GenerationMode,
+        "standard" as VideoQuality,
+        6 as unknown as VideoDuration,  // Fixed: use number 6 instead of string "6s"
+        "24fps" as unknown as VideoFps,
+        "720p" as VideoResolution,
+        extractedAnchor,   // Still passed here so buildVideoInput can also append it
+        "16:9",
+        { audioPrompt }  // Pass audio prompt
+      ),
+      3
     );
 
     if (onProgress) {

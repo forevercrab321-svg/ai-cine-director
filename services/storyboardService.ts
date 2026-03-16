@@ -2,13 +2,24 @@
 import { supabase } from '../lib/supabaseClient';
 import { StoryboardProject, Scene } from '../types';
 
+const formatError = (error: any): string => {
+    if (!error) return 'Unknown error';
+    if (typeof error === 'string') return error;
+    if (error instanceof Error) return error.message;
+    try {
+        return JSON.stringify(error);
+    } catch {
+        return String(error);
+    }
+};
+
 export const saveStoryboard = async (
     userId: string,
     project: StoryboardProject
 ): Promise<StoryboardProject | null> => {
     try {
         let storyboardId = project.id;
-        let projectData;
+        let projectData: any = null;
 
         if (storyboardId) {
             // Update existing project
@@ -21,12 +32,36 @@ export const saveStoryboard = async (
                 })
                 .eq('id', storyboardId)
                 .select() // Returning updated row
+                .maybeSingle();
+
+            if (error) throw error;
+            projectData = data;
+
+            // Stale/non-existent storyboard id (common source of 406 with .single())
+            // Fallback to creating a new storyboard record for current user.
+            if (!projectData) {
+                storyboardId = undefined;
+            }
+        } else {
+            // Create new project
+            const { data, error } = await supabase
+                .from('storyboards')
+                .insert({
+                    user_id: userId,
+                    title: project.project_title,
+                    visual_style: project.visual_style,
+                    character_anchor: project.character_anchor
+                })
+                .select()
                 .single();
 
             if (error) throw error;
             projectData = data;
-        } else {
-            // Create new project
+            storyboardId = data.id;
+        }
+
+        // If update path found no row, create a new storyboard entry.
+        if (!projectData || !storyboardId) {
             const { data, error } = await supabase
                 .from('storyboards')
                 .insert({
@@ -108,7 +143,7 @@ export const saveStoryboard = async (
         };
 
     } catch (error) {
-        console.error('Error saving storyboard:', error);
+        console.error('Error saving storyboard:', formatError(error), error);
         return null;
     }
 };
@@ -144,9 +179,10 @@ export const fetchStoryboardDetails = async (storyboardId: string) => {
         .from('storyboards')
         .select('*')
         .eq('id', storyboardId)
-        .single();
+        .maybeSingle();
 
     if (projectError) throw projectError;
+    if (!project) return null;
 
     const { data: scenes, error: scenesError } = await supabase
         .from('scenes')
