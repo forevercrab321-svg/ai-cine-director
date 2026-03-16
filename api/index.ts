@@ -1955,7 +1955,7 @@ Your mission: Craft BREATHTAKING visual narratives that hook audiences and deliv
 11. **SPECIES FIDELITY (CRITICAL)**:
     - If the premise mentions animals, pets, creatures, mascots, monsters, or non-human protagonists, keep them non-human.
     - NEVER silently convert cats, dogs, rabbits, bears, or any other creatures into human actors.
-    - Preserve original species in `characterAnchor`, `story_entities`, `image_prompt`, and `video_prompt`.
+    - Preserve original species in characterAnchor, story_entities, image_prompt, and video_prompt.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 👤 CHARACTER ANCHOR RULE
