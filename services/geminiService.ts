@@ -8,6 +8,19 @@ import { supabase } from '../lib/supabaseClient';
 
 const API_BASE = '/api/gemini';
 
+const inferNonHumanSpecies = (...inputs: Array<string | undefined>) => {
+  const text = inputs.filter(Boolean).join(' ').toLowerCase();
+  const entries: Array<[string, RegExp[]]> = [
+    ['cat', [/\bcat\b/, /\bkitten\b/, /猫/g, /小猫/g, /猫咪/g]],
+    ['dog', [/\bdog\b/, /\bpuppy\b/, /狗/g, /小狗/g, /狗狗/g]],
+    ['rabbit', [/\brabbit\b/, /\bbunny\b/, /兔/g]],
+    ['bear', [/\bbear\b/, /熊/g, /小熊/g]],
+    ['fox', [/\bfox\b/, /狐狸/g]],
+    ['animal', [/\banimal\b/, /动物/g, /宠物/g, /萌宠/g]],
+  ];
+  return entries.find(([, patterns]) => patterns.some((pattern) => pattern.test(text)))?.[0] || null;
+};
+
 // Mock data for offline/demo mode - FIXED to show diverse scenes
 const generateMockStoryboard = (
   storyIdea: string,
@@ -17,6 +30,10 @@ const generateMockStoryboard = (
   sceneCount: number = 5,
   identityAnchor?: string
 ): StoryboardProject => {
+  const detectedSpecies = inferNonHumanSpecies(storyIdea, identityAnchor);
+  const anchor = identityAnchor?.trim() || (detectedSpecies
+    ? `A ${detectedSpecies} protagonist with clear species-specific anatomy, expressive eyes, and consistent signature accessories`
+    : 'Main protagonist');
   const scenes = [];
   const sceneSettings = [
     { location: 'A modern city rooftop at sunset', time: 'golden hour', action: 'Character looks out over the city skyline, wind in hair' },
@@ -44,12 +61,12 @@ const generateMockStoryboard = (
   return {
     project_title: storyIdea.slice(0, 50),
     visual_style: visualStyle,
-    character_anchor: identityAnchor?.trim() || 'Main protagonist',
+    character_anchor: anchor,
     story_entities: [{
       id: crypto.randomUUID(),
       type: 'character',
-      name: 'Main Character',
-      description: identityAnchor?.trim() || 'Main protagonist in consistent costume and facial traits',
+      name: detectedSpecies ? `${detectedSpecies} protagonist` : 'Main Character',
+      description: anchor,
       is_locked: true,
     }],
     scenes,

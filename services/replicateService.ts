@@ -13,6 +13,51 @@ export interface ReplicateResponse {
   logs?: string;
 }
 
+interface ApiServiceError extends Error {
+  status?: number;
+  code?: string;
+  retryAfter?: number;
+  details?: any;
+}
+
+const extractRetryAfter = (source: any): number | undefined => {
+  const v = source?.retry_after ?? source?.retryAfter;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+};
+
+const toServiceError = async (response: Response, fallbackMessage: string): Promise<ApiServiceError> => {
+  const ct = response.headers.get('content-type') || '';
+  let raw = '';
+  let payload: any = null;
+
+  try {
+    if (ct.includes('application/json')) {
+      payload = await response.json();
+    } else {
+      raw = await response.text();
+      try { payload = JSON.parse(raw); } catch { payload = null; }
+    }
+  } catch {
+    // ignore parse error
+  }
+
+  const retryAfter = extractRetryAfter(payload) || extractRetryAfter(payload?.detail);
+  const serverMsg = payload?.error || payload?.message || payload?.detail?.message || raw;
+  const isRateLimited = response.status === 429 || /throttle|rate\s*limit|too many/i.test(String(serverMsg || ''));
+
+  const finalMsg = isRateLimited
+    ? `请求过于频繁，已触发限流。${retryAfter ? `请在 ${retryAfter} 秒后重试。` : '请稍后重试。'}`
+    : (String(serverMsg || fallbackMessage));
+
+  const err = new Error(finalMsg) as ApiServiceError;
+  err.status = response.status;
+  err.code = payload?.code || (isRateLimited ? 'RATE_LIMITED' : undefined);
+  err.retryAfter = retryAfter;
+  err.details = payload?.detail || payload;
+  return err;
+};
+
 export const extractLastFrameWithFallback = async (videoUrl: string): Promise<string> => {
   try {
     const { extractLastFrameFromVideo } = await import('../utils/video-helpers');
@@ -123,8 +168,7 @@ export const generateImage = async (
     }
 
     if (!response.ok) {
-      const errData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
-      throw new Error(errData.error || `Generate image failed (${response.status})`);
+      throw await toServiceError(response, `Generate image failed (${response.status})`);
     }
 
     const data = await response.json();
@@ -295,8 +339,7 @@ export const startVideoTask = async (
   }
 
   if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(errText || `HTTP ${response.status}`);
+    throw await toServiceError(response, `HTTP ${response.status}`);
   }
 
   return await response.json();
@@ -310,7 +353,7 @@ export async function checkPredictionStatus(id: string): Promise<ReplicateRespon
   });
 
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await toServiceError(response, `HTTP ${response.status}`);
   }
 
   return await response.json();

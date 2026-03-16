@@ -12,6 +12,24 @@ interface CastPhotoGeneratorProps {
     autoGenerate?: boolean;
 }
 
+const inferCastMode = (project: StoryboardProject) => {
+    const text = [
+        project.character_anchor,
+        project.project_title,
+        ...(project.story_entities || []).map((e) => `${e.name} ${e.description}`),
+        ...(project.scenes || []).map((s) => `${s.visual_description || ''} ${s.audio_description || ''}`),
+    ].join(' ').toLowerCase();
+
+    const nonHumanPatterns = [
+        /\bcat\b/, /\bkitten\b/, /\bdog\b/, /\bpuppy\b/, /\brabbit\b/, /\bbunny\b/, /\bbear\b/, /\bfox\b/, /\banimal\b/, /\bpet\b/,
+        /猫/g, /小猫/g, /猫咪/g, /狗/g, /小狗/g, /狗狗/g, /兔/g, /熊/g, /狐狸/g, /动物/g, /宠物/g,
+    ];
+
+    return {
+        isNonHumanCast: nonHumanPatterns.some((pattern) => pattern.test(text)),
+    };
+};
+
 const CastPhotoGenerator: React.FC<CastPhotoGeneratorProps> = ({ project, onSetGlobalAnchor, currentGlobalAnchor, autoGenerate = false }) => {
     const { settings, hasEnoughCredits, deductCredits, openPricingModal } = useAppContext();
     const [isGenerating, setIsGenerating] = useState(false);
@@ -22,6 +40,7 @@ const CastPhotoGenerator: React.FC<CastPhotoGeneratorProps> = ({ project, onSetG
     const characters = useMemo(() => {
         return project.story_entities?.filter(e => e.type === 'character' && e.is_locked) || [];
     }, [project.story_entities]);
+    const { isNonHumanCast } = useMemo(() => inferCastMode(project), [project]);
 
     if (characters.length === 0) {
         return null; // Don't show the generator if there are no characters defined
@@ -43,7 +62,9 @@ const CastPhotoGenerator: React.FC<CastPhotoGeneratorProps> = ({ project, onSetG
         try {
             // Build an ensemble group photo prompt
             const characterDescriptions = characters.map(c => `[${c.name}]: ${c.description}`).join(' | ');
-            const groupPrompt = `A cinematic, highly detailed wide shot ensemble cast group portrait photograph of the following characters standing together. CHARACTERS: ${characterDescriptions}. ${project.visual_style || "Extremely high quality cinematic masterpiece"}, beautifully lit, sharp focus, 8k resolution.`;
+            const groupPrompt = isNonHumanCast
+                ? `A cinematic ensemble key art illustration of the following non-human characters together in one frame. Keep every character as their original species. NEVER turn them into humans or realistic human actors. Preserve obvious animal traits such as fur, paws, muzzles, ears, tails, beaks, and species-specific silhouettes. CHARACTERS: ${characterDescriptions}. ${project.visual_style || "Extremely high quality cinematic masterpiece"}, beautifully lit, expressive, consistent character design, sharp focus, 8k resolution.`
+                : `A cinematic, highly detailed wide shot ensemble cast group portrait of the following characters together in one frame. Preserve their exact identities, wardrobe, facial features, and styling. CHARACTERS: ${characterDescriptions}. ${project.visual_style || "Extremely high quality cinematic masterpiece"}, beautifully lit, sharp focus, 8k resolution.`;
 
             const generatedUrl = await generateImage(
                 groupPrompt,
@@ -66,7 +87,7 @@ const CastPhotoGenerator: React.FC<CastPhotoGeneratorProps> = ({ project, onSetG
         } finally {
             setIsGenerating(false);
         }
-    }, [hasEnoughCredits, openPricingModal, deductCredits, characters, project.visual_style, settings.imageModel, onSetGlobalAnchor]);
+    }, [hasEnoughCredits, openPricingModal, deductCredits, characters, isNonHumanCast, project.visual_style, settings.imageModel, onSetGlobalAnchor]);
 
     useEffect(() => {
         autoTriggeredRef.current = false;
@@ -96,11 +117,11 @@ const CastPhotoGenerator: React.FC<CastPhotoGeneratorProps> = ({ project, onSetG
                     </div>
                     <div>
                         <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                            演员阵容合照
+                            {isNonHumanCast ? '角色阵容定妆图' : '演员阵容合照'}
                             <span className="text-xs px-2 py-0.5 bg-indigo-500/20 text-indigo-300 rounded-full font-medium">Cast Master Anchor</span>
                         </h3>
                         <p className="text-sm text-slate-400 mt-1 max-w-xl">
-                            系统检测到了 {characters.length} 名核心角色。为他们生成一张全家福合照作为「全片最高优先级人脸锚点」，可确保这批演员在后续所有分镜中锁定特征，绝不换人。
+                            系统检测到了 {characters.length} 名核心角色。为他们生成一张{isNonHumanCast ? '角色阵容定妆图' : '全家福合照'}作为「全片最高优先级特征锚点」，可确保这批角色在后续所有分镜中锁定特征，绝不串形。
                         </p>
 
                         <div className="flex flex-wrap gap-2 mt-3">
@@ -125,7 +146,7 @@ const CastPhotoGenerator: React.FC<CastPhotoGeneratorProps> = ({ project, onSetG
                                 </button>
                             </div>
                             <div className="absolute top-2 right-2 bg-green-500 text-white text-[10px] font-bold px-2 py-1 rounded shadow-lg flex items-center gap-1">
-                                <CheckCircleIcon className="w-3 h-3" /> 演员特征已锁定
+                                <CheckCircleIcon className="w-3 h-3" /> {isNonHumanCast ? '角色特征已锁定' : '演员特征已锁定'}
                             </div>
                         </div>
                     ) : (

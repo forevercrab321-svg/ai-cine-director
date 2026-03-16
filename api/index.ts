@@ -124,9 +124,120 @@ function estimateCost(modelPath: string): number {
     return 22; // 默认成本
 }
 
+function parseReplicateErrorText(raw: string): {
+    message: string;
+    code?: string;
+    retryAfter?: number;
+    detail?: any;
+} {
+    const fallback = (raw || '').trim() || 'Replicate request failed';
+
+    try {
+        const parsed = JSON.parse(raw || '{}');
+        const detail = parsed?.detail;
+        const detailObj = typeof detail === 'string'
+            ? (() => {
+                try { return JSON.parse(detail); } catch { return null; }
+            })()
+            : detail;
+
+        const retryAfterRaw =
+            parsed?.retry_after ??
+            detailObj?.retry_after ??
+            parsed?.retryAfter ??
+            detailObj?.retryAfter;
+        const retryAfter = Number.isFinite(Number(retryAfterRaw)) ? Number(retryAfterRaw) : undefined;
+
+        const msg =
+            parsed?.error ||
+            parsed?.message ||
+            detailObj?.detail ||
+            detailObj?.message ||
+            fallback;
+
+        return {
+            message: String(msg),
+            code: parsed?.code || detailObj?.code,
+            retryAfter,
+            detail: detailObj ?? detail,
+        };
+    } catch {
+        return { message: fallback };
+    }
+}
+
+function buildReplicateClientError(status: number, raw: string): {
+    error: string;
+    code?: string;
+    retry_after?: number;
+    detail?: any;
+} {
+    const parsed = parseReplicateErrorText(raw);
+    const isRateLimited = status === 429 || /throttle|rate\s*limit|too many/i.test(parsed.message);
+
+    if (isRateLimited) {
+        const retryHint = parsed.retryAfter ? ` 请在 ${parsed.retryAfter} 秒后重试。` : ' 请稍后重试。';
+        return {
+            error: `请求过于频繁，触发上游限流。${retryHint}`,
+            code: 'RATE_LIMITED',
+            retry_after: parsed.retryAfter,
+            detail: parsed.detail,
+        };
+    }
+
+    return {
+        error: parsed.message,
+        code: parsed.code,
+        retry_after: parsed.retryAfter,
+        detail: parsed.detail,
+    };
+}
+
 function sanitizePromptInput(value: unknown, maxLength: number): string {
     const text = String(value || '').replace(/\s+/g, ' ').trim();
     return text.length > maxLength ? text.slice(0, maxLength) : text;
+}
+
+function detectNonHumanCharacterGuide(...inputs: Array<string | undefined>): {
+    hasNonHuman: boolean;
+    species: string[];
+    guidance: string;
+} {
+    const text = inputs.filter(Boolean).join(' ').toLowerCase();
+    const keywordMap: Array<{ label: string; patterns: RegExp[] }> = [
+        { label: 'cat', patterns: [/\bcat\b/, /\bkitten\b/, /猫/g, /小猫/g, /猫咪/g] },
+        { label: 'dog', patterns: [/\bdog\b/, /\bpuppy\b/, /狗/g, /小狗/g, /狗狗/g] },
+        { label: 'rabbit', patterns: [/\brabbit\b/, /\bbunny\b/, /兔/g, /小兔/g] },
+        { label: 'bear', patterns: [/\bbear\b/, /熊/g, /小熊/g] },
+        { label: 'fox', patterns: [/\bfox\b/, /狐狸/g] },
+        { label: 'wolf', patterns: [/\bwolf\b/, /狼/g] },
+        { label: 'tiger', patterns: [/\btiger\b/, /老虎/g] },
+        { label: 'lion', patterns: [/\blion\b/, /狮子/g] },
+        { label: 'mouse', patterns: [/\bmouse\b/, /\bmice\b/, /老鼠/g] },
+        { label: 'bird', patterns: [/\bbird\b/, /小鸟/g, /鸟/g] },
+        { label: 'duck', patterns: [/\bduck\b/, /鸭/g, /小鸭/g] },
+        { label: 'penguin', patterns: [/\bpenguin\b/, /企鹅/g] },
+        { label: 'dragon', patterns: [/\bdragon\b/, /龙/g] },
+        { label: 'animal', patterns: [/\banimal\b/, /动物/g, /萌宠/g, /宠物/g] },
+    ];
+
+    const species = keywordMap
+        .filter((item) => item.patterns.some((pattern) => pattern.test(text)))
+        .map((item) => item.label);
+
+    const hasNonHuman = species.length > 0;
+    return {
+        hasNonHuman,
+        species,
+        guidance: hasNonHuman
+            ? `NON-HUMAN CHARACTER LOCK: The protagonist/cast are ${species.join(', ')} characters. They MUST remain clearly non-human in every scene and prompt. Never replace them with human actors, realistic people, or generic human faces. Preserve obvious species anatomy such as fur, ears, paws, muzzles, tails, beaks, or species silhouettes.`
+            : '',
+    };
+}
+
+function isRemoteImageReference(value: unknown): boolean {
+    const text = String(value || '').trim();
+    return /^https?:\/\//i.test(text);
 }
 
 function extractCriticalKeywordsFromAnchor(anchor: string): string[] {
@@ -1190,13 +1301,23 @@ app.post('/api/replicate/generate-image', requireAuth, async (req: any, res: any
                 : '';
 
             const finalPrompt = `${prompt} ${entityRules} ${legacyAnchorRule}`.trim();
+            const nonHumanGuide = detectNonHumanCharacterGuide(
+                finalPrompt,
+                characterAnchor,
+                ...(Array.isArray(storyEntities) ? storyEntities.map((e: any) => `${e?.name || ''} ${e?.description || ''}`) : [])
+            );
+            const useUniversalGuide = !!referenceImageDataUrl;
+            const disableFaceCloning = nonHumanGuide.hasNonHuman || isRemoteImageReference(referenceImageDataUrl);
 
             const result = await callReplicateImage({
                 prompt: finalPrompt,
                 model: modelToRun,
                 aspectRatio: aspectRatio || '16:9',
                 seed: null,
-                referenceImageDataUrl: referenceImageDataUrl
+                imagePrompt: useUniversalGuide ? referenceImageDataUrl : undefined,
+                referenceImageDataUrl: referenceImageDataUrl,
+                disableFaceCloning,
+                allowReferenceFallback: true,
             });
             resultUrl = result.url;
         } catch (genErr: any) {
@@ -1210,9 +1331,19 @@ app.post('/api/replicate/generate-image', requireAuth, async (req: any, res: any
     } catch (err: any) {
         console.error('[/api/replicate/generate-image Error]', err);
         if (err.message === 'FACE_ALIGN_FAIL') {
-            return res.status(400).json({ error: '未能检测到清晰的人物面部，请重新上传正脸无遮挡的单人照！(Face alignment failed)' });
+            return res.status(400).json({ error: '未能检测到清晰的人物面部；如果你在做动物或非人类动画，系统现已自动回退到物种安全模式。若仍失败，请尝试更清晰的参考图或直接使用文本锚点。' });
         }
-        res.status(500).json({ error: err.message || 'Server error' });
+        const status = Number(err?.status) || 500;
+        const isRateLimited = status === 429 || /throttle|rate\s*limit|too many/i.test(String(err?.message || ''));
+        if (isRateLimited) {
+            return res.status(429).json({
+                error: err?.message || '请求过于频繁，触发上游限流，请稍后重试。',
+                code: err?.code || 'RATE_LIMITED',
+                retry_after: err?.retryAfter,
+                detail: err?.detail,
+            });
+        }
+        res.status(status).json({ error: err.message || 'Server error', code: err?.code, retry_after: err?.retryAfter });
     }
 });
 
@@ -1388,7 +1519,7 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
                     ref_id: jobRef
                 });
             }
-            return res.status(response.status).json({ error: errText });
+            return res.status(response.status).json(buildReplicateClientError(response.status, errText));
         }
 
         const prediction = await response.json() as ReplicateResponse;
@@ -1718,6 +1849,7 @@ app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
         if (!safeStoryIdea) return res.status(400).json({ error: 'Missing storyIdea' });
 
         const targetScenes = Math.min(Math.max(Number(sceneCount) || 5, 1), 50);
+        const nonHumanGuide = detectNonHumanCharacterGuide(safeStoryIdea, safeIdentityAnchor);
 
         console.log(`[Gemini Generate] Requesting exactly ${targetScenes} unique scenes...`);
 
@@ -1820,11 +1952,18 @@ Your mission: Craft BREATHTAKING visual narratives that hook audiences and deliv
     - Specific sound design: "Glass shattering, distant sirens wailing, protagonist's heavy breathing"
     - Include music cues if relevant: "Ominous string crescendo"
 
+11. **SPECIES FIDELITY (CRITICAL)**:
+    - If the premise mentions animals, pets, creatures, mascots, monsters, or non-human protagonists, keep them non-human.
+    - NEVER silently convert cats, dogs, rabbits, bears, or any other creatures into human actors.
+    - Preserve original species in `characterAnchor`, `story_entities`, `image_prompt`, and `video_prompt`.
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 👤 CHARACTER ANCHOR RULE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ${safeIdentityAnchor ? `The protagonist MUST EXACTLY match this description: "${safeIdentityAnchor}"
-Use this VERBATIM in story_entities and all character mentions.` : `Create a visually striking protagonist that embodies: "${safeVisualStyle}"`}
+Use this VERBATIM in story_entities and all character mentions.` : `Create a visually striking protagonist derived from the premise "${safeStoryIdea}" and the style "${safeVisualStyle}". Do not default to a human if the premise implies an animal or non-human hero.`}
+${nonHumanGuide.guidance ? `
+${nonHumanGuide.guidance}` : ''}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🌍 LANGUAGE RULES
@@ -1882,6 +2021,10 @@ Use this VERBATIM in story_entities and all character mentions.` : `Create a vis
    → First shot's image_prompt must be EPIC (20+ words describing lighting, camera, subject, mood)
    → Subsequent shots in same scene: image_prompt = "" (empty string for video chain)
    → Video_prompt: describe physics ("camera tilts up", "character walks forward 3 steps")
+
+✅ **RULE 8: SPECIES FIDELITY**
+    → If the premise says cat, dog, pet, animal, creature, mascot, or similar, the cast MUST stay that species.
+    → Do NOT output human actors unless the user explicitly asks for humanized characters.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📋 REQUIRED JSON SCHEMA (STRICT COMPLIANCE)
@@ -1966,6 +2109,24 @@ You MUST return this EXACT JSON structure with EXACTLY ${targetScenes} scenes:
             story_entities: story_entities
         };
 
+        if (!project.character_anchor && nonHumanGuide.hasNonHuman) {
+            project.character_anchor = `A ${nonHumanGuide.species[0]} protagonist with consistent species-specific anatomy and features`;
+        }
+
+        if (nonHumanGuide.hasNonHuman) {
+            const speciesText = nonHumanGuide.species.join(', ');
+            if (!new RegExp(nonHumanGuide.species.join('|'), 'i').test(project.character_anchor || '')) {
+                project.character_anchor = `${project.character_anchor || 'Main protagonist'}. This character is a ${speciesText} and must remain non-human with clear species-specific anatomy.`;
+            }
+
+            story_entities.forEach((entity: any) => {
+                if (entity.type !== 'character') return;
+                if (!new RegExp(nonHumanGuide.species.join('|'), 'i').test(entity.description || '')) {
+                    entity.description = `${entity.description}. Non-human ${speciesText} character with clear species-specific anatomy.`.trim();
+                }
+            });
+        }
+
         // ★ CRITICAL: Force character_anchor to match identityAnchor if provided
         if (safeIdentityAnchor && safeIdentityAnchor.trim().length > 10) {
             project.character_anchor = safeIdentityAnchor.trim();
@@ -1977,7 +2138,7 @@ You MUST return this EXACT JSON structure with EXACTLY ${targetScenes} scenes:
             story_entities.unshift({
                 id: crypto.randomUUID(),
                 type: 'character',
-                name: 'Main Character',
+                name: nonHumanGuide.hasNonHuman ? `${nonHumanGuide.species[0]} protagonist` : 'Main Character',
                 description: project.character_anchor,
                 is_locked: true,
             });
@@ -2136,19 +2297,22 @@ app.post('/api/gemini/analyze', requireAuth, async (req: any, res: any) => {
 
         const analyzePrompt = `You are a professional character designer. Analyze this image and produce an EXACT visual identity description for AI image generation.
 
-**CRITICAL: OBSERVE THE ACTUAL IMAGE. DO NOT GUESS OR ASSUME.**
-- If the person in the image is female, write "female". If male, write "male".
-- Describe EXACTLY what you SEE — do not invent or change any features.
+    **CRITICAL: OBSERVE THE ACTUAL IMAGE. DO NOT GUESS OR ASSUME.**
+    - First determine whether the subject is human, animal, creature, mascot, toy, or another non-human character.
+    - If it is human, describe the person accurately.
+    - If it is non-human, preserve the original species/type and describe species-specific anatomy.
+    - Describe EXACTLY what you SEE — do not invent or humanize non-human subjects.
 
-**Output format (one dense paragraph, English only):**
-A [age]-year-old [ethnicity] [female/male] with [face shape] face, [skin tone] skin, [eye color/shape] eyes, [nose description], [lip description]. [Hair: color, length, style, texture]. Wearing [top: color, material, style], [bottom: color, style], [shoes if visible], [accessories: jewelry, glasses, hat, bag, etc.]. [Body type: height impression, build]. [Any distinctive features: tattoos, scars, freckles, dimples, beauty marks].
+    **Output format (one dense paragraph, English only):**
+    - For humans: age impression, gender if visually obvious, ethnicity if visually clear, facial structure, skin tone, eyes, nose, lips, hair, clothing, accessories, body build, and distinctive traits.
+    - For animals/non-humans: species/type, fur/skin/feather texture, colors and markings, ears, eyes, muzzle/beak/snout, paws/claws/hooves/wings/tail, clothing or accessories if present, body proportions, pose, and distinctive traits.
 
-**Rules:**
-1. Gender MUST match the actual person in the image — LOOK at the image carefully
-2. Every detail must come from observation, not assumption
-3. Be specific about colors ("dusty rose" not just "pink")
-4. Include ALL visible clothing and accessories
-5. Output ONLY the description paragraph, nothing else`;
+    **Rules:**
+    1. Never convert animals or non-human characters into humans.
+    2. Every detail must come from observation, not assumption.
+    3. Be specific about colors and textures.
+    4. Include all visible clothing, props, and accessories.
+    5. Output ONLY the description paragraph, nothing else.`;
 
         const result = await getGeminiTextCompletion(
             [{
@@ -2225,9 +2389,15 @@ async function callReplicateImage(params: {
     prompt: string; model: string; aspectRatio: string; seed: number | null;
     imagePrompt?: string; // ★ URL or data URL of reference image for Flux Redux — visual consistency anchor
     referenceImageDataUrl?: string; // ★ Base64 of user photo for Face Cloning
+    disableFaceCloning?: boolean; // ★ For animals / non-human characters: avoid human-only face alignment
+    allowReferenceFallback?: boolean; // ★ Retry with image-guided/text mode if face alignment fails
 }): Promise<{ url: string; predictionId: string }> {
     const token = getReplicateToken();
-    const isFaceCloning = !!params.referenceImageDataUrl;
+    const normalizedReference = String(params.referenceImageDataUrl || '').trim() || undefined;
+    const hasUniversalReference = !!normalizedReference;
+    const shouldPreferGuideReference = hasUniversalReference && isRemoteImageReference(normalizedReference);
+    const isFaceCloning = !!normalizedReference && !params.disableFaceCloning && !shouldPreferGuideReference;
+    const referenceGuideImage = params.imagePrompt || normalizedReference;
 
     // Switch to PuLID face-cloning model if requested
     const modelPath = isFaceCloning
@@ -2271,9 +2441,9 @@ async function callReplicateImage(params: {
     if (params.seed != null && !isFaceCloning) input.seed = params.seed;
 
     // ★ FLUX REDUX — Image-guided generation for extreme character/style consistency
-    if (params.imagePrompt && (modelPath.includes('flux-1.1-pro') || modelPath.includes('flux-pro')) && !isFaceCloning) {
-        input.image_prompt = params.imagePrompt;
-        console.log(`[Replicate] ★ Redux: image_prompt set (${params.imagePrompt.substring(0, 60)}...)`);
+    if (referenceGuideImage && (modelPath.includes('flux-1.1-pro') || modelPath.includes('flux-pro')) && !isFaceCloning) {
+        input.image_prompt = referenceGuideImage;
+        console.log(`[Replicate] ★ Redux: image_prompt set (${referenceGuideImage.substring(0, 60)}...)`);
     }
 
     const body = isModelPath ? { input } : { version: modelPath.split(":")[1] || modelPath, input };
@@ -2295,7 +2465,18 @@ async function callReplicateImage(params: {
         if (response.status === 404) {
             throw new Error(`Model "${modelPath}" not found on Replicate. Please select a different model.`);
         }
-        throw new Error(`Replicate error ${response.status}: ${errText}`);
+        const parsed = parseReplicateErrorText(errText);
+        const isRateLimited = response.status === 429 || /throttle|rate\s*limit|too many/i.test(parsed.message);
+        const error: any = new Error(
+            isRateLimited
+                ? (parsed.retryAfter ? `请求过于频繁，请在 ${parsed.retryAfter} 秒后重试。` : '请求过于频繁，请稍后重试。')
+                : (parsed.message || `Replicate error ${response.status}`)
+        );
+        error.status = response.status;
+        error.code = isRateLimited ? 'RATE_LIMITED' : parsed.code;
+        error.retryAfter = parsed.retryAfter;
+        error.detail = parsed.detail;
+        throw error;
     }
 
     let prediction: any = await response.json();
@@ -2310,6 +2491,14 @@ async function callReplicateImage(params: {
     if (prediction.status !== 'succeeded') {
         const errorMsg = String(prediction.error || '');
         if (errorMsg.includes('facexlib align face fail') || errorMsg.includes('face_align')) {
+            if (params.referenceImageDataUrl && params.allowReferenceFallback !== false) {
+                console.warn('[Replicate] Face alignment failed, retrying with species-safe reference fallback');
+                return await callReplicateImage({
+                    ...params,
+                    disableFaceCloning: true,
+                    allowReferenceFallback: false,
+                });
+            }
             throw new Error('FACE_ALIGN_FAIL');
         }
         throw new Error(errorMsg || 'Image generation failed');
@@ -2993,6 +3182,9 @@ app.post('/api/shot-images/:shotId/generate', async (req: any, res: any) => {
             basePrompt: prompt || '', deltaInstruction: delta_instruction,
             characterAnchor: character_anchor, style: style || 'none', referencePolicy: reference_policy || 'anchor',
         });
+        const nonHumanGuide = detectNonHumanCharacterGuide(finalPrompt, character_anchor);
+        const effectiveGuideImage = anchor_image_url || referenceImageDataUrl || undefined;
+        const disableFaceCloning = nonHumanGuide.hasNonHuman || isRemoteImageReference(referenceImageDataUrl);
 
         let result: { url: string; predictionId: string };
         try {
@@ -3001,8 +3193,10 @@ app.post('/api/shot-images/:shotId/generate', async (req: any, res: any) => {
                 model: replicatePath,
                 aspectRatio: aspect_ratio || '16:9',
                 seed: seed ?? 142857,
-                imagePrompt: anchor_image_url || undefined,
-                referenceImageDataUrl: referenceImageDataUrl || undefined
+                imagePrompt: effectiveGuideImage,
+                referenceImageDataUrl: referenceImageDataUrl || undefined,
+                disableFaceCloning,
+                allowReferenceFallback: true,
             });
         } catch (genErr: any) {
             if (!skipCreditCheck) { try { await supabaseUser.rpc('refund_reserve', { amount: cost, ref_type: 'shot-image', ref_id: jobRef }); } catch (_) { } }
@@ -3027,7 +3221,7 @@ app.post('/api/shot-images/:shotId/generate', async (req: any, res: any) => {
     } catch (error: any) {
         console.error('[ShotImage Generate] Error:', error.message);
         if (error.message === 'FACE_ALIGN_FAIL') {
-            return res.status(400).json({ error: '未能检测到清晰的人物面部，请重新上传正脸无遮挡的单人照！(Face alignment failed)' });
+            return res.status(400).json({ error: '未能检测到清晰的人物面部；如果你在生成动物或非人角色，系统已自动切换为非人参考模式。若仍失败，请换更清晰参考图或直接使用文本提示。' });
         }
         res.status(500).json({ error: error.message || 'Image generation failed' });
     }
