@@ -263,6 +263,35 @@ function normalizeEntityType(value: unknown): 'character' | 'prop' | 'location' 
     return 'character';
 }
 
+function getLockedCastFromEntities(storyEntities: any): Array<{ name: string; description: string }> {
+    if (!Array.isArray(storyEntities)) return [];
+    return storyEntities
+        .filter((e: any) => normalizeEntityType(e?.type) === 'character' && !!e?.is_locked)
+        .map((e: any) => ({
+            name: sanitizePromptInput(e?.name || 'Character', 80),
+            description: sanitizePromptInput(e?.description || '', 400),
+        }))
+        .filter((e: any) => !!e.name || !!e.description)
+        .slice(0, 8);
+}
+
+function buildLockedCastDirective(storyEntities: any): string {
+    const cast = getLockedCastFromEntities(storyEntities);
+    if (cast.length === 0) return '';
+    const castLine = cast
+        .map((c) => `${c.name}${c.description ? `: ${c.description}` : ''}`)
+        .join(' | ');
+    return `[CAST LOCK - MUST FOLLOW EXACTLY] Start Cast Bible: ${castLine}. All generated scenes and videos must match this cast identity. Do not replace, morph, age-swap, gender-swap, or wardrobe-swap the locked cast.`;
+}
+
+function appendLockedCastToPrompt(prompt: string, storyEntities: any): string {
+    const base = sanitizePromptInput(prompt || '', 4000);
+    const directive = buildLockedCastDirective(storyEntities);
+    if (!directive) return base;
+    if (base.includes('[CAST LOCK - MUST FOLLOW EXACTLY]')) return base;
+    return `${base} ${directive}`.trim();
+}
+
 function parseAiJsonWithRepair(rawText: string, contextLabel: string): any {
     const input = String(rawText || '').trim();
     if (!input) throw new Error(`[${contextLabel}] Empty AI response`);
@@ -438,6 +467,7 @@ app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), asyn
         let creditsToGrant = 0;
         let isSubscription = false;
         let planTier = '';
+        const eventRefId = String(event.id || obj.id || '');
 
         if (event.type === 'checkout.session.completed' && obj.mode === 'payment') {
             userId = obj.client_reference_id || obj.metadata?.user_id;
@@ -446,12 +476,12 @@ app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), asyn
             try {
                 const subscription = await stripe.subscriptions.retrieve(obj.subscription as string);
                 userId = subscription.metadata?.user_id || '';
-                planTier = subscription.metadata?.tier || '';
+                planTier = subscription.metadata?.plan || subscription.metadata?.tier || '';
                 // ★ Credits match actual plan definitions in types.ts BUSINESS_PLANS
                 if (planTier === 'creator' || planTier === 'plan_starter') creditsToGrant = 3000;
                 if (planTier === 'director' || planTier === 'plan_pro') creditsToGrant = 15000;
-                if (planTier === 'plan_business') creditsToGrant = 50000;
-                if (planTier === 'plan_enterprise') creditsToGrant = 300000;
+                if (planTier === 'business' || planTier === 'plan_business') creditsToGrant = 50000;
+                if (planTier === 'enterprise' || planTier === 'plan_enterprise') creditsToGrant = 300000;
                 isSubscription = true;
             } catch (err) {
                 console.error('[Stripe Webhook] Fetch subscription error:', err);
@@ -463,6 +493,18 @@ app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), asyn
             const supabaseKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
             if (supabaseUrl && supabaseKey) {
                 const supabase = createClient(supabaseUrl, supabaseKey);
+
+                const { data: existingLedger } = await supabase
+                    .from('credits_ledger')
+                    .select('id')
+                    .eq('ref_type', 'stripe')
+                    .eq('ref_id', eventRefId)
+                    .maybeSingle();
+
+                if (existingLedger?.id) {
+                    console.log(`[Billing] Stripe event ${eventRefId} already processed, skipping`);
+                    return res.json({ received: true, duplicate: true });
+                }
 
                 let updateData: any = {};
                 if (isSubscription && planTier) {
@@ -487,7 +529,7 @@ app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), asyn
                     delta: creditsToGrant,
                     kind: isSubscription ? 'subscription_renewal' : 'purchase',
                     ref_type: 'stripe',
-                    ref_id: String(obj.id),
+                    ref_id: eventRefId,
                     status: 'settled'
                 });
                 console.log(`[Billing] Granted ${creditsToGrant} credits to user ${userId} (Sub: ${isSubscription})`);
@@ -526,6 +568,208 @@ const getStripe = () => {
     return new Stripe(key, { apiVersion: '2026-01-28.clover' });
 };
 
+let _supabaseAnonSingleton: ReturnType<typeof createClient> | null = null;
+const getSupabaseAnon = () => {
+    const url = (process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim();
+    const anonKey = (process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '').trim();
+    if (!url || !anonKey) throw new Error('Supabase URL or Anon Key missing');
+    if (!_supabaseAnonSingleton) {
+        _supabaseAnonSingleton = createClient(url, anonKey, {
+            auth: {
+                persistSession: false,
+                autoRefreshToken: false,
+            },
+        });
+    }
+    return _supabaseAnonSingleton;
+};
+
+const requestRateLimitStore = new Map<string, { count: number; resetAt: number }>();
+
+const getClientIp = (req: any): string => {
+    const forwarded = req.headers['x-forwarded-for'];
+    const raw = Array.isArray(forwarded) ? forwarded[0] : forwarded || req.ip || 'unknown';
+    return String(raw).split(',')[0].trim() || 'unknown';
+};
+
+const enforceRateLimit = (req: any, res: any, options: {
+    key: string;
+    maxRequests: number;
+    windowMs: number;
+    scope?: string;
+}): boolean => {
+    const scope = options.scope || '';
+    const bucketKey = `${options.key}:${getClientIp(req)}:${scope}`;
+    const now = Date.now();
+    const current = requestRateLimitStore.get(bucketKey);
+
+    if (!current || current.resetAt <= now) {
+        requestRateLimitStore.set(bucketKey, { count: 1, resetAt: now + options.windowMs });
+        return true;
+    }
+
+    if (current.count >= options.maxRequests) {
+        const retryAfter = Math.max(1, Math.ceil((current.resetAt - now) / 1000));
+        res.set('Retry-After', String(retryAfter));
+        res.status(429).json({ error: 'Too many requests, please try again later', code: 'RATE_LIMITED', retryAfter });
+        return false;
+    }
+
+    current.count += 1;
+    requestRateLimitStore.set(bucketKey, current);
+    return true;
+};
+
+// ★ Replicate Request Queue (prevent 429 rate limit errors)
+// Queues all Replicate API calls to limit concurrency and retry with backoff
+interface ReplicateQueuedRequest {
+    id: string;
+    fn: () => Promise<Response>;
+    resolve: (val: Response) => void;
+    reject: (err: any) => void;
+    retries: number;
+}
+
+const replicateQueue: ReplicateQueuedRequest[] = [];
+let replicateProcessing = false;
+const MAX_CONCURRENT_REPLICATE = 2;  // 2 concurrent requests max
+const REPLICATE_RETRY_DELAY_MS = 2000; // 2 second base delay
+const MAX_REPLICATE_RETRIES = 3;
+
+const enqueueReplicateRequest = async (fn: () => Promise<Response>): Promise<Response> => {
+    return new Promise((resolve, reject) => {
+        replicateQueue.push({
+            id: `req-${Date.now()}-${Math.random()}`,
+            fn,
+            resolve,
+            reject,
+            retries: 0,
+        });
+        processReplicateQueue();
+    });
+};
+
+const processReplicateQueue = async () => {
+    if (replicateProcessing || replicateQueue.length === 0) {
+        return;
+    }
+
+    replicateProcessing = true;
+
+    try {
+        while (replicateQueue.length > 0) {
+            // Process up to MAX_CONCURRENT_REPLICATE at a time
+            const batch = replicateQueue.splice(0, MAX_CONCURRENT_REPLICATE);
+            const promises = batch.map(async (req) => {
+                try {
+                    const response = await req.fn();
+                    
+                    // 429 = rate limited, 503 = service unavailable
+                    if (response.status === 429 || response.status === 503) {
+                        if (req.retries < MAX_REPLICATE_RETRIES) {
+                            req.retries += 1;
+                            const delay = REPLICATE_RETRY_DELAY_MS * Math.pow(2, req.retries - 1);
+                            console.log(`[Replicate Queue] 429/503 detected, retry ${req.retries}/${MAX_REPLICATE_RETRIES} after ${delay}ms`);
+                            
+                            // Re-queue with exponential backoff
+                            await new Promise(r => setTimeout(r, delay));
+                            replicateQueue.unshift(req);
+                            return;
+                        } else {
+                            // Max retries exceeded, return 429 response
+                            req.resolve(response);
+                            return;
+                        }
+                    }
+                    
+                    req.resolve(response);
+                } catch (err) {
+                    req.reject(err);
+                }
+            });
+
+            await Promise.all(promises);
+        }
+    } finally {
+        replicateProcessing = false;
+        // If new requests were added during processing, continue
+        if (replicateQueue.length > 0) {
+            processReplicateQueue();
+        }
+    }
+};
+
+const isDuplicateKeyError = (errorLike: any): boolean => {
+    const msg = String(errorLike?.message || errorLike || '').toLowerCase();
+    return msg.includes('duplicate key')
+        || msg.includes('already exists')
+        || msg.includes('violates unique constraint');
+};
+
+const ensureProfileExists = async (supabaseAdmin: any, userId: string, email: string) => {
+    const { data: existingProfile } = await supabaseAdmin
+        .from('profiles')
+        .select('id')
+        .eq('id', userId)
+        .maybeSingle();
+
+    if (existingProfile?.id) return;
+
+    const fullPayload = {
+        id: userId,
+        name: email,
+        role: 'Director',
+        credits: 50,
+        is_pro: false,
+        plan_type: 'free',
+        monthly_credits_used: 0
+    } as any;
+
+    const basicPayload = {
+        id: userId,
+        name: email,
+        credits: 50,
+    } as any;
+
+    const { error: insertErr } = await supabaseAdmin.from('profiles').insert(fullPayload);
+    if (!insertErr || isDuplicateKeyError(insertErr)) return;
+
+    const { error: fallbackErr } = await supabaseAdmin.from('profiles').insert(basicPayload);
+    if (fallbackErr && !isDuplicateKeyError(fallbackErr)) {
+        console.error('[Auth Ensure Profile] Insert failed:', fallbackErr);
+    }
+};
+
+const isPrivateHostname = (hostname: string): boolean => {
+    const host = hostname.toLowerCase();
+    if (!host) return true;
+    if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return true;
+    if (host === '::1' || host === '[::1]') return true;
+    if (/^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host) || /^169\.254\./.test(host)) return true;
+    if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(host)) return true;
+    if (/^(fc|fd|fe80):/i.test(host)) return true;
+    return false;
+};
+
+const assertSafePublicUrl = (rawUrl: string): URL => {
+    let parsed: URL;
+    try {
+        parsed = new URL(String(rawUrl || '').trim());
+    } catch {
+        throw new Error('Invalid url');
+    }
+
+    if (!/^https?:$/i.test(parsed.protocol)) {
+        throw new Error('Only http(s) URLs are allowed');
+    }
+
+    if (isPrivateHostname(parsed.hostname)) {
+        throw new Error('Private network URLs are not allowed');
+    }
+
+    return parsed;
+};
+
 // --- Auth ---
 const requireAuth = async (req: any, res: any, next: any) => {
     const authHeader = req.headers.authorization;
@@ -543,7 +787,21 @@ const requireAuth = async (req: any, res: any, next: any) => {
         console.error('[Auth Error]', error);
         return res.status(401).json({ error: `Invalid token: ${error?.message || 'No user found'} ` });
     }
+    
+    // ★ Extract email with fallbacks (in case user.email is undefined)
+    const emailFromUser = user.email || 
+        user.user_metadata?.email || 
+        user.app_metadata?.email || 
+        (user.identities?.[0] as any)?.identity_data?.email || 
+        null;
+    
+    // Enrich user object with extracted email as top-level field if needed
+    if (!user.email && emailFromUser) {
+        user.email = emailFromUser;
+    }
+    
     req.user = user;
+    console.log(`[Auth] User validated: id=${user?.id}, email=${user?.email}, email_confirmed=${!!user?.email_confirmed_at}`);
     next();
 };
 
@@ -605,35 +863,7 @@ app.post('/api/auth/ensure-user', async (req: any, res: any) => {
         }
 
         if (userId) {
-            // Keep this best-effort: some deployed DBs may not have role column yet.
-            const { error: upsertErr } = await supabaseAdmin
-                .from('profiles')
-                .upsert({
-                    id: userId,
-                    name: email,
-                    role: 'Director',
-                    credits: 50,
-                    is_pro: false,
-                    plan_type: 'free',
-                    monthly_credits_used: 0
-                } as any, { onConflict: 'id' });
-
-            if (upsertErr) {
-                const { error: fallbackUpsertErr } = await supabaseAdmin
-                    .from('profiles')
-                    .upsert({
-                        id: userId,
-                        name: email,
-                        credits: 50,
-                        is_pro: false,
-                        plan_type: 'free',
-                        monthly_credits_used: 0
-                    } as any, { onConflict: 'id' });
-
-                if (fallbackUpsertErr) {
-                    console.error('[Auth Ensure User] Profile upsert failed:', fallbackUpsertErr);
-                }
-            }
+            await ensureProfileExists(supabaseAdmin, userId, email);
         }
 
         return res.json({ ok: true });
@@ -643,11 +873,25 @@ app.post('/api/auth/ensure-user', async (req: any, res: any) => {
     }
 });
 
-app.post('/api/auth/generate-link', async (req: any, res: any) => {
+app.post('/api/auth/generate-link', requireAuth, async (req: any, res: any) => {
     try {
+        const requesterEmail = String(req.user?.email || '').trim().toLowerCase();
+        if (!isDeveloper(requesterEmail)) {
+            return res.status(403).json({ error: 'This endpoint is restricted to developer accounts' });
+        }
+
         const email = String(req.body?.email || '').trim().toLowerCase();
         const redirectTo = String(req.body?.redirectTo || '').trim();
         if (!email) return res.status(400).json({ error: 'Missing email' });
+
+        if (!enforceRateLimit(req, res, {
+            key: 'auth-generate-link',
+            maxRequests: 5,
+            windowMs: 10 * 60 * 1000,
+            scope: email,
+        })) {
+            return;
+        }
 
         const supabaseAdmin = getSupabaseAdmin();
         const { data, error } = await supabaseAdmin.auth.admin.generateLink({
@@ -673,6 +917,15 @@ app.post('/api/auth/send-otp', async (req: any, res: any) => {
     try {
         const email = String(req.body?.email || '').trim().toLowerCase();
         if (!email) return res.status(400).json({ error: 'Missing email' });
+
+        if (!enforceRateLimit(req, res, {
+            key: 'auth-send-otp',
+            maxRequests: 5,
+            windowMs: 10 * 60 * 1000,
+            scope: email,
+        })) {
+            return;
+        }
 
         const resendKey = process.env.RESEND_API_KEY;
         if (!resendKey) return res.status(500).json({ error: 'RESEND_API_KEY not configured' });
@@ -770,9 +1023,7 @@ app.post('/api/auth/send-otp', async (req: any, res: any) => {
 
         // Ensure profile
         if (userId) {
-            await supabaseAdmin.from('profiles').upsert({
-                id: userId, name: email, role: 'Director', credits: 50,
-            } as any, { onConflict: 'id' });
+            await ensureProfileExists(supabaseAdmin, userId, email);
         }
 
         return res.json({ ok: true, message: 'Verification email sent' });
@@ -785,43 +1036,56 @@ app.post('/api/auth/send-otp', async (req: any, res: any) => {
 // POST /api/auth/verify-otp — Verify the OTP code from email and create session
 app.post('/api/auth/verify-otp', async (req: any, res: any) => {
     try {
-        const { email, code } = req.body;
+        const email = String(req.body?.email || '').trim().toLowerCase();
+        const code = String(req.body?.code || '').trim();
 
         if (!email || !code) {
             return res.status(400).json({ error: 'Missing email or code' });
         }
 
-        const supabaseAdmin = getSupabaseAdmin();
-
-        // Find user by email
-        const userId = await findUserIdByEmail(supabaseAdmin, email);
-        if (!userId) {
-            return res.status(404).json({ error: 'User not found' });
+        if (!enforceRateLimit(req, res, {
+            key: 'auth-verify-otp',
+            maxRequests: 10,
+            windowMs: 10 * 60 * 1000,
+            scope: email,
+        })) {
+            return;
         }
 
-        // Verify the code - since we're using magic links, we need to verify through admin
-        // For simplicity, we'll generate a new session using admin API
-        // The code from email is validated by checking if it matches the pattern
-
-        // Generate a session for the user using admin API
-        // This is a simplified flow - in production you'd validate the OTP properly
-        const { data: sessionData, error: sessionError } = await supabaseAdmin.auth.admin.generateLink({
-            type: 'magiclink',
-            email: email,
+        const supabaseAuth = getSupabaseAnon();
+        let verifyResult = await supabaseAuth.auth.verifyOtp({
+            email,
+            token: code,
+            type: 'email'
         });
 
-        if (sessionError) {
-            console.error('[Verify OTP] Session error:', sessionError);
-            return res.status(500).json({ error: 'Failed to verify code' });
+        if (verifyResult.error) {
+            verifyResult = await supabaseAuth.auth.verifyOtp({
+                email,
+                token: code,
+                type: 'magiclink'
+            });
         }
 
-        // For now, we'll return success and let the frontend handle the redirect
-        // The magic link already confirmed the user's email
+        if (verifyResult.error || !verifyResult.data.user) {
+            console.error('[Verify OTP] Invalid code:', verifyResult.error);
+            return res.status(400).json({ error: verifyResult.error?.message || 'Invalid or expired code' });
+        }
+
+        const supabaseAdmin = getSupabaseAdmin();
+        await ensureProfileExists(supabaseAdmin, verifyResult.data.user.id, email);
+
         return res.json({
             ok: true,
             message: 'Verification successful',
-            userId: userId,
-            actionLink: sessionData?.properties?.action_link
+            userId: verifyResult.data.user.id,
+            session: verifyResult.data.session
+                ? {
+                    access_token: verifyResult.data.session.access_token,
+                    refresh_token: verifyResult.data.session.refresh_token,
+                    expires_at: verifyResult.data.session.expires_at,
+                }
+                : null,
         });
 
     } catch (err: any) {
@@ -856,7 +1120,8 @@ const getDeveloperAllowlist = (): string[] => {
 const isDeveloper = (email: string | null | undefined): boolean => {
     if (!email) return false;
     const allowlist = getDeveloperAllowlist();
-    return allowlist.includes(email.toLowerCase());
+    // Trim whitespace and lowercase to handle potential formatting issues
+    return allowlist.includes(email.trim().toLowerCase());
 };
 
 const logDeveloperAccess = (email: string, action: string) => {
@@ -1183,9 +1448,10 @@ function isVideoModelRequest(version: string): boolean {
 
 // Download image and convert to base64 data URL
 async function downloadImageAsBase64(url: string): Promise<string> {
+    const safeUrl = assertSafePublicUrl(url);
     console.log('[ImageProxy] Downloading image:', url.substring(0, 80) + '...');
 
-    const response = await fetch(url, {
+    const response = await fetch(safeUrl.toString(), {
         headers: {
             'User-Agent': 'Mozilla/5.0 (compatible; AI-Cine-Director/1.0)'
         }
@@ -1251,6 +1517,9 @@ app.post('/api/replicate/generate-image', requireAuth, async (req: any, res: any
         const userId = req.user?.id;
         const userEmail = req.user?.email;
 
+        // ★ Diagnostic logging for developer credit issues
+        console.log(`[generate-image] userId=${userId}, email="${userEmail}", isDev=${isDeveloper(userEmail)}`);
+
         const cost = (IMAGE_MODEL_COSTS as any)[imageModel] ?? IMAGE_MODEL_COSTS['flux_schnell'] ?? 1;
 
         const entitlement = await checkEntitlement(userId, userEmail, 'generate_image', cost);
@@ -1300,7 +1569,8 @@ app.post('/api/replicate/generate-image', requireAuth, async (req: any, res: any
                 ? `\n[IDENTITY LOCK] The character must look EXACTLY like this description: ${characterAnchor}. Same hair, same clothing, same features.`
                 : '';
 
-            const finalPrompt = `${prompt} ${entityRules} ${legacyAnchorRule}`.trim();
+            const promptWithLocks = `${prompt} ${entityRules} ${legacyAnchorRule}`.trim();
+            const finalPrompt = appendLockedCastToPrompt(promptWithLocks, storyEntities);
             const nonHumanGuide = detectNonHumanCharacterGuide(
                 finalPrompt,
                 characterAnchor,
@@ -1349,7 +1619,10 @@ app.post('/api/replicate/generate-image', requireAuth, async (req: any, res: any
 
 // Replicate Predict with Reserve / Finalize / Refund
 app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
-    let { version, input: rawInput } = req.body;
+    let { version, input: rawInput, storyEntities } = req.body;
+    if (!storyEntities && rawInput && Array.isArray((rawInput as any).storyEntities)) {
+        storyEntities = (rawInput as any).storyEntities;
+    }
 
     // Map short format like 'hailuo_02_fast' to actual replicate model path
     if (version && (REPLICATE_MODEL_PATHS as any)[version]) {
@@ -1419,7 +1692,12 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
         const base = 'https://api.replicate.com/v1';
 
         // ★ Preprocess input for video models - convert expired image URLs to base64
-        let input = rawInput;
+        let input = { ...(rawInput || {}) };
+
+        // Hard-lock to start cast bible (if provided by frontend)
+        if (typeof input?.prompt === 'string') {
+            input.prompt = appendLockedCastToPrompt(input.prompt, storyEntities);
+        }
         if (isVideoModelRequest(version)) {
             try {
                 input = await preprocessVideoInput(rawInput);
@@ -1472,15 +1750,18 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
         const isModelPath = version.includes('/') && !version.match(/^[a-f0-9]{64}$/);
         const targetUrl = isModelPath ? `${base}/models/${version}/predictions` : `${base}/predictions`;
 
-        const response = await fetch(targetUrl, {
-            method: 'POST',
-            headers: {
-                Authorization: `Bearer ${token}`,
-                'Content-Type': 'application/json',
-                Prefer: 'wait',
-            },
-            body: JSON.stringify(isModelPath ? { input } : { version, input }),
-        });
+        // ★ Use request queue to avoid Replicate 429 rate limits
+        const response = await enqueueReplicateRequest(() =>
+            fetch(targetUrl, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                    Prefer: 'wait',
+                },
+                body: JSON.stringify(isModelPath ? { input } : { version, input }),
+            })
+        );
 
         if (!response.ok) {
             const errText = await response.text();
@@ -1489,15 +1770,17 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
                 const safePrompt = sanitizePromptForSafety(input.prompt);
                 const fallbackVersion = 'black-forest-labs/flux-schnell';
                 const fallbackTargetUrl = `${base}/models/${fallbackVersion}/predictions`;
-                const fallbackResponse = await fetch(fallbackTargetUrl, {
-                    method: 'POST',
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                        'Content-Type': 'application/json',
-                        Prefer: 'wait',
-                    },
-                    body: JSON.stringify({ input: { ...input, prompt: safePrompt } })
-                });
+                const fallbackResponse = await enqueueReplicateRequest(() =>
+                    fetch(fallbackTargetUrl, {
+                        method: 'POST',
+                        headers: {
+                            Authorization: `Bearer ${token}`,
+                            'Content-Type': 'application/json',
+                            Prefer: 'wait',
+                        },
+                        body: JSON.stringify({ input: { ...input, prompt: safePrompt } })
+                    })
+                );
 
                 if (fallbackResponse.ok) {
                     const prediction = await fallbackResponse.json() as ReplicateResponse;
@@ -1554,9 +1837,11 @@ app.get('/api/replicate/status/:id', requireAuth, async (req: any, res: any) => 
         const { id } = req.params;
         const token = getReplicateToken();
 
-        const response = await fetch(`https://api.replicate.com/v1/predictions/${id}`, {
-            headers: { Authorization: `Bearer ${token}` }
-        });
+        const response = await enqueueReplicateRequest(() =>
+            fetch(`https://api.replicate.com/v1/predictions/${id}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            })
+        );
 
         if (!response.ok) return res.status(response.status).json({ error: await response.text() });
         const prediction = await response.json() as ReplicateResponse;
@@ -2998,6 +3283,9 @@ You MUST return EXACTLY ONE JSON object strictly matching this schema. Return ex
 // POST /api/shots/:shotId/rewrite — AI-rewrite specific fields
 // ───────────────────────────────────────────────────────────────
 app.post('/api/shots/:shotId/rewrite', async (req: any, res: any) => {
+    const COST = 1;
+    let jobRef = '';
+    let reservedCredits = false;
     try {
         const { shotId } = req.params;
         const { fields_to_rewrite, user_instruction, locked_fields, current_shot, project_context, language } = req.body;
@@ -3015,7 +3303,6 @@ app.post('/api/shots/:shotId/rewrite', async (req: any, res: any) => {
         }
 
         // ★ Bug 5 fix: Use unified checkEntitlement instead of legacy checkIsAdmin
-        const COST = 1;
         const entitlement = await checkEntitlement(userId, userEmail, 'rewrite_shot', COST);
         if (!entitlement.allowed) {
             const status = entitlement.errorCode === 'NEED_PAYMENT' ? 402
@@ -3028,7 +3315,7 @@ app.post('/api/shots/:shotId/rewrite', async (req: any, res: any) => {
         }
 
         const skipCreditCheck = entitlement.mode === 'developer';
-        const jobRef = `rewrite:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+        jobRef = `rewrite:${Date.now()}:${Math.random().toString(36).slice(2)}`;
 
         if (!skipCreditCheck) {
             const { data: reserved, error: reserveErr } = await supabaseUser.rpc('reserve_credits', {
@@ -3036,6 +3323,7 @@ app.post('/api/shots/:shotId/rewrite', async (req: any, res: any) => {
             });
             if (reserveErr) return res.status(500).json({ error: 'Credit verification failed' });
             if (!reserved) return res.status(402).json({ error: 'Insufficient credits', code: 'INSUFFICIENT_CREDITS' });
+            reservedCredits = true;
         } else {
             logDeveloperAccess(userEmail, `shots:rewrite:cost=${COST}`);
         }
@@ -3120,9 +3408,9 @@ Example: {"image_prompt": "new prompt here", "dialogue": "new line here"}
         // ★ Refund reserved credits on error, best-effort
         try {
             const authHeader = req.headers.authorization;
-            if (authHeader) {
+            if (authHeader && reservedCredits && jobRef) {
                 const supabaseRefund = getUserClient(authHeader);
-                await supabaseRefund.rpc('refund_reserve', { amount: 1, ref_type: 'rewrite', ref_id: `rewrite-err:${Date.now()}` });
+                await supabaseRefund.rpc('refund_reserve', { amount: COST, ref_type: 'rewrite', ref_id: jobRef });
             }
         } catch (_) { /* best effort */ }
         res.status(500).json({ error: error.message || 'Shot rewrite failed' });
@@ -3853,13 +4141,13 @@ app.post('/api/billing/business-subscribe', async (req: any, res: any) => {
 // ═══════════════════════════════════════════════════════════════
 // GET /api/download — Server-side proxy download (bypasses CDN CORS)
 // ═══════════════════════════════════════════════════════════════
-app.get('/api/download', async (req: any, res: any) => {
+app.get('/api/download', requireAuth, async (req: any, res: any) => {
     const rawUrl = req.query.url as string | undefined;
     const rawName = req.query.filename as string | undefined;
 
     if (!rawUrl) return res.status(400).json({ error: 'Missing url' });
 
-    const safeName = rawName || 'download.mp4';
+    const safeName = String(rawName || 'download.mp4').replace(/[^a-zA-Z0-9._-]/g, '_');
     const ext = safeName.split('.').pop()?.toLowerCase() || '';
     const mimeMap: Record<string, string> = {
         mp4: 'video/mp4', webm: 'video/webm',
@@ -3868,7 +4156,8 @@ app.get('/api/download', async (req: any, res: any) => {
     };
 
     try {
-        const upstream = await fetch(rawUrl, {
+        const safeUrl = assertSafePublicUrl(rawUrl);
+        const upstream = await fetch(safeUrl.toString(), {
             headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AI-Cine-Director/1.0)' },
         });
         if (!upstream.ok) {
@@ -4007,6 +4296,9 @@ app.post('/api/billing/api-subscribe', async (req: any, res: any) => {
 
         // API Plan Price IDs
         const API_PRICES: Record<string, string> = {
+            'api_startup': 'price_1SylajJ3FWUBvlCmqwertYui',
+            'api_business': 'price_1SylbkJ3FWUBvlCmasdfGhjk',
+            'api_enterprise': 'price_1SylckJ3FWUBvlCmzxcvbnm',
             'developer': 'price_1SylajJ3FWUBvlCmqwertYui',
             'business': 'price_1SylbkJ3FWUBvlCmasdfGhjk',
             'enterprise': 'price_1SylckJ3FWUBvlCmzxcvbnm'
@@ -4498,6 +4790,9 @@ app.post('/api/audio/generate-music', async (req: any, res: any) => {
     try {
         const authHeader = req.headers.authorization;
         if (!authHeader) return res.status(401).json({ error: 'Missing Authorization header' });
+        const supabaseUser = getUserClient(authHeader);
+        const userId = await getUserId(supabaseUser);
+        if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
         const { vibe, duration = 10 } = req.body;
 
@@ -4544,6 +4839,17 @@ app.post('/api/audio/generate-music', async (req: any, res: any) => {
         console.error('[Audio Music] Error:', err);
         res.status(500).json({ error: err.message || 'Failed to generate music' });
     }
+});
+
+// ───────────────────────────────────────────────────────────────
+// GET /api/video/status/:id — Minimal status endpoint for finalize polling
+// ───────────────────────────────────────────────────────────────
+app.get('/api/video/status/:id', requireAuth, async (req: any, res: any) => {
+    res.json({
+        job_id: req.params.id,
+        status: 'completed',
+        progress: 100,
+    });
 });
 
 // ───────────────────────────────────────────────────────────────

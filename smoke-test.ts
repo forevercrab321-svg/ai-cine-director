@@ -80,31 +80,30 @@ async function testEnsureUser() {
   }
 }
 
-// Test 3: Generate magic link (simulate login)
-async function testMagicLink() {
-  log('Generating magic link...', '🔗');
+// Test 3: Send OTP email (public auth flow)
+async function testSendOtp() {
+  log('Sending OTP email...', '🔗');
   const start = Date.now();
   try {
-    const res = await fetch(`${PROD_URL}/api/auth/generate-link`, {
+    const res = await fetch(`${PROD_URL}/api/auth/send-otp`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email: TEST_EMAIL,
-        redirectTo: `${PROD_URL}/dashboard`
+        email: TEST_EMAIL
       })
     });
 
     if (res.ok) {
       const data = await res.json();
-      pass('Generate Magic Link', { hasLink: !!data.actionLink }, Date.now() - start);
-      return data.actionLink || null;
+      pass('Send OTP Email', { ok: !!data.ok }, Date.now() - start);
+      return true;
     } else {
-      fail('Generate Magic Link', `HTTP ${res.status}`);
-      return null;
+      fail('Send OTP Email', `HTTP ${res.status}`);
+      return false;
     }
   } catch (err: any) {
-    fail('Generate Magic Link', err.message);
-    return null;
+    fail('Send OTP Email', err.message);
+    return false;
   }
 }
 
@@ -331,10 +330,10 @@ async function main() {
 
   // Phase 2: User & Auth
   await testEnsureUser();
-  const magicLink = await testMagicLink();
+  await testSendOtp();
 
   // Phase 3: Core API endpoints (without real auth token for now)
-  // In production, you'd extract a real token from the magic link
+  // In production, you'd verify the OTP and inject a real token in CI/CD
   const accessToken = null; // We'd use a real token in CI/CD with test user creds
   
   await testScriptGeneration(accessToken);

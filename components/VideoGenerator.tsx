@@ -291,6 +291,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
         settings.videoModel,
         settings.imageModel,
         referenceImageDataUrl,
+        project.story_entities || [],
         sceneVideoUrls, // ★ Pass existing videos so the pipeline can resume gracefully
         (progress) => {
           const scene = project.scenes[progress.index];
@@ -832,6 +833,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
               predictionId={scenePredictionIds[scene.scene_number]}
               errorDetails={sceneStatus[scene.scene_number]?.error}
               characterAnchor={project.character_anchor}
+              storyEntities={project.story_entities || []}
             />
             {/* ★ AUTO-AUDIO: Inline audio player — appears automatically when voice is ready */}
             {sceneAudioUrls[scene.scene_number] && (

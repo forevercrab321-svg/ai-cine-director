@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Scene, Language, ImageModel, VideoModel, VideoStyle, AspectRatio, GenerationMode, VideoQuality, VideoDuration, VideoFps, VideoResolution, CREDIT_COSTS, STYLE_PRESETS, MODEL_COSTS, MODEL_MULTIPLIERS } from '../types';
+import { Scene, Language, ImageModel, VideoModel, VideoStyle, AspectRatio, GenerationMode, VideoQuality, VideoDuration, VideoFps, VideoResolution, CREDIT_COSTS, STYLE_PRESETS, MODEL_COSTS, MODEL_MULTIPLIERS, StoryEntity } from '../types';
 import { PhotoIcon, VideoCameraIcon, LoaderIcon } from './IconComponents';
 import { generateImage } from '../services/replicateService';
 import { useAppContext } from '../context/AppContext';
@@ -32,6 +32,7 @@ interface SceneCardProps {
   predictionId?: string;
   errorDetails?: string;
   characterAnchor?: string;
+  storyEntities?: StoryEntity[];
   sceneIndex: number;
 }
 
@@ -111,6 +112,7 @@ const SceneCard: React.FC<SceneCardProps> = ({
   predictionId,
   errorDetails,
   characterAnchor,
+  storyEntities,
   onDeductCredits,
   userCredits,
   sceneIndex
@@ -174,7 +176,9 @@ const SceneCard: React.FC<SceneCardProps> = ({
         imageModel,
         videoStyle,
         aspectRatio,
-        characterAnchor
+        characterAnchor,
+        null,
+        storyEntities || []
       );
 
       onImageGenerated(resultImageUrl);

@@ -94,13 +94,13 @@ export async function generateAudio(
     
     const requestBody = {
       text,
-      voice_id: options.voice_id || 'zh_female_1',
-      reference_audio_url: options.reference_audio_url,
+      voice: options.voice_id || 'zh_female_1',
+      emotion: 'neutral',
       language: options.language || 'zh',
       speed: options.speed || 1.0
     };
 
-    const response = await fetch('/api/audio/generate', {
+    const response = await fetch('/api/audio/generate-dialogue', {
       method: 'POST',
       headers,
       body: JSON.stringify(requestBody)
@@ -120,10 +120,13 @@ export async function generateAudio(
     }
 
     const data = await response.json();
+    const estimatedDuration = typeof data.duration === 'number'
+      ? data.duration
+      : Math.max(1, text.split(/\s+/).filter(Boolean).length / 2.5);
     return {
-      audio_url: data.audio_url,
-      duration_seconds: data.duration_seconds,
-      cost_credits: data.cost_credits
+      audio_url: data.audio_url || data.url,
+      duration_seconds: estimatedDuration,
+      cost_credits: estimateAudioCost(text)
     };
   } catch (error: any) {
     console.error("[AudioService] GenerateAudio Error:", error);
@@ -180,7 +183,7 @@ export async function getUserVoiceLibrary(): Promise<{
 }[]> {
   try {
     const headers = await getAuthHeaders();
-    const response = await fetch('/api/audio/voices', {
+    const response = await fetch('/api/audio/elevenlabs/voices', {
       method: 'GET',
       headers
     });

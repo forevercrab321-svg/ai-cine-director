@@ -294,13 +294,25 @@ export const startVideoTask = async (
   // We append the character anchor gracefully at the end, but strictly enforce 3D and motion consistency.
   let finalPrompt = prompt;
 
+  const lockedStoryEntities = Array.isArray(promptOptions?.storyEntities)
+    ? promptOptions.storyEntities.filter((e: any) => e?.is_locked)
+    : [];
+
   let entityRules = '';
-  if (promptOptions?.storyEntities && Array.isArray(promptOptions.storyEntities)) {
-    const lockedEntities = promptOptions.storyEntities.filter((e: any) => e.is_locked);
+  if (lockedStoryEntities.length > 0) {
+    const lockedEntities = lockedStoryEntities;
     if (lockedEntities.length > 0) {
       entityRules = lockedEntities.map((e: any) => `[${e.type.toUpperCase()}: ${e.name}] ${e.description}`).join(' | ');
       finalPrompt = `${prompt}. [IDENTITY LOCK] Ensure the following entities appear exactly as described: ${entityRules}. Critically important: Maintain exact features and clothing strictly consistent throughout the entire motion.`;
     }
+  }
+
+  const lockedCastLine = lockedStoryEntities
+    .filter((e: any) => String(e?.type || '').toLowerCase() === 'character')
+    .map((e: any) => `${e.name}: ${e.description}`)
+    .join(' | ');
+  if (lockedCastLine) {
+    finalPrompt = `${finalPrompt}. [CAST LOCK - MUST FOLLOW EXACTLY] Start Cast Bible: ${lockedCastLine}. Every generated frame must match these cast identities exactly. No face drift, no costume drift, no replacement actors.`;
   }
 
   // Fallback to legacy character anchor if no entity rules exist
@@ -308,6 +320,10 @@ export const startVideoTask = async (
     // Add strong continuous consistency constraint, specifically targeting head turns
     finalPrompt = `${prompt}. Character Identity: ${characterAnchor}. Critically important: Maintain the exact same facial features, identity, and clothing strictly consistent throughout the entire motion, regardless of angle changes or head turns.`;
   }
+
+  // Universal frame-identity lock: always enforce identity from the provided first frame image.
+  // This is critical for keeping face/clothing stable during movement and camera angle changes.
+  finalPrompt = `${finalPrompt}. [FRAME LOCK] The subject in the provided first-frame image must remain the exact same person in every frame. Do not change facial structure, hairstyle, age, skin tone, outfit, jewelry, or accessories. Preserve identity and costume continuity absolutely.`;
 
   let modelIdentifier = modelType.includes('/')
     ? modelType
@@ -326,7 +342,8 @@ export const startVideoTask = async (
     headers,
     body: JSON.stringify({
       version: modelIdentifier,
-      input: buildVideoInput(modelType, finalPrompt, startImageUrl, videoOptions, promptEngineVersion)
+      input: buildVideoInput(modelType, finalPrompt, startImageUrl, videoOptions, promptEngineVersion),
+      storyEntities: lockedStoryEntities,
     })
   });
 

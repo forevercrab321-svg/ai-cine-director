@@ -125,6 +125,21 @@ const MainLayout: React.FC = () => {
       console.log(`[App] Generating with extractedAnchor: "${extractedAnchor?.substring(0, 80) || 'EMPTY'}..." (length: ${extractedAnchor?.length || 0})`);
       const data = await generateStoryboard(storyIdea, settings.videoStyle, settings.lang, settings.generationMode, extractedAnchor, sceneCount);
       setProject(data);
+      
+      // ★ Auto-populate anchor from story entities if still empty
+      if (!extractedAnchor && data.story_entities?.length > 0) {
+        // Try to find the main locked character
+        const mainCharacter = data.story_entities.find(e => e.type === 'character' && e.is_locked);
+        if (mainCharacter?.description) {
+          console.log(`[App] Auto-populated anchor from story_entities: "${mainCharacter.name}"`);
+          setExtractedAnchor(mainCharacter.description);
+        }
+      } else if (!extractedAnchor && data.character_anchor) {
+        // Fallback to character_anchor from Gemini
+        console.log(`[App] Auto-populated anchor from character_anchor`);
+        setExtractedAnchor(data.character_anchor);
+      }
+      
       setWorkflowStage('scripting');
     } catch (err: any) {
       setError(err.message);

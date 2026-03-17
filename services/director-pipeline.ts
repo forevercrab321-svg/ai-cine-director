@@ -7,6 +7,7 @@ import { supabase } from '../lib/supabaseClient';
 import type {
   VideoModel,
   ImageModel,
+  StoryEntity,
   VideoStyle,
   GenerationMode,
   VideoQuality,
@@ -171,6 +172,7 @@ export const generateSceneChain = async (
   videoModel: VideoModel = 'hailuo_02_fast',  // ★ Now accepts user-selected model (default: hailuo)
   imageModel: ImageModel = 'flux', // ★ user-selected image model
   referenceImageBase64?: string, // ★ NEW: Fast forwarding base64 image reference to backend
+  storyEntities: StoryEntity[] = [], // ★ NEW: pass locked entities to reinforce identity consistency
   existingSceneUrls: Record<number, string> = {}, // ★ RESUME SUPPORT
   onProgress?: (data: {
     index: number;
@@ -184,6 +186,11 @@ export const generateSceneChain = async (
   let globalAutoAnchorBase64: string | null = null; // ★ 新增：全片霸权面部锚点
   let globalTailFrameBase64: string | null = null; // ★ 全片连续基准：上一镜尾帧
   const videoUrls: string[] = [];
+  const lockedCastLine = (storyEntities || [])
+    .filter((e: any) => e?.is_locked && String(e?.type || '').toLowerCase() === 'character')
+    .map((e: any) => `${e?.name || 'Character'}: ${e?.description || ''}`.trim())
+    .filter(Boolean)
+    .join(' | ');
 
   for (let i = 0; i < storyboard.length; i++) {
     const shot = storyboard[i];
@@ -229,7 +236,8 @@ export const generateSceneChain = async (
           "none",
           "16:9",
           extractedAnchor,
-          masterFaceAnchor // ★ pass image so Pulid clones the face perfectly into new environment
+          masterFaceAnchor, // ★ pass image so Pulid clones the face perfectly into new environment
+          storyEntities
         ),
         3
       );
@@ -259,7 +267,10 @@ export const generateSceneChain = async (
     const richContext = shot.image_prompt ? `Visual Context: ${shot.image_prompt}. ` : '';
 
     // We no longer manually append character note here because startVideoTask handles it dynamically.
-    const lockedVideoPrompt = `${richContext}Cinematic Action: ${rawVideoPrompt}`.trim();
+    const castLockRule = lockedCastLine
+      ? `[CAST LOCK - MUST FOLLOW EXACTLY] Start Cast Bible: ${lockedCastLine}.`
+      : '';
+    const lockedVideoPrompt = `${richContext}Cinematic Action: ${rawVideoPrompt}. [IDENTITY CONTINUITY] Keep the exact same protagonist identity and costume as the provided first frame image; no face drift, no wardrobe drift. ${castLockRule}`.trim();
 
     console.log(`🔒 [Shot ${i + 1}] Target Action: ${lockedVideoPrompt}`);
 
@@ -280,7 +291,7 @@ export const generateSceneChain = async (
         "720p" as VideoResolution,
         extractedAnchor,   // Still passed here so buildVideoInput can also append it
         "16:9",
-        { audioPrompt }  // Pass audio prompt
+        { audioPrompt, storyEntities }  // Pass audio + locked entities for stronger consistency
       ),
       3
     );
