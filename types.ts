@@ -4,8 +4,9 @@
 // ═══════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════
-// Shot Intent & Entity Routing
+// Project & Shot Intent & Entity Routing
 // ═══════════════════════════════════════════════════════════════
+export type ProjectType = 'character_driven' | 'environment_driven' | 'destruction_driven' | 'architecture_driven' | 'object_driven' | 'hybrid';
 export type ShotIntent = 'character' | 'environment' | 'destruction' | 'establishing' | 'prop' | 'hybrid';
 export type CharacterPresence = 'none' | 'optional' | 'background' | 'primary';
 export type AnchorMode = 'off' | 'optional' | 'required';
@@ -163,8 +164,15 @@ export interface ShotImageGenerateRequest {
   delta_instruction?: string;    // Append instruction
   model?: ImageModel;
   aspect_ratio?: AspectRatio;
+  duration?: VideoDuration;
+  fps?: VideoFps;
+  resolution?: VideoResolution;
   style?: VideoStyle;
   seed?: number | null;
+
+  // ★ Zero-Character Project Support
+  project_type?: ProjectType;
+  has_cast?: boolean; // If false, absolutely no characters
   character_anchor?: string;
   reference_policy?: 'none' | 'anchor' | 'first-frame' | 'previous-frame';
 }
@@ -272,6 +280,11 @@ export interface EnhancedProject {
   character_anchor: string;
   story_entities?: StoryEntity[];
   identity_strength?: number;
+
+  // ★ Zero-Character Project Support
+  project_type?: ProjectType;
+  has_cast?: boolean;
+
   scenes: EnhancedScene[];
 }
 
@@ -323,6 +336,11 @@ export interface StoryboardProject {
   character_anchor: string;
   story_entities?: StoryEntity[];
   identity_strength?: number;
+
+  // ★ Zero-Character Project Support
+  project_type?: ProjectType;
+  has_cast?: boolean;
+
   scenes: Scene[];
 }
 

@@ -46,6 +46,9 @@ const MainLayout: React.FC = () => {
   const [referenceImageDataUrl, setReferenceImageDataUrl] = useState<string>('');  // ★ Compressed base64 for Flux Redux
   const [sceneCount, setSceneCount] = useState<number>(5);
   const [shotCount, setShotCount] = useState<number>(5); // ★ 新增：镜头数量快速选择
+  const [forceHasCast, setForceHasCast] = useState<boolean | undefined>(undefined);
+  const [projectType, setProjectType] = useState<string>('');
+  const [showAdvancedProjectSettings, setShowAdvancedProjectSettings] = useState<boolean>(false);
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [paymentNotification, setPaymentNotification] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
@@ -123,9 +126,9 @@ const MainLayout: React.FC = () => {
 
     try {
       console.log(`[App] Generating with extractedAnchor: "${extractedAnchor?.substring(0, 80) || 'EMPTY'}..." (length: ${extractedAnchor?.length || 0})`);
-      const data = await generateStoryboard(storyIdea, settings.videoStyle, settings.lang, settings.generationMode, extractedAnchor, sceneCount);
+      const data = await generateStoryboard(storyIdea, settings.videoStyle, settings.lang, settings.generationMode, extractedAnchor, sceneCount, forceHasCast, projectType);
       setProject(data);
-      
+
       // ★ Auto-populate anchor from story entities if still empty
       if (!extractedAnchor && data.story_entities?.length > 0) {
         // Try to find the main locked character
@@ -139,7 +142,7 @@ const MainLayout: React.FC = () => {
         console.log(`[App] Auto-populated anchor from character_anchor`);
         setExtractedAnchor(data.character_anchor);
       }
-      
+
       setWorkflowStage('scripting');
     } catch (err: any) {
       setError(err.message);
@@ -358,6 +361,55 @@ const MainLayout: React.FC = () => {
                 onImageDataUrl={(dataUrl) => setReferenceImageDataUrl(dataUrl)}
                 currentAnchor={extractedAnchor}
               />
+            </div>
+
+            {/* 高级项目设置 / Advanced Project Settings */}
+            <div className="mb-6">
+              <button
+                onClick={() => setShowAdvancedProjectSettings(!showAdvancedProjectSettings)}
+                className="flex items-center gap-2 text-sm text-slate-400 hover:text-white transition-colors"
+                type="button"
+              >
+                <span>{showAdvancedProjectSettings ? '▼' : '▶'}</span>
+                <span>⚙️ 高级项目设定 (Project Settings)</span>
+              </button>
+
+              {showAdvancedProjectSettings && (
+                <div className="mt-4 p-4 bg-slate-950 border border-slate-800 rounded-xl space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">项目类型 Project Type</label>
+                    <select
+                      value={projectType}
+                      onChange={e => setProjectType(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg p-3 text-sm focus:border-indigo-500 outline-none"
+                    >
+                      <option value="">🔮 智能判定 (Auto Detect)</option>
+                      <option value="character_driven">👤 人物剧情主导 (Character Driven)</option>
+                      <option value="environment_driven">🌄 纯环境主导 (Environment Driven)</option>
+                      <option value="destruction_driven">💥 灾难/破坏主导 (Destruction Driven)</option>
+                      <option value="architecture_driven">🏙️ 建筑展示主导 (Architecture Driven)</option>
+                      <option value="object_driven">🚗 物品/车辆展示 (Object Driven)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">强制拥有主角 Force Character Presense</label>
+                    <div className="flex gap-4">
+                      <label className="flex items-center gap-2 text-sm cursor-pointer">
+                        <input type="radio" checked={forceHasCast === undefined} onChange={() => setForceHasCast(undefined)} className="accent-indigo-500 w-4 h-4 cursor-pointer" />
+                        <span className="text-slate-300">智能 (Auto)</span>
+                      </label>
+                      <label className="flex items-center gap-2 text-sm cursor-pointer">
+                        <input type="radio" checked={forceHasCast === true} onChange={() => setForceHasCast(true)} className="accent-indigo-500 w-4 h-4 cursor-pointer" />
+                        <span className="text-slate-300">包含主角 (Yes)</span>
+                      </label>
+                      <label className="flex items-center gap-2 text-sm cursor-pointer">
+                        <input type="radio" checked={forceHasCast === false} onChange={() => setForceHasCast(false)} className="accent-indigo-500 w-4 h-4 cursor-pointer" />
+                        <span className="text-slate-300">无主角 (No Cast)</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             <button

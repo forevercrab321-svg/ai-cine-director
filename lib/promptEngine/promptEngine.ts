@@ -23,7 +23,8 @@ export type VideoPromptOptions = {
   colorGrade?: string;
   negatives?: string[];
   generationMode?: GenerationMode;
-  contains_character?: boolean; // UI override for character presence
+  contains_character?: boolean; // UI override for character presence per-shot
+  has_cast?: boolean;           // Upstream project-level cast state
 };
 
 // Vague cinematic adjectives that cause hallucination and model drift.
@@ -126,6 +127,14 @@ export function buildVideoPrompt(
   // Dynamically inject Entity Router's forbidden leakage terms
   if (routing.forbiddenEntities.length > 0) {
     defaultNegatives.push(...routing.forbiddenEntities);
+  }
+
+  // ★ UPSTREAM ZERO-CHARACTER ENFORCEMENT
+  if (options.has_cast === false) {
+    defaultNegatives.push(
+      'humans', 'animals', 'faces', 'mascot characters', 'anthropomorphic creatures',
+      'hero subject', 'character insertion', 'people'
+    );
   }
 
   if (isStrict) {

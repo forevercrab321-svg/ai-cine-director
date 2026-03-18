@@ -2284,7 +2284,17 @@ app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
             if (reserveErr) return res.status(500).json({ error: 'Credit verification failed' });
             if (!reserved) return res.status(402).json({ error: 'INSUFFICIENT_CREDITS', code: 'INSUFFICIENT_CREDITS' });
         }
-        const systemInstruction = `You are a LEGENDARY Master Cinematographer directing for OSCAR-WINNING studios with visionary artistry:
+        const systemInstruction = `You are an elite cinematic AI director capable of pre-visualizing both character-driven narratives and zero-character sequences (like disaster, environment, architecture, or object studies).
+
+YOUR FIRST AND MOST IMPORTANT TASK:
+1. Classify the "project_type" based strictly on the user narrative. It must be ONE of: character_driven, environment_driven, destruction_driven, architecture_driven, object_driven, hybrid.
+2. Determine "has_cast": boolean. If the narrative is environment/destruction/architecture-led AND DOES NOT EXPLICITLY specify a protagonist/character, set "has_cast" to false. Do NOT invent or hallucinate characters for a scene that is meant to be empty or event-driven.
+3. If has_cast is false, "characterAnchor" MUST be an empty string, and "story_entities" MUST NOT contain any 'character' type entities.
+
+For character-driven stories: Create a rich 'characterAnchor' and detailed 'character' entities.
+For zero-character stories: Focus entirely on cinematic lighting, camera movement, scale, and environmental or destruction dynamics.
+
+Each scene needs exactly ${targetScenes} shots combined. Provide high-quality visual and motion prompts.
 ★ Spielberg's visual storytelling mastery and emotional intelligence
 ★ Nolan's architectural complexity and temporal brilliance  
 ★ Villeneuve's vast immersive scale and intimate human moments
@@ -2450,8 +2460,10 @@ ${nonHumanGuide.guidance}` : ''}
 You MUST return this EXACT JSON structure with EXACTLY ${targetScenes} scenes:
 {
   "project_title": "string",
+  "project_type": "character_driven|environment_driven|destruction_driven|architecture_driven|object_driven|hybrid",
+  "has_cast": "boolean",
   "visual_style": "string",
-  "characterAnchor": "string",
+  "characterAnchor": "string (Empty if has_cast is false)",
   "story_entities": [
     {
       "type": "character|prop|location",
@@ -2522,11 +2534,22 @@ You MUST return this EXACT JSON structure with EXACTLY ${targetScenes} scenes:
             id: crypto.randomUUID(),
             project_title: parsedData.project_title,
             visual_style: parsedData.visual_style,
+            project_type: parsedData.project_type || 'character_driven',
+            has_cast: parsedData.has_cast !== false, // Default to true unless explicitly false
             character_anchor: parsedData.characterAnchor || parsedData.character_anchor || '',
             story_entities: story_entities
         };
 
-        if (!project.character_anchor && nonHumanGuide.hasNonHuman) {
+        // ★ FALSE POSITIVE BLOCKER: Zero-Character Enforcement
+        // If the project is explicitly classified as non-character, brutally suppress any hallucinated characters.
+        if (project.has_cast === false || ['environment_driven', 'destruction_driven', 'architecture_driven'].includes(project.project_type)) {
+            console.log(`[Zero-Character Enforcement] Stripped hallucinated cast anchor for ${project.project_type}`);
+            project.has_cast = false;
+            project.character_anchor = '';
+            project.story_entities = project.story_entities.filter((e: any) => e.type !== 'character');
+        }
+
+        if (project.has_cast !== false && !project.character_anchor && nonHumanGuide.hasNonHuman) {
             project.character_anchor = `A ${nonHumanGuide.species[0]} protagonist with consistent species-specific anatomy and features`;
         }
 
@@ -2549,9 +2572,9 @@ You MUST return this EXACT JSON structure with EXACTLY ${targetScenes} scenes:
             project.character_anchor = safeIdentityAnchor.trim();
         }
 
-        // Ensure we always have at least one locked character entity for continuity enforcement
+        // Ensure we always have at least one locked character entity for continuity enforcement, BUT ONLY IF has_cast is true
         const hasLockedCharacter = story_entities.some((e: any) => e.type === 'character' && e.is_locked && e.name);
-        if (!hasLockedCharacter && project.character_anchor) {
+        if (project.has_cast !== false && !hasLockedCharacter && project.character_anchor) {
             story_entities.unshift({
                 id: crypto.randomUUID(),
                 type: 'character',

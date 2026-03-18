@@ -42,11 +42,11 @@ const generateMockStoryboard = (
     { location: 'A futuristic laboratory', time: 'day', action: 'Character examines holographic displays, technology hums' },
     { location: 'An underwater base', time: 'underwater', action: 'Character peers through reinforced glass at deep ocean creatures' },
   ];
-  
+
   for (let i = 0; i < sceneCount; i++) {
     const sceneSetting = sceneSettings[i % sceneSettings.length];
     const storyPrefix = i === 0 ? storyIdea.slice(0, 60) : `Continuing the story`;
-    
+
     scenes.push({
       id: `scene-${i + 1}`,
       scene_number: i + 1,
@@ -57,7 +57,7 @@ const generateMockStoryboard = (
       image_prompt: `${storyIdea.slice(0, 40)}, ${visualStyle}, ${sceneSetting.location}, ${sceneSetting.time}, ${sceneSetting.action}`,
     });
   }
-  
+
   return {
     project_title: storyIdea.slice(0, 50),
     visual_style: visualStyle,
@@ -83,7 +83,9 @@ export const generateStoryboard = async (
   language: Language,
   mode: GenerationMode,
   identityAnchor?: string,
-  sceneCount?: number
+  sceneCount?: number,
+  forceHasCast?: boolean,
+  projectType?: string
 ): Promise<StoryboardProject> => {
   try {
     const { data: { session } } = await supabase.auth.getSession();
@@ -102,6 +104,8 @@ export const generateStoryboard = async (
         mode,
         identityAnchor,
         sceneCount: sceneCount || 5,
+        forceHasCast,
+        projectType
       }),
     });
 
@@ -129,7 +133,7 @@ const compressBase64Image = (base64Data: string, maxSizeKB: number = 500): Promi
     // 计算实际 base64 部分的大小
     const rawBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
     const sizeKB = (rawBase64.length * 3) / 4 / 1024;
-    
+
     if (sizeKB <= maxSizeKB) {
       console.log(`[RefImage] Image size ${Math.round(sizeKB)}KB <= ${maxSizeKB}KB, no compression needed`);
       resolve(base64Data);
@@ -137,7 +141,7 @@ const compressBase64Image = (base64Data: string, maxSizeKB: number = 500): Promi
     }
 
     // ★ 确保 img.src 使用完整 data URL 格式，否则浏览器无法加载
-    const dataUrl = base64Data.includes(',') 
+    const dataUrl = base64Data.includes(',')
       ? base64Data  // 已经是完整 data URL
       : `data:image/jpeg;base64,${base64Data}`;  // 裸 base64 → 添加前缀
 
@@ -145,7 +149,7 @@ const compressBase64Image = (base64Data: string, maxSizeKB: number = 500): Promi
     img.onload = () => {
       const canvas = document.createElement('canvas');
       let { width, height } = img;
-      
+
       // 按比例缩小到合理尺寸
       const maxDim = 800;
       if (width > maxDim || height > maxDim) {
@@ -153,12 +157,12 @@ const compressBase64Image = (base64Data: string, maxSizeKB: number = 500): Promi
         width = Math.round(width * ratio);
         height = Math.round(height * ratio);
       }
-      
+
       canvas.width = width;
       canvas.height = height;
       const ctx = canvas.getContext('2d');
       ctx?.drawImage(img, 0, 0, width, height);
-      
+
       // 使用较低质量的 JPEG — 返回完整 data URL
       const compressed = canvas.toDataURL('image/jpeg', 0.7);
       const compressedRaw = compressed.split(',')[1] || compressed;
@@ -206,12 +210,12 @@ export const analyzeImageForAnchor = async (base64Data: string): Promise<string>
 
     const data = await response.json();
     console.log('[RefImage] ✅ Gemini Vision anchor result:', data.anchor?.substring(0, 100) + '...');
-    
+
     // ★ 检查是否返回了默认 fallback（意味着分析可能失败了）
     if (!data.anchor || data.anchor === 'A cinematic character') {
       console.warn('[RefImage] ⚠️ Got default fallback anchor — analysis may have failed');
     }
-    
+
     return data.anchor || 'A cinematic character';
   } catch (error) {
     console.error('[RefImage] ❌ Identity Analysis Error:', error);
