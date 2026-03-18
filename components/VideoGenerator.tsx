@@ -278,9 +278,11 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
     try {
       const FALLBACK_ANCHOR = "A cinematic character consistent with the scene context.";
       let finalAnchor = project.character_anchor;
-      if (!finalAnchor || finalAnchor.trim() === "" || finalAnchor === "EMPTY") {
+      if (project.has_cast !== false && (!finalAnchor || finalAnchor.trim() === "" || finalAnchor === "EMPTY")) {
         console.warn("⚠️ [Director Warning] 检测到空锚点！已启用兜底安全锚点。");
         finalAnchor = FALLBACK_ANCHOR;
+      } else if (project.has_cast === false) {
+        finalAnchor = "";
       }
 
       setChainError(null); // Clear previous errors

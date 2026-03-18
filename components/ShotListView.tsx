@@ -188,7 +188,7 @@ const SceneSection: React.FC<{
 
     // ★ 核心多米诺骨牌引擎（场次级：硬切+软接）
     const handleRunDominoChain = async () => {
-        if (!project.character_anchor) return alert("请先设定角色一致性锚点！");
+        if (project.has_cast !== false && !project.character_anchor) return alert("请先设定角色一致性锚点！");
         if (shots.length === 0) return alert("当前场景没有分镜。");
 
         setIsChainRunning(true);
@@ -628,7 +628,7 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
         }
 
         // ★ 验证前置条件（必须在锁定之前检查）
-        if (!project.character_anchor) {
+        if (project.has_cast !== false && !project.character_anchor) {
             return alert("请先在左侧设定【角色一致性锚点】！");
         }
         if (project.scenes.length === 0) {
