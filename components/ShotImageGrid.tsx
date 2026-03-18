@@ -4,7 +4,7 @@
  * Includes generate/reroll/edit/download/video buttons per image.
  */
 import React, { useState, useRef } from 'react';
-import { Shot, ShotImage, ImageModel, AspectRatio, VideoStyle, MODEL_COSTS } from '../types';
+import { Shot, ShotImage, ImageModel, AspectRatio, VideoStyle, MODEL_COSTS, StoryEntity, ContinuityConfig, ContinuityStrictness } from '../types';
 import { generateShotImage, editShotImage, getImageCost, GenerateImageResult } from '../services/shotImageService';
 import { startVideoTask, checkPredictionStatus } from '../services/replicateService';
 import { useAppContext } from '../context/AppContext';
@@ -32,13 +32,14 @@ interface ShotImageGridProps {
     characterAnchor: string;
     visualStyle: string;
     projectId?: string;
+    storyEntities?: StoryEntity[];
     referenceImageDataUrl?: string; // ★ 新增：接收大哥照片的管道
     onSetGlobalAnchor?: (url: string) => void;
     sceneDescription?: string; // ★ Full context for video prompts
 }
 
 const ShotImageGrid: React.FC<ShotImageGridProps> = ({
-    shot, images, onImagesChange, characterAnchor, visualStyle, projectId, referenceImageDataUrl, onSetGlobalAnchor, sceneDescription
+    shot, images, onImagesChange, characterAnchor, visualStyle, projectId, storyEntities, referenceImageDataUrl, onSetGlobalAnchor, sceneDescription
 }) => {
     const { settings, userState, isAuthenticated, hasEnoughCredits, openPricingModal, refreshBalance, deductCredits } = useAppContext();
     const [isGenerating, setIsGenerating] = useState(false);
@@ -51,6 +52,50 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
     const [videoError, setVideoError] = useState<string | null>(null);
     const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
     const videoRef = useRef<HTMLVideoElement>(null);
+
+    const [strictness, setStrictness] = useState<ContinuityStrictness>('high');
+    const [lockCharacter, setLockCharacter] = useState(true);
+    const [lockStyle, setLockStyle] = useState(true);
+    const [lockCostume, setLockCostume] = useState(true);
+    const [usePrevApprovedRef, setUsePrevApprovedRef] = useState(true);
+
+    const continuityPayload: ContinuityConfig = {
+        strictness,
+        lockCharacter,
+        lockStyle,
+        lockCostume,
+        lockScene: true,
+        usePreviousApprovedAsReference: usePrevApprovedRef,
+        scene_memory: {
+            scene_id: shot.scene_id,
+            location: shot.location,
+            time_of_day: shot.time_of_day,
+            lighting_continuity: shot.lighting,
+            active_costume: shot.art_direction,
+            prop_state: shot.sfx_vfx,
+        },
+        project_context: {
+            project_id: projectId,
+            visual_style: visualStyle,
+            character_anchor: characterAnchor,
+            story_entities: storyEntities,
+        },
+        character_bible: {
+            face_description: characterAnchor,
+            hair_color_style: shot.art_direction,
+            signature_accessories: shot.art_direction,
+            costume_palette: shot.art_direction,
+            primary_props: shot.sfx_vfx,
+        },
+        style_bible: {
+            realism_level: 'cinematic live-action photorealistic',
+            lens_look: shot.lens,
+            color_palette: visualStyle,
+            mood: shot.mood,
+            lighting_logic: shot.lighting,
+            rendering_style: 'cinematic realistic',
+        },
+    };
 
     const primaryImage = images.find(i => i.is_primary) || images[0];
     const otherImages = images.filter(i => i.id !== primaryImage?.id);
@@ -85,7 +130,14 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
                 6,
                 24,
                 '720p',
-                characterAnchor
+                characterAnchor,
+                '16:9',
+                {
+                    storyEntities,
+                    continuity: continuityPayload,
+                    project_id: projectId,
+                    shot_id: shot.shot_id,
+                }
             );
 
             // Poll for completion
@@ -138,6 +190,7 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
                 character_anchor: characterAnchor,
                 reference_policy: shot.reference_policy || (images.length > 0 ? 'previous-frame' : 'anchor'),
                 project_id: projectId,
+                continuity: continuityPayload,
                 // Use previous shot's last frame for continuity, or reference image for first shot
                 referenceImageDataUrl: images.length > 0
                     ? (images[images.length - 1]?.url || referenceImageDataUrl)
@@ -187,6 +240,7 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
                 reference_policy: shot.reference_policy,
                 shot_id: shot.shot_id,
                 project_id: projectId,
+                continuity: continuityPayload,
             });
 
             const newImage: ShotImage = {
@@ -229,6 +283,21 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
 
     return (
         <div className="space-y-3">
+            <div className="rounded-lg border border-slate-700/60 bg-slate-900/60 p-2.5 text-[11px]">
+                <div className="flex flex-wrap items-center gap-3 text-slate-300">
+                    <label className="flex items-center gap-1.5"><input type="checkbox" checked={lockCharacter} onChange={e => setLockCharacter(e.target.checked)} />Lock character</label>
+                    <label className="flex items-center gap-1.5"><input type="checkbox" checked={lockStyle} onChange={e => setLockStyle(e.target.checked)} />Lock style</label>
+                    <label className="flex items-center gap-1.5"><input type="checkbox" checked={lockCostume} onChange={e => setLockCostume(e.target.checked)} />Lock costume</label>
+                    <label className="flex items-center gap-1.5"><input type="checkbox" checked={usePrevApprovedRef} onChange={e => setUsePrevApprovedRef(e.target.checked)} />Use previous approved shot as reference</label>
+                    <label className="flex items-center gap-1.5">Continuity strictness:
+                        <select value={strictness} onChange={(e) => setStrictness(e.target.value as ContinuityStrictness)} className="bg-slate-800 border border-slate-600 rounded px-1.5 py-0.5 text-[11px]">
+                            <option value="low">low</option>
+                            <option value="medium">medium</option>
+                            <option value="high">high</option>
+                        </select>
+                    </label>
+                </div>
+            </div>
             {/* Error */}
             {error && (
                 <div className="text-xs text-red-400 bg-red-900/20 px-3 py-2 rounded border border-red-500/20 flex justify-between items-center">

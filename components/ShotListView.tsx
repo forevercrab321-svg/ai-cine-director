@@ -3,7 +3,7 @@
  * Shows detailed shot breakdowns per scene with editing, AI rewrite, and field locking.
  */
 import React, { useState, useCallback } from 'react';
-import { StoryboardProject, Scene, Shot, ShotImage, ShotRevision, Language, VideoModel } from '../types';
+import { StoryboardProject, Scene, Shot, ShotImage, ShotRevision, Language, VideoModel, StoryEntity } from '../types';
 import { generateShots, rewriteShotFields } from '../services/shotService';
 import { useAppContext } from '../context/AppContext';
 import { LoaderIcon } from './IconComponents';
@@ -67,7 +67,8 @@ const ShotCard: React.FC<{
     referenceImageDataUrl?: string; // ★ 新增接收照片
     onSetGlobalAnchor?: (url: string) => void;
     sceneDescription?: string; // ★ Full context for video prompts
-}> = ({ shot, shotIndex, videoUrl, isExpanded, onToggle, onEdit, onLockToggle, images, onImagesChange, characterAnchor, visualStyle, projectId, referenceImageDataUrl, onSetGlobalAnchor, sceneDescription }) => {
+    storyEntities?: StoryEntity[];
+}> = ({ shot, shotIndex, videoUrl, isExpanded, onToggle, onEdit, onLockToggle, images, onImagesChange, characterAnchor, visualStyle, projectId, referenceImageDataUrl, onSetGlobalAnchor, sceneDescription, storyEntities }) => {
     const camClass = cameraBadgeColor[shot.camera] || 'bg-slate-500/20 text-slate-300 border-slate-500/30';
     const moveEmoji = movementBadge[shot.movement] || '🎬';
 
@@ -106,6 +107,7 @@ const ShotCard: React.FC<{
                                 <ShotImageGrid
                                     shot={shot} images={images} onImagesChange={onImagesChange}
                                     characterAnchor={characterAnchor} visualStyle={visualStyle} projectId={projectId}
+                                    storyEntities={storyEntities}
                                     referenceImageDataUrl={referenceImageDataUrl} // ★ 传递给 Grid！
                                     onSetGlobalAnchor={onSetGlobalAnchor} // ★ 传递回调
                                     sceneDescription={sceneDescription}
@@ -259,7 +261,45 @@ const SceneSection: React.FC<{
                 ].filter(Boolean).join(' ');
                 const richVideoPrompt = `Shot ${shot.shot_number} of Scene ${scene.scene_number}. Visual Context: ${shot.image_prompt || scene.visual_description || 'Cinematic scene'}. Cinematic Action: ${motionCore || fallbackMotion}. Continuity: ${hardContinuityRules}`;
                 const videoRes = await startVideoTask(
-                    richVideoPrompt, currentStartImage, videoModel, 'none', 'storyboard', 'standard', 6, 24, '720p', project.character_anchor, '16:9', { storyEntities: project.story_entities }
+                    richVideoPrompt,
+                    currentStartImage,
+                    videoModel,
+                    'none',
+                    'storyboard',
+                    'standard',
+                    6,
+                    24,
+                    '720p',
+                    project.character_anchor,
+                    '16:9',
+                    {
+                        storyEntities: project.story_entities,
+                        project_id: effectiveProjectId,
+                        shot_id: shot.shot_id,
+                        continuity: {
+                            strictness: 'high',
+                            lockCharacter: true,
+                            lockStyle: true,
+                            lockCostume: true,
+                            lockScene: true,
+                            usePreviousApprovedAsReference: true,
+                            scene_memory: {
+                                scene_id: shot.scene_id,
+                                scene_number: scene.scene_number,
+                                location: shot.location,
+                                time_of_day: shot.time_of_day,
+                                lighting_continuity: shot.lighting,
+                                active_costume: shot.art_direction,
+                                prop_state: shot.sfx_vfx,
+                            },
+                            project_context: {
+                                project_id: effectiveProjectId,
+                                visual_style: project.visual_style,
+                                character_anchor: project.character_anchor,
+                                story_entities: project.story_entities,
+                            }
+                        }
+                    }
                 );
 
                 let videoUrl = "";
@@ -357,6 +397,7 @@ const SceneSection: React.FC<{
                             onEdit={() => setEditingShot(shot)} onLockToggle={() => { }}
                             images={imagesByShot[shot.shot_id] || []} onImagesChange={(imgs) => onImagesChange(shot.shot_id, imgs)}
                             characterAnchor={project.character_anchor} visualStyle={project.visual_style} projectId={effectiveProjectId}
+                            storyEntities={project.story_entities || []}
                             referenceImageDataUrl={referenceImageDataUrl} // ★ 传递照片给子组件
                             sceneDescription={scene.visual_description}
                         />
@@ -717,7 +758,45 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                     const richVideoPrompt = `Shot ${shot.shot_number} of Scene ${scene.scene_number}. Visual Context: ${shot.image_prompt || scene.visual_description || 'Cinematic scene'}. Cinematic Action: ${motionCore || fallbackMotion}. Continuity: ${hardContinuityRules}`;
                     // 发送视频请求
                     const videoRes = await startVideoTask(
-                        richVideoPrompt, currentStartImage, settings.videoModel, 'none', 'storyboard', 'standard', 6, 24, '720p', project.character_anchor, '16:9', { storyEntities: project.story_entities }
+                        richVideoPrompt,
+                        currentStartImage,
+                        settings.videoModel,
+                        'none',
+                        'storyboard',
+                        'standard',
+                        6,
+                        24,
+                        '720p',
+                        project.character_anchor,
+                        '16:9',
+                        {
+                            storyEntities: project.story_entities,
+                            project_id: effectiveProjectId,
+                            shot_id: shot.shot_id,
+                            continuity: {
+                                strictness: 'high',
+                                lockCharacter: true,
+                                lockStyle: true,
+                                lockCostume: true,
+                                lockScene: true,
+                                usePreviousApprovedAsReference: true,
+                                scene_memory: {
+                                    scene_id: shot.scene_id,
+                                    scene_number: scene.scene_number,
+                                    location: shot.location,
+                                    time_of_day: shot.time_of_day,
+                                    lighting_continuity: shot.lighting,
+                                    active_costume: shot.art_direction,
+                                    prop_state: shot.sfx_vfx,
+                                },
+                                project_context: {
+                                    project_id: effectiveProjectId,
+                                    visual_style: project.visual_style,
+                                    character_anchor: project.character_anchor,
+                                    story_entities: project.story_entities,
+                                }
+                            }
+                        }
                     );
 
                     // 轮询等待视频完成

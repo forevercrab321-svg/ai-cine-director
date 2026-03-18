@@ -23,23 +23,23 @@ type FieldDef = {
     key: keyof Shot;
     label: string;
     group: string;
-    type: 'text' | 'textarea' | 'number' | 'select' | 'tags';
+    type: 'text' | 'textarea' | 'number' | 'select' | 'tags' | 'boolean';
     options?: string[];
     placeholder?: string;
 };
 
 const FIELD_DEFS: FieldDef[] = [
     // Camera & Movement
-    { key: 'camera', label: '机位 Camera', group: '📷 Camera', type: 'select', options: ['wide','medium','close','ecu','over-shoulder','pov','aerial','two-shot'] },
+    { key: 'camera', label: '机位 Camera', group: '📷 Camera', type: 'select', options: ['wide', 'medium', 'close', 'ecu', 'over-shoulder', 'pov', 'aerial', 'two-shot'] },
     { key: 'lens', label: '镜头 Lens', group: '📷 Camera', type: 'text', placeholder: 'e.g. 35mm anamorphic' },
-    { key: 'movement', label: '运镜 Movement', group: '📷 Camera', type: 'select', options: ['static','push-in','pull-out','pan-left','pan-right','tilt-up','tilt-down','dolly','tracking','crane','handheld','steadicam','whip-pan','zoom'] },
+    { key: 'movement', label: '运镜 Movement', group: '📷 Camera', type: 'select', options: ['static', 'push-in', 'pull-out', 'pan-left', 'pan-right', 'tilt-up', 'tilt-down', 'dolly', 'tracking', 'crane', 'handheld', 'steadicam', 'whip-pan', 'zoom'] },
     { key: 'composition', label: '构图 Composition', group: '📷 Camera', type: 'text', placeholder: 'Rule of thirds, center frame...' },
     { key: 'duration_sec', label: '时长 (秒)', group: '📷 Camera', type: 'number' },
 
     // Location
-    { key: 'location_type', label: '场景类型', group: '📍 Location', type: 'select', options: ['INT','EXT','INT/EXT'] },
+    { key: 'location_type', label: '场景类型', group: '📍 Location', type: 'select', options: ['INT', 'EXT', 'INT/EXT'] },
     { key: 'location', label: '地点 Location', group: '📍 Location', type: 'text', placeholder: 'Rooftop garden, Tokyo' },
-    { key: 'time_of_day', label: '时间 Time', group: '📍 Location', type: 'select', options: ['dawn','morning','noon','afternoon','golden-hour','dusk','night','blue-hour'] },
+    { key: 'time_of_day', label: '时间 Time', group: '📍 Location', type: 'select', options: ['dawn', 'morning', 'noon', 'afternoon', 'golden-hour', 'dusk', 'night', 'blue-hour'] },
 
     // Characters & Action
     { key: 'characters', label: '角色 Characters', group: '🎭 Action', type: 'tags', placeholder: 'Enter character names' },
@@ -59,6 +59,11 @@ const FIELD_DEFS: FieldDef[] = [
     // Image Generation
     { key: 'image_prompt', label: '图片提示词 Image Prompt', group: '🖼 Generation', type: 'textarea', placeholder: 'Full image generation prompt...' },
     { key: 'negative_prompt', label: '负面提示词 Negative', group: '🖼 Generation', type: 'textarea', placeholder: 'What to avoid...' },
+
+    // Consistency Locks
+    { key: 'immutable_subject', label: '锁定主角容貌身份 Identity Lock', group: '🔒 Consistency', type: 'boolean' },
+    { key: 'immutable_environment', label: '锁定环境背景 Architecture Lock', group: '🔒 Consistency', type: 'boolean' },
+    { key: 'scene_drift_allowed', label: '允许场景漂移容忍度 Drift Tolerance (0-100)', group: '🔒 Consistency', type: 'number' },
 ];
 
 const ShotEditDrawer: React.FC<ShotEditDrawerProps> = ({ shot, onClose, onSave, onRewrite, projectContext }) => {
@@ -155,11 +160,10 @@ const ShotEditDrawer: React.FC<ShotEditDrawerProps> = ({ shot, onClose, onSave, 
                     <div className="flex gap-2">
                         <button
                             onClick={() => setShowRewritePanel(!showRewritePanel)}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                                showRewritePanel
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${showRewritePanel
                                     ? 'bg-amber-600/20 text-amber-400 border border-amber-500/30'
                                     : 'bg-slate-800 text-slate-400 hover:text-amber-400 hover:bg-amber-600/10'
-                            }`}
+                                }`}
                         >
                             🤖 AI Rewrite
                         </button>
@@ -279,6 +283,20 @@ const ShotEditDrawer: React.FC<ShotEditDrawerProps> = ({ shot, onClose, onSave, 
                                                     placeholder={f.placeholder}
                                                     className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-indigo-500 outline-none disabled:cursor-not-allowed"
                                                 />
+                                            ) : f.type === 'boolean' ? (
+                                                <label className="flex items-center gap-3 cursor-pointer mt-1">
+                                                    <div className="relative flex items-center">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={!!draft[f.key]}
+                                                            onChange={e => updateField(f.key, e.target.checked)}
+                                                            disabled={isLocked}
+                                                            className="peer sr-only"
+                                                        />
+                                                        <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500 disabled:opacity-50"></div>
+                                                    </div>
+                                                    <span className="text-xs font-semibold text-slate-300">{f.label}</span>
+                                                </label>
                                             ) : (
                                                 <input
                                                     type="text"

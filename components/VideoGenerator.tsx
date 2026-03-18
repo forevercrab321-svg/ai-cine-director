@@ -559,7 +559,29 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
         // 传递 options 给新版 prompt engine
         {
           stylePreset: settings.videoStyle,
-          storyEntities: project.story_entities || []
+          storyEntities: project.story_entities || [],
+          continuity: {
+            strictness: 'high',
+            lockCharacter: true,
+            lockStyle: true,
+            lockCostume: true,
+            lockScene: true,
+            usePreviousApprovedAsReference: true,
+            scene_memory: {
+              scene_number: scene.scene_number,
+              location: scene.scene_setting,
+              time_of_day: 'night',
+              lighting_continuity: scene.visual_description,
+            },
+            project_context: {
+              project_id: project.id,
+              visual_style: project.visual_style,
+              character_anchor: project.character_anchor,
+              story_entities: project.story_entities || [],
+            }
+          },
+          project_id: project.id,
+          shot_id: `scene-${scene.scene_number}`,
         },
         promptEngineVersion
       );

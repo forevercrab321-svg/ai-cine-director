@@ -79,6 +79,27 @@ const ShotImageEditor: React.FC<ShotImageEditorProps> = ({
                 reference_policy: shot.reference_policy,
                 shot_id: shot.shot_id,
                 project_id: projectId,
+                continuity: {
+                    strictness: 'high',
+                    lockCharacter: true,
+                    lockStyle: true,
+                    lockCostume: true,
+                    lockScene: true,
+                    usePreviousApprovedAsReference: true,
+                    scene_memory: {
+                        scene_id: shot.scene_id,
+                        location: shot.location,
+                        time_of_day: shot.time_of_day,
+                        lighting_continuity: shot.lighting,
+                        active_costume: shot.art_direction,
+                        prop_state: shot.sfx_vfx,
+                    },
+                    project_context: {
+                        project_id: projectId,
+                        visual_style: settings.videoStyle,
+                        character_anchor: characterAnchor,
+                    }
+                },
             });
 
             const newImage: ShotImage = {

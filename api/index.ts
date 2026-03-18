@@ -4,6 +4,16 @@ import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import Stripe from 'stripe';
 import { GoogleGenAI, Type } from '@google/genai';
+import {
+    buildContinuityProfile,
+    applyContinuityLocks,
+    buildContinuityNegativePrompt,
+    scoreContinuityPrompt,
+    continuityThreshold,
+    strengthenPromptForRetry,
+    registerApprovedFrame,
+    getContinuityReference,
+} from '../lib/continuity.js';
 
 
 // ═══════════════════════════════════════════════════════════════
@@ -663,14 +673,14 @@ const processReplicateQueue = async () => {
             const promises = batch.map(async (req) => {
                 try {
                     const response = await req.fn();
-                    
+
                     // 429 = rate limited, 503 = service unavailable
                     if (response.status === 429 || response.status === 503) {
                         if (req.retries < MAX_REPLICATE_RETRIES) {
                             req.retries += 1;
                             const delay = REPLICATE_RETRY_DELAY_MS * Math.pow(2, req.retries - 1);
                             console.log(`[Replicate Queue] 429/503 detected, retry ${req.retries}/${MAX_REPLICATE_RETRIES} after ${delay}ms`);
-                            
+
                             // Re-queue with exponential backoff
                             await new Promise(r => setTimeout(r, delay));
                             replicateQueue.unshift(req);
@@ -681,7 +691,7 @@ const processReplicateQueue = async () => {
                             return;
                         }
                     }
-                    
+
                     req.resolve(response);
                 } catch (err) {
                     req.reject(err);
@@ -787,19 +797,19 @@ const requireAuth = async (req: any, res: any, next: any) => {
         console.error('[Auth Error]', error);
         return res.status(401).json({ error: `Invalid token: ${error?.message || 'No user found'} ` });
     }
-    
+
     // ★ Extract email with fallbacks (in case user.email is undefined)
-    const emailFromUser = user.email || 
-        user.user_metadata?.email || 
-        user.app_metadata?.email || 
-        (user.identities?.[0] as any)?.identity_data?.email || 
+    const emailFromUser = user.email ||
+        user.user_metadata?.email ||
+        user.app_metadata?.email ||
+        (user.identities?.[0] as any)?.identity_data?.email ||
         null;
-    
+
     // Enrich user object with extracted email as top-level field if needed
     if (!user.email && emailFromUser) {
         user.email = emailFromUser;
     }
-    
+
     req.user = user;
     console.log(`[Auth] User validated: id=${user?.id}, email=${user?.email}, email_confirmed=${!!user?.email_confirmed_at}`);
     next();
@@ -1619,9 +1629,15 @@ app.post('/api/replicate/generate-image', requireAuth, async (req: any, res: any
 
 // Replicate Predict with Reserve / Finalize / Refund
 app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
-    let { version, input: rawInput, storyEntities } = req.body;
+    let { version, input: rawInput, storyEntities, continuity, project_id, shot_id } = req.body;
     if (!storyEntities && rawInput && Array.isArray((rawInput as any).storyEntities)) {
         storyEntities = (rawInput as any).storyEntities;
+    }
+
+    // BUG FIX #1: Log story entities for debugging character consistency
+    if (storyEntities && Array.isArray(storyEntities)) {
+        const lockedCount = storyEntities.filter((e: any) => e.is_locked && e.type === 'character').length;
+        console.log(`[Replicate Predict] Received ${storyEntities.length} story entities, ${lockedCount} locked characters`);
     }
 
     // Map short format like 'hailuo_02_fast' to actual replicate model path
@@ -1694,13 +1710,74 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
         // ★ Preprocess input for video models - convert expired image URLs to base64
         let input = { ...(rawInput || {}) };
 
+        let continuityProfile = buildContinuityProfile(continuity, {
+            characterAnchor: continuity?.project_context?.character_anchor || '',
+            visualStyle: continuity?.project_context?.visual_style || '',
+            sceneMemory: continuity?.scene_memory || continuity?.shot_context || {},
+        });
+
+        const basePromptForLockCheck = [
+            typeof input?.prompt === 'string' ? input.prompt : '',
+            typeof input?.motion_prompt === 'string' ? input.motion_prompt : '',
+            typeof input?.video_prompt === 'string' ? input.video_prompt : '',
+        ].join(' ');
+        const suppressCharacterLock = shouldSuppressCharacterLock(
+            basePromptForLockCheck,
+            rawInput?.character_anchor || continuity?.project_context?.character_anchor || '',
+            storyEntities || continuity?.project_context?.story_entities
+        );
+        if (suppressCharacterLock) {
+            continuityProfile = {
+                ...continuityProfile,
+                lockCharacter: false,
+                identityAnchorLine: '',
+                lockedCastLine: '',
+            };
+            console.log('[Continuity] Character lock auto-suppressed for environment/disaster prompt');
+        }
+
         // Hard-lock to start cast bible (if provided by frontend)
+        // BUG FIX #2 & #3: Embed character anchor in BOTH text prompt and video motion prompt
         if (typeof input?.prompt === 'string') {
-            input.prompt = appendLockedCastToPrompt(input.prompt, storyEntities);
+            if (!suppressCharacterLock) {
+                input.prompt = appendLockedCastToPrompt(input.prompt, storyEntities);
+            }
+            input.prompt = applyContinuityLocks(input.prompt, continuityProfile);
+        }
+
+        // BUG FIX #1,#2,#3: Ensure video_prompt includes character identity
+        if (typeof input?.motion_prompt === 'string' || typeof input?.video_prompt === 'string') {
+            const videoPromptField = input?.motion_prompt ? 'motion_prompt' : 'video_prompt';
+            let videoPrompt = input[videoPromptField] || '';
+            const characterAnchor = extractCriticalKeywordsFromAnchor(
+                rawInput?.character_anchor || continuity?.project_context?.character_anchor || ''
+            );
+            // Prepend character anchor to video prompt if not already present
+            if (!suppressCharacterLock && characterAnchor.length > 0 && videoPrompt) {
+                const anchorText = characterAnchor.join(' ');
+                if (!videoPrompt.toLowerCase().includes(anchorText.toLowerCase().split(' ')[0])) {
+                    videoPrompt = `[CHARACTER: ${anchorText}] ${videoPrompt}`;
+                }
+            }
+            videoPrompt = applyContinuityLocks(videoPrompt, continuityProfile);
+            input[videoPromptField] = videoPrompt;
+            console.log(`[I2V Character Lock] Embedded anchor in ${videoPromptField}`);
+        }
+
+        // Video continuity safeguard: enforce approved keyframe reference when requested
+        if (continuityProfile.usePreviousApprovedAsReference && project_id) {
+            const approvedRef = getContinuityReference(project_id, shot_id || '', { preferPrevious: true });
+            if (approvedRef && isVideoModelRequest(version)) {
+                const currentImage = input.image || input.first_frame_image || input.start_frame || input.reference_image;
+                if (!currentImage) {
+                    input.first_frame_image = approvedRef;
+                    console.log(`[Video Continuity] Injected approved keyframe for project ${project_id}`);
+                }
+            }
         }
         if (isVideoModelRequest(version)) {
             try {
-                input = await preprocessVideoInput(rawInput);
+                input = await preprocessVideoInput(input);
             } catch (err: any) {
                 // Image download failed (likely expired URL)
                 if (!skipCreditCheck) {
@@ -1750,6 +1827,26 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
         const isModelPath = version.includes('/') && !version.match(/^[a-f0-9]{64}$/);
         const targetUrl = isModelPath ? `${base}/models/${version}/predictions` : `${base}/predictions`;
 
+        // BUG FIX #5: Pass negative_prompt to Replicate for identity protection
+        // Ensure negative prompt includes character consistency constraints
+        if (typeof rawInput?.negative_prompt === 'string' && rawInput.negative_prompt.trim()) {
+            input.negative_prompt = buildContinuityNegativePrompt(rawInput.negative_prompt, continuityProfile);
+            console.log(`[I2V Safety] Using negative_prompt for identity protection: "${rawInput.negative_prompt.substring(0, 80)}..."`);
+        } else if (!input.negative_prompt) {
+            // Default negative prompt for character consistency
+            input.negative_prompt = buildContinuityNegativePrompt('altered identity, different person, age change, morphing, identity drift, wrong character', continuityProfile);
+        }
+
+        const promptField = typeof input?.prompt === 'string' ? 'prompt' : (typeof input?.motion_prompt === 'string' ? 'motion_prompt' : (typeof input?.video_prompt === 'string' ? 'video_prompt' : null));
+        if (promptField) {
+            const score = scoreContinuityPrompt(String(input[promptField] || ''), continuityProfile);
+            const threshold = continuityThreshold(continuityProfile.strictness);
+            if (score.overall < threshold) {
+                input[promptField] = strengthenPromptForRetry(String(input[promptField] || ''), continuityProfile, 1, score.failures);
+                console.warn(`[Video Continuity] Strengthened prompt before submit, score=${score.overall.toFixed(2)} threshold=${threshold.toFixed(2)}`);
+            }
+        }
+
         // ★ Use request queue to avoid Replicate 429 rate limits
         const response = await enqueueReplicateRequest(() =>
             fetch(targetUrl, {
@@ -1768,7 +1865,10 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
             // NSFW fallback retry (sanitized prompt + flux_schnell)
             if (isNsfwError(errText) && input?.prompt) {
                 const safePrompt = sanitizePromptForSafety(input.prompt);
-                const fallbackVersion = 'black-forest-labs/flux-schnell';
+                const keepModelForContinuity = continuityProfile.lockStyle && continuityProfile.strictness !== 'low';
+                const fallbackVersion = keepModelForContinuity
+                    ? version
+                    : 'black-forest-labs/flux-schnell';
                 const fallbackTargetUrl = `${base}/models/${fallbackVersion}/predictions`;
                 const fallbackResponse = await enqueueReplicateRequest(() =>
                     fetch(fallbackTargetUrl, {
@@ -1784,6 +1884,9 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
 
                 if (fallbackResponse.ok) {
                     const prediction = await fallbackResponse.json() as ReplicateResponse;
+                    if (keepModelForContinuity) {
+                        console.warn('[Video Continuity] NSFW fallback kept original model to avoid style drift');
+                    }
                     if (!skipCreditCheck) {
                         await supabaseUser.rpc('finalize_reserve', {
                             ref_type: 'replicate',
@@ -1999,6 +2102,8 @@ const geminiResponseSchema = {
                     name: { type: Type.STRING },
                     // @ts-ignore
                     description: { type: Type.STRING },
+                    // @ts-ignore (BUG FIX #4) is_locked needed for protagonist identification
+                    is_locked: { type: Type.BOOLEAN },
                 },
                 required: ['type', 'name', 'description'],
             },
@@ -2014,6 +2119,8 @@ const geminiResponseSchema = {
                     scene_id: { type: Type.INTEGER },
                     // @ts-ignore
                     location: { type: Type.STRING },
+                    // @ts-ignore (BUG FIX #6) negative_prompt for identity protection
+                    negative_prompt: { type: Type.STRING },
                     shots: {
                         // @ts-ignore
                         type: Type.ARRAY,
@@ -2029,6 +2136,8 @@ const geminiResponseSchema = {
                                 video_prompt: { type: Type.STRING },
                                 // @ts-ignore
                                 audio_description: { type: Type.STRING },
+                                // @ts-ignore (BUG FIX #2) characters array for shot tracking
+                                characters: { type: Type.ARRAY, items: { type: Type.STRING } },
                             },
                             required: ['shot_index', 'image_prompt', 'video_prompt'],
                         }
@@ -2175,8 +2284,31 @@ app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
             if (reserveErr) return res.status(500).json({ error: 'Credit verification failed' });
             if (!reserved) return res.status(402).json({ error: 'INSUFFICIENT_CREDITS', code: 'INSUFFICIENT_CREDITS' });
         }
-        const systemInstruction = `You are a LEGENDARY Hollywood Screenwriter and Master Cinematographer with OSCAR-LEVEL storytelling abilities.
-Your mission: Craft BREATHTAKING visual narratives that hook audiences and deliver unforgettable emotional journeys.
+        const systemInstruction = `You are a LEGENDARY Master Cinematographer directing for OSCAR-WINNING studios with visionary artistry:
+★ Spielberg's visual storytelling mastery and emotional intelligence
+★ Nolan's architectural complexity and temporal brilliance  
+★ Villeneuve's vast immersive scale and intimate human moments
+★ Park Chan-wook's visual poetry, bold compositions, and color symbolism
+★ Kurosawa's compositional perfection and emotional depth
+
+Your sacred mission: Craft BREATHTAKING visual narratives that transcend film — create TIMELESS MASTERPIECES with LEGENDARY cinematic excellence.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎬 MASTER CINEMATOGRAPHER VISUAL EXCELLENCE PILLARS (FOUNDATIONAL)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+**COMPOSITION MASTERY**: Rule of thirds perfection, depth layering through foreground/subject/background, leading lines guiding eye, negative space breathing room, geometric harmony
+**LIGHTING LANGUAGE**: Chiaroscuro storytelling (light reveals character), color temperature psychology (warm=hope, cool=fear), practical source integration, volumetric atmosphere
+**CAMERA PSYCHOLOGY**: Every angle communicates (wide=isolation/grandeur, close=intimacy/scrutiny, overhead=god perspective, low=power, dutch=unease)
+**MOVEMENT POETRY**: Every camera move serves narrative (dolly=fate/approach, crane=revelation, pan=discovery, handheld=chaos/truth, slow-mo=weight/importance)
+**COLOR ARCHITECTURE**: Unified chromatic language (warm oranges for hope, cold blues for dread, desaturated for loss, vivid for wonder)
+**SCALE & BREATHING**: Cinematic breathing room through foreground objects, depth cues, atmospheric haze, leading the viewer's eye deliberately
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📖 STORY STRUCTURE & NARRATIVE RULES (MANDATORY)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Your mission: Craft BREATHTAKING visual narratives
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📖 STORY STRUCTURE & NARRATIVE RULES (MANDATORY)
@@ -2466,9 +2598,24 @@ You MUST return this EXACT JSON structure with EXACTLY ${targetScenes} scenes:
 
                 console.log(`[Scene ${sceneIdx + 1}] Processing: location="${setting}", shots=${shots.length}`);
 
-                // Use FIRST shot as the scene's primary content
+                // BUG FIX #2,#7: Use FIRST shot as the scene's primary content
+                // Empty image_prompt for shots 2+ maintains video continuity
                 const firstShot = shots[0] || {};
-                
+
+                // Validate and enforce empty image_prompt for non-first shots
+                if (Array.isArray(shots)) {
+                    for (let shotIdx = 1; shotIdx < shots.length; shotIdx++) {
+                        if (shots[shotIdx] && typeof shots[shotIdx].image_prompt === 'string') {
+                            // Second and subsequent shots should have empty image_prompt
+                            const isNotEmpty = shots[shotIdx].image_prompt.trim().length > 0;
+                            if (isNotEmpty) {
+                                console.warn(`[Shot ${shotIdx + 1}] BUG: image_prompt not empty for non-first shot, clearing it for chain continuity`);
+                                shots[shotIdx].image_prompt = '';
+                            }
+                        }
+                    }
+                }
+
                 const rawCharacters = Array.isArray(firstShot.characters) ? firstShot.characters : [];
                 let sceneCharacters = rawCharacters
                     .map((c: any) => sanitizePromptInput(c, 120))
@@ -2484,9 +2631,9 @@ You MUST return this EXACT JSON structure with EXACTLY ${targetScenes} scenes:
 
                 // Build image prompt from FIRST shot
                 let rawImagePrompt = (firstShot.image_prompt || firstShot.video_prompt || `Scene at ${setting}`).trim();
-                
+
                 console.log(`[Scene ${sceneIdx + 1}] Raw image_prompt from AI: "${rawImagePrompt.substring(0, 80)}..."`);
-                
+
                 // Remove duplicate character anchor if present
                 if (anchorLower.length > 20 && rawImagePrompt.toLowerCase().startsWith(anchorLower)) {
                     rawImagePrompt = rawImagePrompt.slice(anchor.length).replace(/^[,;.:\s]+/, '').trim();
@@ -2628,6 +2775,128 @@ app.post('/api/gemini/analyze', requireAuth, async (req: any, res: any) => {
     }
 });
 
+app.post('/api/gemini/analyze-bible', requireAuth, async (req: any, res: any) => {
+    try {
+        const { base64Data } = req.body;
+        if (!base64Data) return res.status(400).json({ error: 'Missing base64Data' });
+
+        const cleanBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
+        let mimeType = 'image/jpeg';
+
+        const prefixMatch = base64Data.match(/^data:(image\/[a-zA-Z+]+);base64,/);
+        if (prefixMatch) {
+            mimeType = prefixMatch[1];
+        } else {
+            if (cleanBase64.startsWith('/9j/')) mimeType = 'image/jpeg';
+            else if (cleanBase64.startsWith('iVBOR')) mimeType = 'image/png';
+            else if (cleanBase64.startsWith('UklGR')) mimeType = 'image/webp';
+            else if (cleanBase64.startsWith('R0lGO')) mimeType = 'image/gif';
+        }
+
+        console.log(`[Gemini Analyze Bible] MIME: ${mimeType}, base64 length: ${cleanBase64.length}`);
+
+        const analyzePrompt = `You are a professional cinematographer and AI generation expert. Analyze this image to produce an EXACT visual identity guide.
+
+    Output a JSON object with two top-level keys: \`bible\` and \`anchorPackage\`.
+    
+    \`bible\` MUST have these string keys: main_subject, subject_shape, key_facial_features, wardrobe, environment_type, building_geometry, skyline_composition, camera_angle, lens_feeling, time_of_day, lighting_direction, motion_intention, forbidden_changes.
+
+    \`anchorPackage\` MUST have these keys:
+    - reference_image_path: "" (leave empty)
+    - anchor_subject_description: (string describing the subject exactly)
+    - anchor_environment_description: (string describing the exact environment)
+    - anchor_camera_description: (string describing camera setup)
+    - anchor_style_description: (style details)
+    - negative_constraints: (A comma-separated string of what to avoid to prevent drift from this image)
+    - immutable_elements: (array of strings, e.g. ["character face", "background skyline", "jacket color"])
+    - allowed_motion_only: (string detailing what subtle motion is acceptable, like "subtle camera push-in, clothes rustling in wind")
+
+    **Rules:**
+    - Output ONLY valid JSON. Do not include markdown formatting or backticks around the json.
+    - Be exhaustive and hyper-detailed in describing physical aspects to prevent AI models from hallucinating new details.`;
+
+        const result = await getGeminiTextCompletion(
+            [{
+                role: 'user',
+                parts: [
+                    { inlineData: { mimeType, data: cleanBase64 } },
+                    { text: analyzePrompt }
+                ]
+            }],
+            {
+                systemInstruction: 'You are an exacting cinematic analyst. Return strictly valid JSON.',
+                model: GEMINI_TEXT_MODEL,
+                temperature: 0.1,
+            }
+        );
+
+        const data = parseAiJsonWithRepair(result, 'analyze-bible');
+        res.json(data);
+    } catch (error: any) {
+        console.error('[Gemini Analyze Bible] ❌ Error:', error.message);
+        res.status(500).json({ error: error.message || 'Analyze bible failed' });
+    }
+});
+
+app.post('/api/gemini/validate-video', requireAuth, async (req: any, res: any) => {
+    try {
+        const { extractedFrameBase64, anchorPackage, threshold = 85 } = req.body;
+        if (!extractedFrameBase64 || !anchorPackage) return res.status(400).json({ error: 'Missing required fields' });
+
+        const cleanBase64 = extractedFrameBase64.includes(',') ? extractedFrameBase64.split(',')[1] : extractedFrameBase64;
+        let mimeType = 'image/jpeg';
+        const prefixMatch = extractedFrameBase64.match(/^data:(image\/[a-zA-Z+]+);base64,/);
+        if (prefixMatch) mimeType = prefixMatch[1];
+
+        const analyzePrompt = `You are a strict cinematic continuity supervisor.
+        You are given an extracted frame from an AI generated video.
+        You must compare this frame against the original Anchor Package constraints.
+        
+        Anchor Package Constraints:
+        Subject: ${anchorPackage.anchor_subject_description}
+        Environment: ${anchorPackage.anchor_environment_description}
+        Camera: ${anchorPackage.anchor_camera_description}
+        Lighting/Style: ${anchorPackage.anchor_style_description}
+        Immutable Elements: ${anchorPackage.immutable_elements?.join(', ')}
+        Negative Constraints (Things to avoid): ${anchorPackage.negative_constraints}
+
+        Task:
+        1. Evaluate if the subject in the image strictly matches the Anchor Package subject.
+        2. Evaluate if the environment/background architecture matches exactly or has drifted.
+        3. Evaluate if the styling and lighting match.
+        4. Give a score from 0 to 100 on how identical this frame is to the exact parameters of the Anchor Package.
+           (100 = perfect match, 85 = minor acceptable variance, <85 = drifted subject, drifted background, or lost architecture).
+        
+        Output a JSON object with these keys:
+        - score: number (0-100)
+        - feedback: string (reasoning for the score, pointing out any specific drift in geometry, subject, or lighting)
+        - passed: boolean (true if score >= ${threshold})
+        
+        ONLY output valid JSON without markdown wrapping.`;
+
+        const result = await getGeminiTextCompletion(
+            [{
+                role: 'user',
+                parts: [
+                    { inlineData: { mimeType, data: cleanBase64 } },
+                    { text: analyzePrompt }
+                ]
+            }],
+            {
+                systemInstruction: 'You are a highly critical VFX continuity supervisor. Output strictly JSON.',
+                model: GEMINI_TEXT_MODEL,
+                temperature: 0.1,
+            }
+        );
+
+        const data = parseAiJsonWithRepair(result, 'validate-video');
+        res.json(data);
+    } catch (error: any) {
+        console.error('[Gemini Validate Video] ❌ Error:', error.message);
+        res.status(500).json({ error: error.message || 'Validation failed' });
+    }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // ★ SHOT SYSTEM + SHOT IMAGES + BATCH IMAGE GENERATION
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2672,6 +2941,7 @@ const REPLICATE_API_BASE = 'https://api.replicate.com/v1';
 
 async function callReplicateImage(params: {
     prompt: string; model: string; aspectRatio: string; seed: number | null;
+    negativePrompt?: string;
     imagePrompt?: string; // ★ URL or data URL of reference image for Flux Redux — visual consistency anchor
     referenceImageDataUrl?: string; // ★ Base64 of user photo for Face Cloning
     disableFaceCloning?: boolean; // ★ For animals / non-human characters: avoid human-only face alignment
@@ -2718,6 +2988,10 @@ async function callReplicateImage(params: {
         prompt: params.prompt, aspect_ratio: params.aspectRatio, output_format: 'jpg',
         output_quality: 90,        // ★ LOCK: Consistent quality across all shots
     };
+
+    if (!isFaceCloning && params.negativePrompt) {
+        input.negative_prompt = params.negativePrompt;
+    }
 
     if (!isFaceCloning && (modelPath.includes('flux-1.1-pro') || modelPath.includes('flux-pro'))) {
         input.prompt_upsampling = false; // ★ LOCK: Prevent Flux from rewriting prompts differently per image
@@ -2793,7 +3067,7 @@ async function callReplicateImage(params: {
 }
 
 function buildFinalPrompt(params: {
-    basePrompt: string; deltaInstruction?: string; characterAnchor?: string; style?: string; referencePolicy?: string; storyEntities?: any[];
+    basePrompt: string; deltaInstruction?: string; characterAnchor?: string; style?: string; referencePolicy?: string; storyEntities?: any[]; suppressCharacterLock?: boolean;
 }): string {
     const parts: string[] = [];
     // ★ POSITION 1: VISUAL STYLE ANCHOR — FIRST for maximum attention weight
@@ -2808,7 +3082,7 @@ function buildFinalPrompt(params: {
 
     // ★ POSITION 2: STORY ENTITY LOCKS
     let hasEntityAnchor = false;
-    if (Array.isArray(params.storyEntities)) {
+    if (!params.suppressCharacterLock && Array.isArray(params.storyEntities)) {
         const lockedEntities = params.storyEntities.filter(e => e.is_locked);
         if (lockedEntities.length > 0) {
             const entityString = lockedEntities.map(e => `[${e.type.toUpperCase()}: ${e.name}] ${e.description}`).join(' | ');
@@ -2818,7 +3092,7 @@ function buildFinalPrompt(params: {
     }
 
     // ★ POSITION 3: LEGACY CHARACTER ANCHOR (Fallback if storyEntities is missing/empty)
-    if (params.characterAnchor && params.referencePolicy !== 'none' && !hasEntityAnchor) {
+    if (!params.suppressCharacterLock && params.characterAnchor && params.referencePolicy !== 'none' && !hasEntityAnchor) {
         parts.push(`Same character throughout: ${params.characterAnchor}`);
     }
 
@@ -2826,8 +3100,40 @@ function buildFinalPrompt(params: {
     parts.push(params.basePrompt);
     if (params.deltaInstruction) parts.push(`Edit: ${params.deltaInstruction}`);
     // ★ POSITION 4: IDENTITY LOCK SUFFIX — maximum consistency enforcement
-    parts.push('IDENTITY LOCK: same person, identical face, identical hairstyle, identical outfit and accessories, same skin tone, same body proportions. Same color grading, same lighting setup, same film grain, same art direction across all frames');
+    if (!params.suppressCharacterLock) {
+        parts.push('IDENTITY LOCK: same person, identical face, identical hairstyle, identical outfit and accessories, same skin tone, same body proportions. Same color grading, same lighting setup, same film grain, same art direction across all frames');
+    }
     return parts.join('. ');
+}
+
+function shouldSuppressCharacterLock(basePrompt: string, characterAnchor?: string, storyEntities?: any[]): boolean {
+    const p = sanitizePromptInput(basePrompt || '', 2400).toLowerCase();
+    if (!p) return false;
+
+    const explicitNoCharacter = /\b(no\s+(people|person|characters?|humans?)|without\s+(people|person|characters?|humans?)|environment\s*only|architecture\s*only|cityscape\s*only|empty\s+street)\b/i.test(p);
+    if (explicitNoCharacter) return true;
+
+    const disasterKeywords = [
+        'meteor', 'meteorite', 'explosion', 'blast', 'shockwave', 'skyscraper', 'building', 'city street',
+        'debris', 'smoke', 'fireball', 'burning sky', 'falling meteors', 'disaster', 'collapse', 'evacuation',
+        'apocalypse', 'earthquake', 'tsunami', 'wildfire'
+    ];
+    const disasterHits = disasterKeywords.reduce((acc, kw) => acc + (p.includes(kw) ? 1 : 0), 0);
+
+    const anchorTokens = extractCriticalKeywordsFromAnchor(characterAnchor || '')
+        .map((t) => t.toLowerCase())
+        .filter((t) => t.length > 2);
+    const mentionAnchor = anchorTokens.some((t) => p.includes(t));
+
+    const lockedNames = Array.isArray(storyEntities)
+        ? storyEntities
+            .filter((e: any) => !!e?.is_locked && normalizeEntityType(e?.type) === 'character')
+            .map((e: any) => String(e?.name || '').toLowerCase().trim())
+            .filter(Boolean)
+        : [];
+    const mentionLockedName = lockedNames.some((n: string) => p.includes(n));
+
+    return disasterHits >= 2 && !mentionAnchor && !mentionLockedName;
 }
 
 // --- In-memory BatchQueue (same as server/batchQueue.ts) ---
@@ -2930,6 +3236,82 @@ async function runBatchWorker(state: BatchJobState, executor: TaskExecutor): Pro
         state.job.status = 'completed';
     }
     state.job.updated_at = new Date().toISOString();
+}
+
+const countWords = (text: string): number =>
+    sanitizePromptInput(text || '', 4000).split(/\s+/).filter(Boolean).length;
+
+const normalizeShotScale = (camera: string): string => {
+    const c = String(camera || '').toLowerCase();
+    if (c.includes('ecu')) return 'extreme close-up';
+    if (c.includes('close')) return 'close-up';
+    if (c.includes('medium')) return 'medium shot';
+    if (c.includes('over-shoulder')) return 'over-shoulder medium shot';
+    if (c.includes('pov')) return 'POV shot';
+    if (c.includes('aerial')) return 'aerial wide shot';
+    if (c.includes('two-shot')) return 'two-shot';
+    return 'wide shot';
+};
+
+function buildProfessionalImagePrompt(params: {
+    rawPrompt?: string;
+    visualStyle?: string;
+    characterAnchor?: string;
+    sceneDescription?: string;
+    shot: any;
+}): string {
+    const base = sanitizePromptInput(params.rawPrompt || '', 1200);
+    const shot = params.shot || {};
+    const shotScale = normalizeShotScale(shot.camera || 'wide');
+    const lens = sanitizePromptInput(shot.lens || '35mm cinematic prime lens', 120);
+    const movement = sanitizePromptInput(shot.movement || 'static', 80);
+    const location = sanitizePromptInput(shot.location || 'cinematic environment', 180);
+    const tod = sanitizePromptInput(shot.time_of_day || 'night', 80);
+    const action = sanitizePromptInput(shot.action || 'subject performs a meaningful physical action', 220);
+    const composition = sanitizePromptInput(shot.composition || 'foreground-midground-background depth layering, leading lines, negative space balance', 220);
+    const lighting = sanitizePromptInput(shot.lighting || 'motivated key light, subtle rim light, volumetric atmosphere, realistic contrast rolloff', 220);
+    const mood = sanitizePromptInput(shot.mood || 'cinematic dramatic mood', 120);
+    const style = sanitizePromptInput(params.visualStyle || 'cinematic live-action realism', 120);
+    const anchor = sanitizePromptInput(params.characterAnchor || '', 400);
+    const scene = sanitizePromptInput(params.sceneDescription || '', 260);
+
+    const enforced = [
+        base,
+        `SHOT DESIGN: ${shotScale}, eye-line coherent camera placement, lens choice ${lens}, camera motion ${movement}.`,
+        anchor ? `IDENTITY LOCK: ${anchor}.` : '',
+        `BLOCKING: ${action}.`,
+        `ENVIRONMENT: ${location}, ${tod}, atmospheric continuity with scene context ${scene || 'consistent set geography'}.`,
+        `COMPOSITION: ${composition}.`,
+        `LIGHTING & COLOR: ${lighting}, color script aligned with ${style}.`,
+        `TEXTURE & RENDER: photoreal cinematic image, micro-texture detail in skin/fabric/materials, physically plausible reflections, subtle film grain, high dynamic range, production-grade frame.`
+    ].filter(Boolean).join(' ');
+
+    return sanitizePromptInput(enforced, 1800);
+}
+
+function buildProfessionalVideoPrompt(params: {
+    rawPrompt?: string;
+    shot: any;
+    characterAnchor?: string;
+}): string {
+    const base = sanitizePromptInput(params.rawPrompt || '', 1000);
+    const shot = params.shot || {};
+    const shotScale = normalizeShotScale(shot.camera || 'medium');
+    const movement = sanitizePromptInput(shot.movement || 'static', 120);
+    const action = sanitizePromptInput(shot.action || 'subject shifts weight, turns head, then takes one decisive step', 260);
+    const location = sanitizePromptInput(shot.location || 'same scene location', 140);
+    const lighting = sanitizePromptInput(shot.lighting || 'consistent motivated lighting', 160);
+    const anchor = sanitizePromptInput(params.characterAnchor || '', 300);
+
+    const enforced = [
+        base,
+        `CAMERA PLAN: ${shotScale}, ${movement}.`,
+        `TIMED BLOCKING: second 0-1 settle frame and breathing micro-motion; second 1-2 ${action}; second 2-3 add a clear head/hand/body secondary action; final beat hold for edit point.`,
+        anchor ? `IDENTITY LOCK: keep exact same subject identity and wardrobe - ${anchor}.` : 'IDENTITY LOCK: keep exact same subject identity and wardrobe.',
+        `SCENE CONTINUITY: remain in ${location}, keep lighting logic ${lighting}, no environment jump, no costume drift.`
+    ].filter(Boolean).join(' ');
+
+    return sanitizePromptInput(enforced, 1600);
 }
 
 // ───────────────────────────────────────────────────────────────
@@ -3090,7 +3472,9 @@ ${lockedCastInstruction}` : ''}
    → "composition": Rule of thirds, leading lines, symmetry, depth of field, negative space
 
 ✅ **RULE 5: AI VIDEO PROMPT MASTERY (CRITICAL)**
-   → "video_prompt" = PHYSICAL MOTION ONLY. AI doesn't understand emotions, only ACTIONS.
+    → "video_prompt" = PHYSICAL MOTION ONLY. AI doesn't understand emotions, only ACTIONS.
+    → MUST include: camera operation + actor blocking + timing beats + environment continuity.
+    → Minimum detail density: 35+ words, with explicit body mechanics.
    
    ✓ GOOD EXAMPLES:
    • "Camera slowly pushes forward 2 feet. Man in blue suit turns head 90 degrees right, eyes widening. His right hand lifts to chest level."
@@ -3102,16 +3486,21 @@ ${lockedCastInstruction}` : ''}
    • "He realizes the truth" ← Mental state, not motion
    • "The scene becomes emotional" ← Vague, no kinetics
    
-   → MANDATORY ELEMENTS in video_prompt:
-   • Camera motion (if any): "Camera dollies left", "Camera static"
-   • Character body motion: "turns head", "lifts hand", "steps forward", "leans back"
-   • Environmental interaction: "touches wall", "picks up object", "opens door"
-   • Speed/Tempo: "slowly", "sharply", "gradually"
+    → MANDATORY ELEMENTS in video_prompt:
+    • Camera operation: move direction + speed + stability (e.g. "slow steadicam push-in")
+    • Blocking path: where subject starts, how subject moves, where subject ends
+    • Body mechanics: torso/head/hand/foot actions, eye-line change
+    • Environmental interaction: touches, grabs, opens, avoids, reacts to concrete object
+    • Timing language: "0-1s", "1-2s", "final beat hold" style sequencing
+    • Continuity locks: same location, same wardrobe, same identity, no scene jump
 
 ✅ **RULE 6: IMAGE PROMPT EXCELLENCE**
-   → "image_prompt" = ELITE Midjourney/Flux prompt (20-40 words minimum)
-   → Include: Subject + Action + Environment + Lighting + Camera Angle + Lens + Mood + Quality
-   → Example: "Determined detective in brown trench coat examining blood-stained evidence under single hanging lamp, noir aesthetic, dramatic side lighting casting long shadows, medium close-up 85mm lens, gritty cinematic 1940s crime drama mood, 8k photorealistic depth of field"
+    → "image_prompt" = ELITE Midjourney/Flux prompt (minimum 70 words, no generic filler)
+    → Must include ALL: Shot scale + camera height + lens + subject blocking + foreground/midground/background design + light source logic + contrast/color script + texture realism + production mood
+    → Must explicitly declare near/mid/far planes, e.g. foreground object, subject plane, deep background architecture
+    → Must include professional optics language: focal length feel, depth-of-field behavior, perspective compression/stretch
+    → Example structure:
+      [SHOT SCALE] [CAMERA HEIGHT/ANGLE] [LENS LOOK] [SUBJECT ACTION] [FG/MG/BG DEPTH] [LIGHTING SETUP] [COLOR PALETTE] [MATERIAL TEXTURE] [FINAL CINEMA QUALITY TAGS]
 
 ✅ **RULE 7: CHARACTER CONSISTENCY**
    → If Locked Cast provided: ONLY use those exact character names. NO "random bystander" or "unnamed person"
@@ -3247,25 +3636,51 @@ You MUST return EXACTLY ONE JSON object strictly matching this schema. Return ex
                 normalizedCharacters = [lockedCharacters[Math.min(idx, lockedCharacters.length - 1)].name];
             }
 
+            const professionalImagePrompt = buildProfessionalImagePrompt({
+                rawPrompt: s.image_prompt || '',
+                visualStyle: visual_style,
+                characterAnchor: character_anchor || lockedCharacters.map((c: any) => c.description).filter(Boolean).join(' | '),
+                sceneDescription: visual_description,
+                shot: s,
+            });
+
+            const professionalVideoPrompt = buildProfessionalVideoPrompt({
+                rawPrompt: s.video_prompt || '',
+                shot: s,
+                characterAnchor: character_anchor || lockedCharacters.map((c: any) => c.description).filter(Boolean).join(' | '),
+            });
+
+            const baseNegative = sanitizePromptInput(s.negative_prompt || '', 900);
+            const enforcedNegative = sanitizePromptInput(
+                `${baseNegative} identity drift, face swap, age shift, body proportion change, wardrobe drift, style drift, environment jump, extra fingers, distorted anatomy, low detail texture, flat lighting, cartoon stylization`,
+                1100
+            );
+
             return {
-            shot_id: crypto.randomUUID(),
-            scene_id: '', scene_title: result.scene_title || `Scene ${scene_number || 1}`,
-            shot_number: s.shot_number || idx + 1, duration_sec: s.duration_sec || 3,
-            location_type: s.location_type || 'INT', location: s.location || '',
-            time_of_day: s.time_of_day || 'day',
-            action: s.action || '', dialogue: s.dialogue || '',
-            camera: s.camera || 'medium', lens: s.lens || '50mm',
-            movement: s.movement || 'static', composition: s.composition || '',
-            lighting: s.lighting || '', art_direction: s.art_direction || '',
-            mood: s.mood || '', sfx_vfx: s.sfx_vfx || '',
-            audio_notes: s.audio_notes || '',
-            continuity_notes: s.continuity_notes || `Maintain exact identity lock. ${character_anchor || lockedCharacters.map(c => c.description).join(' | ') || 'Keep same protagonist face, hairstyle, body proportions, and wardrobe.'} Preserve left-right screen direction and no costume drift.`,
-            image_prompt: s.image_prompt || '', video_prompt: s.video_prompt || '', negative_prompt: s.negative_prompt || '',
-            seed_hint: null, reference_policy: 'anchor' as const,
-            status: 'draft' as const, locked_fields: [], version: 1,
-            updated_at: new Date().toISOString(),
-            characters: normalizedCharacters,
-        };
+                shot_id: crypto.randomUUID(),
+                scene_id: '', scene_title: result.scene_title || `Scene ${scene_number || 1}`,
+                shot_number: s.shot_number || idx + 1, duration_sec: s.duration_sec || 3,
+                location_type: s.location_type || 'INT', location: s.location || '',
+                time_of_day: s.time_of_day || 'day',
+                action: s.action || '', dialogue: s.dialogue || '',
+                camera: s.camera || 'medium', lens: s.lens || '50mm',
+                movement: s.movement || 'static', composition: s.composition || '',
+                lighting: s.lighting || '', art_direction: s.art_direction || '',
+                mood: s.mood || '', sfx_vfx: s.sfx_vfx || '',
+                audio_notes: s.audio_notes || '',
+                continuity_notes: s.continuity_notes || `Maintain exact identity lock. ${character_anchor || lockedCharacters.map(c => c.description).join(' | ') || 'Keep same protagonist face, hairstyle, body proportions, and wardrobe.'} Preserve left-right screen direction and no costume drift.`,
+                image_prompt: countWords(professionalImagePrompt) < 35
+                    ? buildProfessionalImagePrompt({ rawPrompt: '', visualStyle: visual_style, characterAnchor: character_anchor, sceneDescription: visual_description, shot: s })
+                    : professionalImagePrompt,
+                video_prompt: countWords(professionalVideoPrompt) < 22
+                    ? buildProfessionalVideoPrompt({ rawPrompt: '', shot: s, characterAnchor: character_anchor })
+                    : professionalVideoPrompt,
+                negative_prompt: enforcedNegative,
+                seed_hint: null, reference_policy: 'anchor' as const,
+                status: 'draft' as const, locked_fields: [], version: 1,
+                updated_at: new Date().toISOString(),
+                characters: normalizedCharacters,
+            };
         });
 
         if (!skipCreditCheck) {
@@ -3352,9 +3767,10 @@ ${shotJson}
 1. Return a JSON object with ONLY the rewritten fields.
 2. Do NOT include any fields that are locked or not in the rewrite list.
 3. Keep the same format/type as the original field values.
-4. If rewriting image_prompt, include the character anchor and make it HIGHLY DESCRIPTIVE using professional cinematic terminology (lighting, lenses, camera angles).
-5. Be creative, ensure physical logic, and stay consistent with the visual style and scene context.
-6. Language: technical fields in English, dialogue in ${language === 'zh' ? 'Chinese' : 'English'}.
+4. If rewriting image_prompt, include the character anchor and write a production-grade prompt with explicit shot scale, camera height, focal length feel, foreground/midground/background depth, lighting motivation, color script, and material texture realism (minimum 70 words).
+5. If rewriting video_prompt, output concrete physical blocking and camera choreography only (minimum 35 words), including timing beats and body mechanics.
+6. Be creative, ensure physical logic, and stay consistent with the visual style and scene context.
+7. Language: technical fields in English, dialogue in ${language === 'zh' ? 'Chinese' : 'English'}.
 
 **REQUIRED JSON STRUCTURE (CRITICAL):**
 Return EXACTLY ONE flat JSON object containing ONLY the rewritten keys and their new string values. Do not use markdown backticks. Do not add any explanatory text.
@@ -3424,7 +3840,21 @@ app.post('/api/shot-images/:shotId/generate', async (req: any, res: any) => {
     const startTime = Date.now();
     try {
         const { shotId } = req.params;
-        const { prompt, negative_prompt, delta_instruction, model, aspect_ratio, style, seed, character_anchor, reference_policy, project_id, anchor_image_url, referenceImageDataUrl } = req.body;
+        const {
+            prompt,
+            negative_prompt,
+            delta_instruction,
+            model,
+            aspect_ratio,
+            style,
+            seed,
+            character_anchor,
+            reference_policy,
+            project_id,
+            anchor_image_url,
+            referenceImageDataUrl,
+            continuity,
+        } = req.body;
 
         const authHeader = req.headers.authorization;
         if (!authHeader) return res.status(401).json({ error: 'Missing Authorization header' });
@@ -3466,44 +3896,122 @@ app.post('/api/shot-images/:shotId/generate', async (req: any, res: any) => {
             logDeveloperAccess(userEmail, `shot-image:generate:model=${imageModel}:cost=${cost}`);
         }
 
-        const finalPrompt = buildFinalPrompt({
-            basePrompt: prompt || '', deltaInstruction: delta_instruction,
-            characterAnchor: character_anchor, style: style || 'none', referencePolicy: reference_policy || 'anchor',
+        const suppressCharacterLock = shouldSuppressCharacterLock(
+            `${prompt || ''} ${delta_instruction || ''}`,
+            character_anchor,
+            continuity?.project_context?.story_entities
+        );
+
+        const continuityInput = suppressCharacterLock
+            ? { ...(continuity || {}), lockCharacter: false }
+            : continuity;
+
+        let continuityProfile = buildContinuityProfile(continuityInput, {
+            characterAnchor: character_anchor,
+            visualStyle: style || 'none',
+            sceneMemory: continuityInput?.scene_memory || continuityInput?.shot_context || {},
         });
-        const nonHumanGuide = detectNonHumanCharacterGuide(finalPrompt, character_anchor);
-        const effectiveGuideImage = anchor_image_url || referenceImageDataUrl || undefined;
+        if (suppressCharacterLock) {
+            continuityProfile = {
+                ...continuityProfile,
+                lockCharacter: false,
+                identityAnchorLine: '',
+                lockedCastLine: '',
+            };
+            console.log(`[Continuity] shot=${shotId} auto-suppressed character lock for non-cast scene prompt`);
+        }
+
+        let promptCandidate = buildFinalPrompt({
+            basePrompt: prompt || '',
+            deltaInstruction: delta_instruction,
+            characterAnchor: suppressCharacterLock ? '' : character_anchor,
+            style: style || 'none',
+            referencePolicy: reference_policy || 'anchor',
+            storyEntities: suppressCharacterLock ? [] : continuity?.project_context?.story_entities,
+            suppressCharacterLock,
+        });
+        promptCandidate = applyContinuityLocks(promptCandidate, continuityProfile);
+
+        const continuityNegative = buildContinuityNegativePrompt(negative_prompt, continuityProfile);
+        const nonHumanGuide = detectNonHumanCharacterGuide(promptCandidate, character_anchor);
+
+        const memoryReference = getContinuityReference(project_id || '', shotId, {
+            preferPrevious: continuityProfile.usePreviousApprovedAsReference,
+        });
+
+        const effectiveGuideImage = anchor_image_url || referenceImageDataUrl || memoryReference || undefined;
         const disableFaceCloning = nonHumanGuide.hasNonHuman || isRemoteImageReference(referenceImageDataUrl);
 
-        let result: { url: string; predictionId: string };
+        let result: { url: string; predictionId: string } | null = null;
+        const maxAttempts = continuityProfile.strictness === 'high' ? 3 : (continuityProfile.strictness === 'medium' ? 2 : 1);
+        const threshold = continuityThreshold(continuityProfile.strictness);
+        let finalContinuityScore: any = null;
+
         try {
-            result = await callReplicateImage({
-                prompt: finalPrompt,
-                model: replicatePath,
-                aspectRatio: aspect_ratio || '16:9',
-                seed: seed ?? 142857,
-                imagePrompt: effectiveGuideImage,
-                referenceImageDataUrl: referenceImageDataUrl || undefined,
-                disableFaceCloning,
-                allowReferenceFallback: true,
-            });
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                const scored = scoreContinuityPrompt(promptCandidate, continuityProfile);
+                finalContinuityScore = scored;
+
+                if (scored.overall < threshold) {
+                    console.warn(`[Continuity] shot=${shotId} prompt score ${scored.overall.toFixed(2)} < ${threshold.toFixed(2)}; failures=${scored.failures.join(',')}`);
+                    promptCandidate = strengthenPromptForRetry(promptCandidate, continuityProfile, attempt, scored.failures);
+                }
+
+                result = await callReplicateImage({
+                    prompt: promptCandidate,
+                    negativePrompt: continuityNegative,
+                    model: replicatePath,
+                    aspectRatio: aspect_ratio || '16:9',
+                    seed: seed ?? 142857,
+                    imagePrompt: effectiveGuideImage,
+                    referenceImageDataUrl: referenceImageDataUrl || undefined,
+                    disableFaceCloning,
+                    allowReferenceFallback: true,
+                });
+
+                if (scored.overall >= threshold || attempt === maxAttempts) {
+                    break;
+                }
+
+                promptCandidate = strengthenPromptForRetry(promptCandidate, continuityProfile, attempt + 1, scored.failures);
+            }
         } catch (genErr: any) {
             if (!skipCreditCheck) { try { await supabaseUser.rpc('refund_reserve', { amount: cost, ref_type: 'shot-image', ref_id: jobRef }); } catch (_) { } }
             throw genErr;
         }
 
+        if (!result?.url) {
+            throw new Error('Continuity generation failed to produce output');
+        }
+        const resolvedResult = result;
+
         if (!skipCreditCheck) { await supabaseUser.rpc('finalize_reserve', { ref_type: 'shot-image', ref_id: jobRef }); }
+
+        if (project_id && resolvedResult.url) {
+            registerApprovedFrame(project_id, {
+                shotId,
+                sceneId: continuity?.scene_memory?.scene_id || continuity?.shot_context?.scene_id,
+                sceneNumber: continuity?.scene_memory?.scene_number || continuity?.shot_context?.scene_number,
+                shotNumber: continuity?.shot_context?.shot_number,
+                imageUrl: resolvedResult.url,
+                prompt: promptCandidate,
+                createdAt: Date.now(),
+            });
+        }
 
         const now = new Date().toISOString();
         const imageId = crypto.randomUUID();
         res.json({
-            image: { id: imageId, shot_id: shotId, project_id: project_id || null, url: result.url, is_primary: false, status: 'succeeded', label: null, created_at: now },
+            image: { id: imageId, shot_id: shotId, project_id: project_id || null, url: resolvedResult.url, is_primary: false, status: 'succeeded', label: null, created_at: now },
             generation: {
                 id: crypto.randomUUID(), image_id: imageId, shot_id: shotId, project_id: project_id || null,
-                prompt: prompt || '', negative_prompt: negative_prompt || '', delta_instruction: delta_instruction || null,
+                prompt: promptCandidate, negative_prompt: continuityNegative || '', delta_instruction: delta_instruction || null,
                 model: imageModel, aspect_ratio: aspect_ratio || '16:9', style: style || 'none', seed: seed ?? 142857,
                 anchor_refs: character_anchor ? [character_anchor] : [], reference_policy: reference_policy || 'anchor',
-                edit_mode: null, status: 'succeeded', output_url: result.url, replicate_prediction_id: result.predictionId,
+                edit_mode: null, status: 'succeeded', output_url: resolvedResult.url, replicate_prediction_id: resolvedResult.predictionId,
                 created_at: now, completed_at: new Date().toISOString(), duration_ms: Date.now() - startTime,
+                continuity_score: finalContinuityScore?.overall ?? null,
+                continuity_failures: finalContinuityScore?.failures || [],
             },
         });
     } catch (error: any) {
@@ -3522,7 +4030,23 @@ app.post('/api/shot-images/:imageId/edit', async (req: any, res: any) => {
     const startTime = Date.now();
     try {
         const { imageId } = req.params;
-        const { edit_mode, delta_instruction, original_prompt, negative_prompt, reference_image_url, locked_attributes, model, aspect_ratio, style, seed, character_anchor, reference_policy, shot_id, project_id } = req.body;
+        const {
+            edit_mode,
+            delta_instruction,
+            original_prompt,
+            negative_prompt,
+            reference_image_url,
+            locked_attributes,
+            model,
+            aspect_ratio,
+            style,
+            seed,
+            character_anchor,
+            reference_policy,
+            shot_id,
+            project_id,
+            continuity,
+        } = req.body;
 
         const authHeader = req.headers.authorization;
         if (!authHeader) return res.status(401).json({ error: 'Missing Authorization header' });
@@ -3573,32 +4097,107 @@ app.post('/api/shot-images/:imageId/edit', async (req: any, res: any) => {
             basePrompt = `Based on reference image, ${delta_instruction || 'maintain composition and subject'}. ${basePrompt}`;
         }
 
-        const finalPrompt = buildFinalPrompt({
-            basePrompt, characterAnchor: character_anchor, style: style || 'none', referencePolicy: reference_policy || 'anchor',
-        });
-        const editSeed = edit_mode === 'reroll' ? Math.floor(Math.random() * 999999) : (seed ?? 142857);
+        const suppressCharacterLock = shouldSuppressCharacterLock(
+            `${basePrompt || ''} ${delta_instruction || ''}`,
+            character_anchor,
+            continuity?.project_context?.story_entities
+        );
 
-        let result: { url: string; predictionId: string };
+        const continuityInput = suppressCharacterLock
+            ? { ...(continuity || {}), lockCharacter: false }
+            : continuity;
+
+        let continuityProfile = buildContinuityProfile(continuityInput, {
+            characterAnchor: character_anchor,
+            visualStyle: style || 'none',
+            sceneMemory: continuityInput?.scene_memory || continuityInput?.shot_context || {},
+        });
+        if (suppressCharacterLock) {
+            continuityProfile = {
+                ...continuityProfile,
+                lockCharacter: false,
+                identityAnchorLine: '',
+                lockedCastLine: '',
+            };
+            console.log(`[Continuity] shot=${shot_id || imageId} auto-suppressed character lock for non-cast edit prompt`);
+        }
+
+        let finalPrompt = buildFinalPrompt({
+            basePrompt,
+            characterAnchor: suppressCharacterLock ? '' : character_anchor,
+            style: style || 'none',
+            referencePolicy: reference_policy || 'anchor',
+            storyEntities: suppressCharacterLock ? [] : continuity?.project_context?.story_entities,
+            suppressCharacterLock,
+        });
+        finalPrompt = applyContinuityLocks(finalPrompt, continuityProfile);
+        const continuityNegative = buildContinuityNegativePrompt(negative_prompt, continuityProfile);
+
+        const editSeed = edit_mode === 'reroll' ? Math.floor(Math.random() * 999999) : (seed ?? 142857);
+        const memoryReference = reference_image_url || getContinuityReference(project_id || '', shot_id || '', {
+            preferPrevious: continuityProfile.usePreviousApprovedAsReference,
+        });
+
+        let result: { url: string; predictionId: string } | null = null;
         try {
-            result = await callReplicateImage({ prompt: finalPrompt, model: replicatePath, aspectRatio: aspect_ratio || '16:9', seed: editSeed });
+            const maxAttempts = continuityProfile.strictness === 'high' ? 3 : (continuityProfile.strictness === 'medium' ? 2 : 1);
+            const threshold = continuityThreshold(continuityProfile.strictness);
+            let candidate = finalPrompt;
+
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                const scored = scoreContinuityPrompt(candidate, continuityProfile);
+                if (scored.overall < threshold) {
+                    candidate = strengthenPromptForRetry(candidate, continuityProfile, attempt, scored.failures);
+                }
+                result = await callReplicateImage({
+                    prompt: candidate,
+                    negativePrompt: continuityNegative,
+                    model: replicatePath,
+                    aspectRatio: aspect_ratio || '16:9',
+                    seed: editSeed,
+                    imagePrompt: memoryReference || undefined,
+                });
+                if (scored.overall >= threshold || attempt === maxAttempts) {
+                    finalPrompt = candidate;
+                    break;
+                }
+                candidate = strengthenPromptForRetry(candidate, continuityProfile, attempt + 1, scored.failures);
+            }
         } catch (genErr: any) {
             if (!skipCreditCheck) { try { await supabaseUser.rpc('refund_reserve', { amount: cost, ref_type: 'shot-image-edit', ref_id: jobRef }); } catch (_) { } }
             throw genErr;
         }
 
+        if (!result?.url) {
+            throw new Error('Continuity edit failed to produce output');
+        }
+        const resolvedResult = result;
+
         if (!skipCreditCheck) { await supabaseUser.rpc('finalize_reserve', { ref_type: 'shot-image-edit', ref_id: jobRef }); }
 
         const now = new Date().toISOString();
         const newImageId = crypto.randomUUID();
+        if (project_id && resolvedResult.url && shot_id) {
+            registerApprovedFrame(project_id, {
+                shotId: shot_id,
+                sceneId: continuity?.scene_memory?.scene_id || continuity?.shot_context?.scene_id,
+                sceneNumber: continuity?.scene_memory?.scene_number || continuity?.shot_context?.scene_number,
+                shotNumber: continuity?.shot_context?.shot_number,
+                imageUrl: resolvedResult.url,
+                prompt: finalPrompt,
+                createdAt: Date.now(),
+            });
+        }
+
         res.json({
-            image: { id: newImageId, shot_id: shot_id || '', project_id: project_id || null, url: result.url, is_primary: false, status: 'succeeded', label: `Edit (${edit_mode})`, created_at: now },
+            image: { id: newImageId, shot_id: shot_id || '', project_id: project_id || null, url: resolvedResult.url, is_primary: false, status: 'succeeded', label: `Edit (${edit_mode})`, created_at: now },
             generation: {
                 id: crypto.randomUUID(), image_id: newImageId, shot_id: shot_id || '', project_id: project_id || null,
-                prompt: basePrompt, negative_prompt: negative_prompt || '', delta_instruction: delta_instruction || null,
+                prompt: finalPrompt, negative_prompt: continuityNegative || '', delta_instruction: delta_instruction || null,
                 model: imageModel, aspect_ratio: aspect_ratio || '16:9', style: style || 'none', seed: editSeed,
                 anchor_refs: character_anchor ? [character_anchor] : [], reference_image_url: reference_image_url || null,
                 reference_policy: reference_policy || 'anchor', edit_mode, status: 'succeeded',
-                output_url: result.url, replicate_prediction_id: result.predictionId,
+                output_url: resolvedResult.url, replicate_prediction_id: resolvedResult.predictionId,
                 created_at: now, completed_at: new Date().toISOString(), duration_ms: Date.now() - startTime,
                 parent_image_id: imageId,
             },
@@ -3717,29 +4316,84 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
                 const shotData = sortedShots.find((s: any) => s.shot_id === item.shot_id);
                 if (!shotData) throw new Error('Shot data not found');
 
-                const finalPrompt = buildFinalPrompt({
+                const continuityProfile = buildContinuityProfile({
+                    strictness: 'high',
+                    lockCharacter: true,
+                    lockStyle: true,
+                    lockCostume: true,
+                    lockScene: true,
+                    usePreviousApprovedAsReference: true,
+                    scene_memory: {
+                        scene_id: shotData.scene_id,
+                        scene_number: shotData.scene_number,
+                        location: shotData.location,
+                        time_of_day: shotData.time_of_day,
+                        lighting_continuity: shotData.lighting,
+                    },
+                    project_context: {
+                        project_id,
+                        visual_style: style,
+                        character_anchor,
+                    }
+                }, {
+                    characterAnchor: character_anchor,
+                    visualStyle: style,
+                });
+
+                let finalPrompt = buildFinalPrompt({
                     basePrompt: shotData.image_prompt || '',
                     characterAnchor: character_anchor,
                     style,
                     referencePolicy: shotData.reference_policy || 'anchor'
                 });
+                finalPrompt = applyContinuityLocks(finalPrompt, continuityProfile);
+                const continuityNegative = buildContinuityNegativePrompt('', continuityProfile);
 
-                const result = await callReplicateImage({
-                    prompt: finalPrompt, model: replicatePath,
-                    aspectRatio: aspect_ratio, seed: shotData.seed_hint ?? projectSeed,
-                    imagePrompt: anchorImageUrl || undefined,
-                });
+                const maxAttempts = 2;
+                const threshold = continuityThreshold('high');
+                let result: { url: string; predictionId: string } | null = null;
+                let candidate = finalPrompt;
+                for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                    const scored = scoreContinuityPrompt(candidate, continuityProfile);
+                    if (scored.overall < threshold) {
+                        candidate = strengthenPromptForRetry(candidate, continuityProfile, attempt, scored.failures);
+                    }
+                    result = await callReplicateImage({
+                        prompt: candidate,
+                        negativePrompt: continuityNegative,
+                        model: replicatePath,
+                        aspectRatio: aspect_ratio,
+                        seed: shotData.seed_hint ?? projectSeed,
+                        imagePrompt: anchorImageUrl || undefined,
+                    });
+                    if (scored.overall >= threshold || attempt === maxAttempts) {
+                        finalPrompt = candidate;
+                        break;
+                    }
+                }
 
                 item.status = 'succeeded';
                 item.image_id = crypto.randomUUID();
-                item.image_url = result.url;
+                item.image_url = result?.url;
                 item.completed_at = new Date().toISOString();
                 job.succeeded += 1;
 
                 // ★ First successful image becomes the anchor for all subsequent images
-                if (!anchorImageUrl && result.url) {
+                if (!anchorImageUrl && result?.url) {
                     anchorImageUrl = result.url;
                     console.log(`[Batch] ★ First-image anchor set: ${result.url.substring(0, 80)}...`);
+                }
+
+                if (result?.url) {
+                    registerApprovedFrame(project_id, {
+                        shotId: item.shot_id,
+                        sceneId: shotData.scene_id,
+                        sceneNumber: shotData.scene_number,
+                        shotNumber: shotData.shot_number,
+                        imageUrl: result.url,
+                        prompt: finalPrompt,
+                        createdAt: Date.now(),
+                    });
                 }
             } catch (err: any) {
                 item.status = 'failed';
@@ -3987,8 +4641,34 @@ app.post('/api/batch/:jobId/retry', async (req: any, res: any) => {
             : 142857;
         const executor: TaskExecutor = async (item) => {
             const shotData = shots.find((s: any) => s.shot_id === item.shot_id);
-            const finalPrompt = buildFinalPrompt({ basePrompt: shotData?.image_prompt || '', characterAnchor: character_anchor, style, referencePolicy: shotData?.reference_policy || 'anchor' });
-            const result = await callReplicateImage({ prompt: finalPrompt, model: replicatePath, aspectRatio: aspect_ratio, seed: shotData?.seed_hint ?? retryProjectSeed });
+            const continuityProfile = buildContinuityProfile({
+                strictness: 'high',
+                lockCharacter: true,
+                lockStyle: true,
+                lockCostume: true,
+                lockScene: true,
+                usePreviousApprovedAsReference: true,
+                scene_memory: {
+                    scene_id: shotData?.scene_id,
+                    scene_number: shotData?.scene_number,
+                    location: shotData?.location,
+                    time_of_day: shotData?.time_of_day,
+                    lighting_continuity: shotData?.lighting,
+                },
+                project_context: {
+                    project_id: retryProjectId,
+                    visual_style: style,
+                    character_anchor,
+                }
+            }, {
+                characterAnchor: character_anchor,
+                visualStyle: style,
+            });
+
+            let finalPrompt = buildFinalPrompt({ basePrompt: shotData?.image_prompt || '', characterAnchor: character_anchor, style, referencePolicy: shotData?.reference_policy || 'anchor' });
+            finalPrompt = applyContinuityLocks(finalPrompt, continuityProfile);
+            const continuityNegative = buildContinuityNegativePrompt('', continuityProfile);
+            const result = await callReplicateImage({ prompt: finalPrompt, negativePrompt: continuityNegative, model: replicatePath, aspectRatio: aspect_ratio, seed: shotData?.seed_hint ?? retryProjectSeed });
             return { image_id: crypto.randomUUID(), image_url: result.url };
         };
         const ok = retryFailedBatchItems(req.params.jobId, executor);
@@ -4990,11 +5670,12 @@ app.post('/api/replicate/multi-frame', requireAuth, async (req: any, res: any) =
                 frames: frames.map((f: any) => ({
                     prompt: f.prompt,
                     imageUrl: f.imageUrl,
-                    duration: f.duration || 6
+                    duration: f.duration || 4,
+                    transitionType: f.transitionType || 'cut'
                 })),
                 model: model,
                 aspectRatio: aspectRatio || '16:9',
-                characterAnchor,
+                characterAnchor: characterAnchor,
                 startImageUrl: frames[0]?.imageUrl,
                 continuityMode: continuityMode || 'link'
             },

@@ -9,8 +9,11 @@
  * - options: { stylePreset, shotType, cameraMotion, lens, lighting, colorGrade, negatives, continuityLock }
  */
 
+import { AnchorPackage, GenerationMode } from '../../types';
+
 export type VideoPromptInput = {
   scene_text: string;
+  anchorPackage?: AnchorPackage;
   [key: string]: any;
 };
 
@@ -23,6 +26,7 @@ export type VideoPromptOptions = {
   colorGrade?: string;
   negatives?: string[];
   continuityLock?: string;
+  generationMode?: GenerationMode;
 };
 
 export const VIDEO_PROMPT_PRESETS = {
@@ -83,16 +87,49 @@ export function buildVideoPrompt(
   const lighting = options.lighting || preset.lighting;
   const colorGrade = options.colorGrade || preset.colorGrade;
   const texture = preset.texture;
-  const continuityLock = options.continuityLock || 'Maintain same character face, outfit, and proportions throughout.';
+  const isStrict = options.generationMode === 'strict_reference';
+
+  // Base Continuity
+  let continuityLock = options.continuityLock || 'Maintain same character face, outfit, and proportions throughout.';
+  let structure = [
+    '[Narrative Layer]',
+    input.scene_text || '(No scene text provided)',
+  ];
+
+  // Inject Anchor Package Constraints if present and in strict mode
+  if (isStrict && input.anchorPackage) {
+    const pkg = input.anchorPackage;
+    structure = [
+      '[HARD VISUAL CONSTRAINTS - DO NOT DEVIATE OVER TIME]',
+      `Subject: ${pkg.anchor_subject_description}`,
+      `Environment: ${pkg.anchor_environment_description}`,
+      `Camera: ${pkg.anchor_camera_description}`,
+      `Style: ${pkg.anchor_style_description}`,
+      `Immutable Elements to Preserve: ${pkg.immutable_elements.join(', ')}`,
+      '',
+      '[ALLOWED MOTION ONLY]',
+      pkg.allowed_motion_only,
+      '',
+      '[NARRATIVE LAYER (Secondary to Constraints)]',
+      input.scene_text || '(No scene text provided)',
+    ];
+    continuityLock = `CRITICAL: Animate exactly this frame. Do not redesign the scene, subject, camera angle, or lighting. Preserve visual identity perfectly.`;
+
+    // Auto-inject negative constraints from the package
+    if (pkg.negative_constraints) {
+      if (!options.negatives) options.negatives = [];
+      options.negatives.push(pkg.negative_constraints);
+    }
+  }
+
   const negatives = joinNegatives(preset.negatives, options.negatives, [
     'cheap CGI', 'plastic skin', 'overexposed glow', 'low-res', 'jitter', 'warped hands', 'distorted face',
     'text artifacts', 'logo', 'watermark', 'subtitle overlay', 'inconsistent character', 'flicker',
+    isStrict ? 'different building, different skyline, different creature design, different perspective, different lighting setup, alternate composition, scene drift, redesign, new architecture, changing time of day' : ''
   ]);
 
-  // Five-layer structure
-  return [
-    '[Narrative Layer]',
-    input.scene_text || '(No scene text provided)',
+  // Append remaining layers
+  structure.push(
     '',
     '[Cinematic Layer]',
     [shotType, cameraMotion, lens].filter(Boolean).join('; '),
@@ -105,6 +142,8 @@ export function buildVideoPrompt(
     '',
     '[Continuity Lock + Negative Constraints]',
     continuityLock,
-    'Negatives (soft constraints): ' + negatives,
-  ].join('\n');
+    'Negatives (soft constraints): ' + negatives
+  );
+
+  return structure.join('\n');
 }

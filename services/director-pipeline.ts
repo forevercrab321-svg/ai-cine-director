@@ -3,6 +3,8 @@ import {
   startVideoTask,
   checkPredictionStatus,
 } from "./replicateService";
+import { extractShotBible } from './shotBibleService';
+import { validateVideoDrift } from './videoValidator';
 import { supabase } from '../lib/supabaseClient';
 import type {
   VideoModel,
@@ -180,7 +182,8 @@ export const generateSceneChain = async (
     imageUrl?: string;
     videoUrl?: string;
     predictionId?: string;
-  }) => void
+  }) => void,
+  generationMode: GenerationMode = 'storyboard'
 ) => {
   let _previousVideoLastFrame: string | null = null; // Unused, but kept for TS compilation if needed
   let globalAutoAnchorBase64: string | null = null; // ★ 新增：全片霸权面部锚点
@@ -257,63 +260,116 @@ export const generateSceneChain = async (
       onProgress({ index: i, stage: "image_done", imageUrl: currentStartImage });
     }
 
-    console.log(`🎥 [阶段 2] 发送视频生成请求: ${shot.video_prompt}`);
-    if (onProgress) {
-      onProgress({ index: i, stage: "video_starting" });
+    let anchorPackage = null;
+    if (generationMode === 'strict_reference' && currentStartImage) {
+      try {
+        if (onProgress) onProgress({ index: i, stage: "extracting_bible" });
+        console.log(`[ShotBible] Extracting strict constraints for Shot ${i + 1}...`);
+        const { anchorPackage: pkg } = await extractShotBible(currentStartImage);
+        anchorPackage = pkg;
+      } catch (err) {
+        console.error(`[ShotBible] Failed to extract bible, proceeding without strict anchor:`, err);
+      }
     }
 
-    // ★ CRITICAL: Combine full visual context with the specific motion to prevent clothing/logic hallucinations
-    const rawVideoPrompt = shot.video_motion_prompt || shot.video_prompt || shot.shot_type || `Cinematic motion, scene ${i + 1}`;
-    const richContext = shot.image_prompt ? `Visual Context: ${shot.image_prompt}. ` : '';
+    let videoAttempts = 0;
+    const maxVideoAttempts = (generationMode === 'strict_reference' && anchorPackage) ? 3 : 1;
+    let finalVideoUrl = "";
+    let finalTailFrame = null;
+    let retryFeedbackPrompt = "";
 
-    // We no longer manually append character note here because startVideoTask handles it dynamically.
-    const castLockRule = lockedCastLine
-      ? `[CAST LOCK - MUST FOLLOW EXACTLY] Start Cast Bible: ${lockedCastLine}.`
-      : '';
-    const lockedVideoPrompt = `${richContext}Cinematic Action: ${rawVideoPrompt}. [IDENTITY CONTINUITY] Keep the exact same protagonist identity and costume as the provided first frame image; no face drift, no wardrobe drift. ${castLockRule}`.trim();
+    while (videoAttempts < maxVideoAttempts) {
+      videoAttempts++;
+      console.log(`🎥 [阶段 2] 发送视频生成请求 (Attempt ${videoAttempts}/${maxVideoAttempts})`);
+      if (onProgress) onProgress({ index: i, stage: "video_starting" });
 
-    console.log(`🔒 [Shot ${i + 1}] Target Action: ${lockedVideoPrompt}`);
+      // ★ CRITICAL: Combine full visual context with the specific motion
+      const rawVideoPrompt = shot.video_motion_prompt || shot.video_prompt || shot.shot_type || `Cinematic motion, scene ${i + 1}`;
+      const richContext = shot.image_prompt ? `Visual Context: ${shot.image_prompt}. ` : '';
 
-    // 注意：这里所有的视频都统一锁定同一个模型（例如 hailuo_02_fast），保证运动物理引擎一致
-    // 传入音频提示（如果shot有音频描述）
-    const audioPrompt = shot.audio_description || shot.dialogue_text || '';
-    const videoPrediction = await withRateLimitRetry(
-      `startVideoTask:scene-${i + 1}`,
-      () => startVideoTask(
-        lockedVideoPrompt,
-        currentStartImage,
-        videoModel,  // ★ Use user-selected model instead of hardcoded hailuo_02_fast
-        "none" as VideoStyle,
-        "storyboard" as GenerationMode,
-        "standard" as VideoQuality,
-        6 as unknown as VideoDuration,  // Fixed: use number 6 instead of string "6s"
-        "24fps" as unknown as VideoFps,
-        "720p" as VideoResolution,
-        extractedAnchor,   // Still passed here so buildVideoInput can also append it
-        "16:9",
-        { audioPrompt, storyEntities }  // Pass audio + locked entities for stronger consistency
-      ),
-      3
-    );
+      const castLockRule = lockedCastLine
+        ? `[CAST LOCK - MUST FOLLOW EXACTLY] Start Cast Bible: ${lockedCastLine}.`
+        : '';
 
-    if (onProgress) {
-      onProgress({ index: i, stage: "video_polling", predictionId: videoPrediction.id });
+      let lockedVideoPrompt = `${richContext}Cinematic Action: ${rawVideoPrompt}. [IDENTITY CONTINUITY] Keep the exact same protagonist identity and costume as the provided first frame image. ${castLockRule}`.trim();
+
+      if (retryFeedbackPrompt) {
+        lockedVideoPrompt += `\nCRITICAL FIX NEEDED: ${retryFeedbackPrompt}`;
+      }
+
+      console.log(`🔒 [Shot ${i + 1}] Target Action: ${lockedVideoPrompt}`);
+
+      const audioPrompt = shot.audio_description || shot.dialogue_text || '';
+      const videoPrediction = await withRateLimitRetry(
+        `startVideoTask:scene-${i + 1}`,
+        () => startVideoTask(
+          lockedVideoPrompt,
+          currentStartImage,
+          videoModel,
+          "none" as VideoStyle,
+          generationMode,
+          "standard" as VideoQuality,
+          6 as unknown as VideoDuration,
+          "24fps" as unknown as VideoFps,
+          "720p" as VideoResolution,
+          extractedAnchor,
+          "16:9",
+          { audioPrompt, storyEntities, anchorPackage }
+        ),
+        3
+      );
+
+      if (onProgress) {
+        onProgress({ index: i, stage: "video_polling", predictionId: videoPrediction.id });
+      }
+
+      const generatedVideoUrl = await waitForVideoCompletion(videoPrediction.id);
+
+      if (generationMode === 'strict_reference' && anchorPackage) {
+        try {
+          if (onProgress) onProgress({ index: i, stage: "validating_video" });
+          const tailFrame = await extractLastFrameServerSide(generatedVideoUrl);
+          const validation = await validateVideoDrift(tailFrame, anchorPackage);
+
+          console.log(`[Validator] Shot ${i + 1} Attempt ${videoAttempts} Score: ${validation.score} - ${validation.feedback}`);
+
+          if (!validation.passed && videoAttempts < maxVideoAttempts) {
+            console.warn(`[Validator] Video rejected (Score ${validation.score} < 85). Retrying...`);
+            retryFeedbackPrompt = `PREVIOUS ATTEMPT FAILED INCORRECTLY: ${validation.feedback}. YOU MUST STRICTLY MATCH THE FIRST FRAME IMAGE IN EXACT ARCHITECTURE, SUBJECT, AND LIGHTING.`;
+            // Keep the best logic would save the highest scored, but for simplicity we keep retrying and default to last one if fail.
+            finalVideoUrl = generatedVideoUrl;
+            finalTailFrame = tailFrame;
+            continue;
+          }
+          finalVideoUrl = generatedVideoUrl;
+          finalTailFrame = tailFrame;
+          console.log(`✅ [第 ${i + 1} 镜] 视频通过 Validation: ${generatedVideoUrl}`);
+          break;
+        } catch (e: any) {
+          console.warn(`[Validator] Failed to validate, accepting video:`, e.message);
+          finalVideoUrl = generatedVideoUrl;
+          break; // extract error or validation error -> assume success
+        }
+      } else {
+        finalVideoUrl = generatedVideoUrl;
+        break;
+      }
     }
 
-    // 这里 startVideoTask 只返回了任务的状态信息，我们需要轮询查询获得最终视频 URL
-    const generatedVideoUrl = await waitForVideoCompletion(videoPrediction.id);
-    videoUrls.push(generatedVideoUrl);
-    console.log(`✅ [第 ${i + 1} 镜] 视频生成成功: ${generatedVideoUrl}`);
-
+    videoUrls.push(finalVideoUrl);
     if (onProgress) {
-      onProgress({ index: i, stage: "video_done", videoUrl: generatedVideoUrl });
+      onProgress({ index: i, stage: "video_done", videoUrl: finalVideoUrl });
     }
 
-    try {
-      globalTailFrameBase64 = await extractLastFrameServerSide(generatedVideoUrl);
-    } catch (extractErr: any) {
-      console.warn(`⚠️ [第 ${i + 1} 场] 尾帧提取失败，将在下一场回退锚点生图: ${extractErr?.message || extractErr}`);
-      globalTailFrameBase64 = null;
+    if (finalTailFrame) {
+      globalTailFrameBase64 = finalTailFrame;
+    } else {
+      try {
+        globalTailFrameBase64 = await extractLastFrameServerSide(finalVideoUrl);
+      } catch (extractErr: any) {
+        console.warn(`⚠️ [第 ${i + 1} 场] 尾帧提取失败，将在下一场回退锚点生图: ${extractErr?.message || extractErr}`);
+        globalTailFrameBase64 = null;
+      }
     }
   }
 

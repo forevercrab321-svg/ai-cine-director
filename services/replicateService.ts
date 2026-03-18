@@ -183,6 +183,8 @@ interface VideoOptions {
   duration?: number;  // 4, 6, 8 秒
   aspectRatio?: string;  // "16:9" | "9:16"
   audioPrompt?: string;  // 音频描述
+  generationMode?: GenerationMode;
+  anchorPackage?: any;
   [key: string]: any;
 }
 
@@ -196,7 +198,13 @@ function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string
   const version = promptEngineVersion || (typeof process !== 'undefined' && process.env && process.env.PROMPT_ENGINE_VERSION) || 'v1';
   if (version === 'v2') {
     // v2: use Director Prompt Engine
-    finalPrompt = buildVideoPrompt({ scene_text: prompt }, (options && typeof options === 'object' ? options : {}) as any);
+    finalPrompt = buildVideoPrompt({
+      scene_text: prompt,
+      anchorPackage: options.anchorPackage
+    }, {
+      ...options,
+      generationMode: options.generationMode
+    } as any);
     if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV !== 'production') {
       console.log(`[PromptEngine] Using v2, prompt:`, finalPrompt.slice(0, 500));
     }
@@ -315,15 +323,21 @@ export const startVideoTask = async (
     finalPrompt = `${finalPrompt}. [CAST LOCK - MUST FOLLOW EXACTLY] Start Cast Bible: ${lockedCastLine}. Every generated frame must match these cast identities exactly. No face drift, no costume drift, no replacement actors.`;
   }
 
-  // Fallback to legacy character anchor if no entity rules exist
-  if (characterAnchor && !entityRules) {
-    // Add strong continuous consistency constraint, specifically targeting head turns
-    finalPrompt = `${prompt}. Character Identity: ${characterAnchor}. Critically important: Maintain the exact same facial features, identity, and clothing strictly consistent throughout the entire motion, regardless of angle changes or head turns.`;
-  }
+  // Full anchor constraint injection:
+  if (generationMode === 'strict_reference' && promptOptions?.anchorPackage) {
+    // We do not append the default IDENTITY LOCK because the anchor package handles it densely in v2 prompt engine.
+    finalPrompt = `${prompt}. [SUPER STRICT ANCHOR LOCK] Animate this exact frame. Do not redesign the subject, environment, composition, architecture, camera angle, or time of day. Preserve the visual identity of the image. Only introduce motion consistent with this exact frame.`;
+  } else {
+    // Fallback to legacy character anchor if no entity rules exist
+    if (characterAnchor && !entityRules) {
+      // Add strong continuous consistency constraint, specifically targeting head turns
+      finalPrompt = `${prompt}. Character Identity: ${characterAnchor}. Critically important: Maintain the exact same facial features, identity, and clothing strictly consistent throughout the entire motion, regardless of angle changes or head turns.`;
+    }
 
-  // Universal frame-identity lock: always enforce identity from the provided first frame image.
-  // This is critical for keeping face/clothing stable during movement and camera angle changes.
-  finalPrompt = `${finalPrompt}. [FRAME LOCK] The subject in the provided first-frame image must remain the exact same person in every frame. Do not change facial structure, hairstyle, age, skin tone, outfit, jewelry, or accessories. Preserve identity and costume continuity absolutely.`;
+    // Universal frame-identity lock: always enforce identity from the provided first frame image.
+    // This is critical for keeping face/clothing stable during movement and camera angle changes.
+    finalPrompt = `${finalPrompt}. [FRAME LOCK] The subject in the provided first-frame image must remain the exact same person in every frame. Do not change facial structure, hairstyle, age, skin tone, outfit, jewelry, or accessories. Preserve identity and costume continuity absolutely.`;
+  }
 
   let modelIdentifier = modelType.includes('/')
     ? modelType
@@ -334,6 +348,8 @@ export const startVideoTask = async (
   const videoOptions: VideoOptions = {
     duration: duration,
     aspectRatio: aspectRatio || '16:9',
+    generationMode: generationMode,
+    anchorPackage: promptOptions?.anchorPackage,
     ...(promptOptions || {})
   };
 
@@ -344,6 +360,9 @@ export const startVideoTask = async (
       version: modelIdentifier,
       input: buildVideoInput(modelType, finalPrompt, startImageUrl, videoOptions, promptEngineVersion),
       storyEntities: lockedStoryEntities,
+      continuity: promptOptions?.continuity,
+      project_id: promptOptions?.project_id,
+      shot_id: promptOptions?.shot_id,
     })
   });
 

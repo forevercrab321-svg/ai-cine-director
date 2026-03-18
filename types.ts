@@ -54,6 +54,15 @@ export interface Shot {
   version: number;               // Optimistic lock version counter
   updated_at: string;            // ISO timestamp
 
+  // Strict Reference Lock Config
+  immutable_subject?: boolean;
+  immutable_environment?: boolean;
+  immutable_camera?: boolean;
+  immutable_lighting?: boolean;
+  motion_intensity?: number;     // 0-100
+  scene_drift_allowed?: number;  // 0-100
+  anchor_package?: AnchorPackage;
+
   // Generated assets (populated after generation)
   image_url?: string;
   video_url?: string;
@@ -179,6 +188,58 @@ export interface StoryEntity {
   is_locked: boolean;       // If true, enforced into prompts
 }
 
+export type ContinuityStrictness = 'low' | 'medium' | 'high';
+
+export interface CharacterBible {
+  face_description?: string;
+  age_range?: string;
+  skin_tone?: string;
+  eye_shape?: string;
+  nose_lips?: string;
+  hair_color_style?: string;
+  signature_accessories?: string;
+  costume_palette?: string;
+  primary_props?: string;
+}
+
+export interface StyleBible {
+  realism_level?: string;
+  lens_look?: string;
+  color_palette?: string;
+  mood?: string;
+  lighting_logic?: string;
+  rendering_style?: string;
+}
+
+export interface SceneContinuityMemory {
+  scene_id?: string;
+  scene_number?: number;
+  location?: string;
+  time_of_day?: string;
+  weather_atmosphere?: string;
+  lighting_continuity?: string;
+  active_costume?: string;
+  prop_state?: string;
+}
+
+export interface ContinuityConfig {
+  strictness?: ContinuityStrictness;
+  lockCharacter?: boolean;
+  lockStyle?: boolean;
+  lockCostume?: boolean;
+  lockScene?: boolean;
+  usePreviousApprovedAsReference?: boolean;
+  character_bible?: CharacterBible;
+  style_bible?: StyleBible;
+  scene_memory?: SceneContinuityMemory;
+  project_context?: {
+    project_id?: string;
+    visual_style?: string;
+    character_anchor?: string;
+    story_entities?: StoryEntity[];
+  };
+}
+
 /** Enhanced project with scenes containing shots */
 export interface EnhancedProject {
   id?: string;
@@ -273,7 +334,34 @@ export type VideoModel =
   | 'seedance_pro'          // ★ ByteDance Seedance Pro - 首帧尾帧 $0.30-0.72
   | 'sora_2';              // ★ OpenAI Sora 2 - 最新AI视频 $2.50
 
-export type GenerationMode = 'storyboard' | 'story';
+export type GenerationMode = 'storyboard' | 'story' | 'loose' | 'balanced' | 'strict_reference';
+
+export interface AnchorPackage {
+  reference_image_path: string;
+  anchor_subject_description: string;
+  anchor_environment_description: string;
+  anchor_camera_description: string;
+  anchor_style_description: string;
+  negative_constraints: string;
+  immutable_elements: string[];
+  allowed_motion_only: string;
+}
+
+export interface ShotBible {
+  main_subject: string;
+  subject_shape: string;
+  key_facial_features: string;
+  wardrobe: string;
+  environment_type: string;
+  building_geometry: string;
+  skyline_composition: string;
+  camera_angle: string;
+  lens_feeling: string;
+  time_of_day: string;
+  lighting_direction: string;
+  motion_intention: string;
+  forbidden_changes: string;
+}
 
 export type VideoMethod = 'stable' | 'ai';
 export type MotionIntensity = 'low' | 'medium' | 'high';

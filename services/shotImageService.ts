@@ -4,7 +4,7 @@
  */
 import {
     ShotImage, ImageGeneration, ImageModel, AspectRatio, VideoStyle,
-    ImageEditMode, CREDIT_COSTS, IMAGE_MODEL_COSTS,
+    ImageEditMode, CREDIT_COSTS, IMAGE_MODEL_COSTS, ContinuityConfig,
 } from '../types';
 import { supabase } from '../lib/supabaseClient';
 
@@ -48,6 +48,7 @@ export async function generateShotImage(params: {
     project_id?: string;
     anchor_image_url?: string;  // ★ Reference image URL for Flux Redux consistency
     referenceImageDataUrl?: string; // ★ NEW: Fast forwarding base64 image reference to backend
+    continuity?: ContinuityConfig;
 }): Promise<GenerateImageResult> {
     const headers = await getAuthHeaders();
 
@@ -90,6 +91,7 @@ export async function editShotImage(params: {
     reference_policy?: 'none' | 'anchor' | 'first-frame' | 'previous-frame';
     shot_id: string;
     project_id?: string;
+    continuity?: ContinuityConfig;
 }): Promise<EditImageResult> {
     const headers = await getAuthHeaders();
 
