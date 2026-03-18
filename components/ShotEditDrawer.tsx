@@ -62,6 +62,7 @@ const FIELD_DEFS: FieldDef[] = [
     { key: 'negative_constraints', label: '严格物理锁定排斥词 Strong Negatives', group: '🖼 Generation', type: 'textarea', placeholder: 'Strict negative constraints from anchor...' },
 
     // Consistency Locks
+    { key: 'contains_character', label: '强制包含主角 Cast Overflow Override', group: '🔒 Consistency', type: 'boolean' },
     { key: 'immutable_subject', label: '锁定主角容貌身份 Identity Lock', group: '🔒 Consistency', type: 'boolean' },
     { key: 'immutable_environment', label: '锁定环境背景 Architecture Lock', group: '🔒 Consistency', type: 'boolean' },
     { key: 'motion_budget', label: '允许画面运动程度 Motion Budget (0-100)', group: '🔒 Consistency', type: 'number' },

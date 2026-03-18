@@ -3,6 +3,7 @@
 // ═══════════════════════════════════════════════════════════════
 import { VideoStyle, ImageModel, AspectRatio, GenerationMode, VideoQuality, VideoDuration, VideoFps, VideoResolution, VideoModel, REPLICATE_MODEL_PATHS } from '../types';
 import { buildVideoPrompt } from '../lib/promptEngine/promptEngine';
+import { classifyShotIntent, getRoutingRules } from '../lib/promptEngine/entityRouter';
 import { supabase } from '../lib/supabaseClient';
 
 export interface ReplicateResponse {
@@ -300,22 +301,39 @@ export const startVideoTask = async (
   // ★ Clean, Narrative-First Video Prompts
   // Video models perform best when they receive a clean, descriptive narrative of the action.
   // We append the character anchor gracefully at the end, but strictly enforce 3D and motion consistency.
-  let finalPrompt = prompt;
+  // ★ Intent Routing & Anchor Gating
+  const { intent, presence } = classifyShotIntent(prompt);
+  const routing = getRoutingRules(intent, presence, promptOptions?.contains_character);
 
-  const lockedStoryEntities = Array.isArray(promptOptions?.storyEntities)
+  // CRITICAL FIX: If routing says no cast anchor allowed, strictly strip it out.
+  let activeCharacterAnchor = characterAnchor;
+  let activeStoryEntities = Array.isArray(promptOptions?.storyEntities)
     ? promptOptions.storyEntities.filter((e: any) => e?.is_locked)
     : [];
 
+  if (!routing.allowCastAnchor) {
+    activeCharacterAnchor = undefined;
+
+    // Also strip out any story entity that is a 'character'
+    activeStoryEntities = activeStoryEntities.filter((e: any) => String(e?.type || '').toLowerCase() !== 'character');
+
+    if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV !== 'production') {
+      console.log(`[EntityRouter] 🚫 Blocked cast anchor leakage for ${intent} shot.`);
+    }
+  }
+
+  let finalPrompt = prompt;
+
   let entityRules = '';
-  if (lockedStoryEntities.length > 0) {
-    const lockedEntities = lockedStoryEntities;
+  if (activeStoryEntities.length > 0) {
+    const lockedEntities = activeStoryEntities;
     if (lockedEntities.length > 0) {
       entityRules = lockedEntities.map((e: any) => `[${e.type.toUpperCase()}: ${e.name}] ${e.description}`).join(' | ');
       finalPrompt = `${prompt}. [IDENTITY LOCK] Ensure the following entities appear exactly as described: ${entityRules}. Critically important: Maintain exact features and clothing strictly consistent throughout the entire motion.`;
     }
   }
 
-  const lockedCastLine = lockedStoryEntities
+  const lockedCastLine = activeStoryEntities
     .filter((e: any) => String(e?.type || '').toLowerCase() === 'character')
     .map((e: any) => `${e.name}: ${e.description}`)
     .join(' | ');
@@ -329,14 +347,15 @@ export const startVideoTask = async (
     finalPrompt = `${prompt}. [SUPER STRICT ANCHOR LOCK] Animate this exact frame. Do not redesign the subject, environment, composition, architecture, camera angle, or time of day. Preserve the visual identity of the image. Only introduce motion consistent with this exact frame.`;
   } else {
     // Fallback to legacy character anchor if no entity rules exist
-    if (characterAnchor && !entityRules) {
+    if (activeCharacterAnchor && !entityRules) {
       // Add strong continuous consistency constraint, specifically targeting head turns
-      finalPrompt = `${prompt}. Character Identity: ${characterAnchor}. Critically important: Maintain the exact same facial features, identity, and clothing strictly consistent throughout the entire motion, regardless of angle changes or head turns.`;
+      finalPrompt = `${finalPrompt}. Character Identity: ${activeCharacterAnchor}. Critically important: Maintain the exact same facial features, identity, and clothing strictly consistent throughout the entire motion, regardless of angle changes or head turns.`;
     }
 
-    // Universal frame-identity lock: always enforce identity from the provided first frame image.
-    // This is critical for keeping face/clothing stable during movement and camera angle changes.
-    finalPrompt = `${finalPrompt}. [FRAME LOCK] The subject in the provided first-frame image must remain the exact same person in every frame. Do not change facial structure, hairstyle, age, skin tone, outfit, jewelry, or accessories. Preserve identity and costume continuity absolutely.`;
+    // Universal frame-identity lock only if characters are allowed
+    if (routing.allowCastAnchor) {
+      finalPrompt = `${finalPrompt}. [FRAME LOCK] The subject in the provided first-frame image must remain the exact same person in every frame. Do not change facial structure, hairstyle, age, skin tone, outfit, jewelry, or accessories. Preserve identity and costume continuity absolutely.`;
+    }
   }
 
   let modelIdentifier = modelType.includes('/')
@@ -359,7 +378,7 @@ export const startVideoTask = async (
     body: JSON.stringify({
       version: modelIdentifier,
       input: buildVideoInput(modelType, finalPrompt, startImageUrl, videoOptions, promptEngineVersion),
-      storyEntities: lockedStoryEntities,
+      storyEntities: activeStoryEntities,
       continuity: promptOptions?.continuity,
       project_id: promptOptions?.project_id,
       shot_id: promptOptions?.shot_id,

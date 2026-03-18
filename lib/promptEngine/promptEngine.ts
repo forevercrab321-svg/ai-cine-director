@@ -7,6 +7,7 @@
  */
 
 import { AnchorPackage, GenerationMode } from '../../types';
+import { classifyShotIntent, getRoutingRules } from './entityRouter';
 
 export type VideoPromptInput = {
   scene_text: string;
@@ -22,6 +23,7 @@ export type VideoPromptOptions = {
   colorGrade?: string;
   negatives?: string[];
   generationMode?: GenerationMode;
+  contains_character?: boolean; // UI override for character presence
 };
 
 // Vague cinematic adjectives that cause hallucination and model drift.
@@ -62,6 +64,10 @@ export function buildVideoPrompt(
 
   const rawSceneText = input.scene_text || '';
   const filteredSceneText = fluffFilter(rawSceneText);
+
+  // Intent Classification & Routing
+  const { intent, presence } = classifyShotIntent(rawSceneText);
+  const routing = getRoutingRules(intent, presence, options.contains_character);
 
   // Section 1: Scene Facts
   let sceneFacts = `[SCENE FACTS]\n${filteredSceneText}`;
@@ -116,6 +122,11 @@ export function buildVideoPrompt(
     'cheap CGI', 'plastic skin', 'overexposed glow', 'low-res', 'jitter', 'warped hands', 'distorted face',
     'text artifacts', 'logo', 'watermark', 'subtitle overlay', 'flicker'
   ];
+
+  // Dynamically inject Entity Router's forbidden leakage terms
+  if (routing.forbiddenEntities.length > 0) {
+    defaultNegatives.push(...routing.forbiddenEntities);
+  }
 
   if (isStrict) {
     defaultNegatives.push(

@@ -3,6 +3,14 @@
 // Shot System — Enhanced shot-level types for production-ready storyboards
 // ═══════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════
+// Shot Intent & Entity Routing
+// ═══════════════════════════════════════════════════════════════
+export type ShotIntent = 'character' | 'environment' | 'destruction' | 'establishing' | 'prop' | 'hybrid';
+export type CharacterPresence = 'none' | 'optional' | 'background' | 'primary';
+export type AnchorMode = 'off' | 'optional' | 'required';
+export type RealismMode = 'stylized' | 'cinematic' | 'photoreal';
+
 export type ShotStatus = 'draft' | 'generated' | 'locked';
 export type CameraType = 'wide' | 'medium' | 'close' | 'ecu' | 'over-shoulder' | 'pov' | 'aerial' | 'two-shot';
 export type CameraMovement = 'static' | 'push-in' | 'pull-out' | 'pan-left' | 'pan-right' | 'tilt-up' | 'tilt-down' | 'dolly' | 'tracking' | 'crane' | 'handheld' | 'steadicam' | 'whip-pan' | 'zoom';
@@ -64,6 +72,15 @@ export interface Shot {
   motion_budget?: number;        // 0-100, strict allowed motion
   drift_budget?: number;         // 0-100, allowed background drift
   spectacle_budget?: number;     // 0-100, how much new "epic" generation is allowed
+
+  // Shot Intent & Gating (New conditional routing architecture)
+  contains_character?: boolean;          // Legacy/simple boolean override
+  shot_intent?: ShotIntent;              // Auto-classified or user-defined
+  character_presence?: CharacterPresence;// Granular presence configuration
+  cast_anchor_mode?: AnchorMode;         // Force enable/disable Character Master Anchor
+  environment_anchor_mode?: AnchorMode;  // Force enable/disable Background Master Anchor
+  realism_mode?: RealismMode;
+  forbidden_entities?: string[];         // Dynamic leakage prevention (e.g. "no animals")
 
   source_of_truth_image?: string; // The explicit anchor frame
   negative_constraints?: string;  // Explicit things to omit
