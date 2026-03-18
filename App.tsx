@@ -447,6 +447,19 @@ const MainLayout: React.FC = () => {
               autoGenerate={true}
             />
 
+            {/* ★ 修复：手动设定/修改锚点的区域，防止因被自动折叠而“丢失功能” */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-6">
+              <div className="flex justify-between items-center mb-2">
+                <span className="font-bold text-slate-400 uppercase tracking-widest text-xs">主角及全局设定 Global Cast Anchor</span>
+              </div>
+              <textarea
+                value={project.character_anchor || ''}
+                onChange={(e) => setProject({ ...project, character_anchor: e.target.value })}
+                placeholder="在此手动调整全片角色一致性锚点。如果是环境/灾难片，请留空 (Leave Empty for No Cast)."
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm h-16 focus:border-indigo-500 outline-none transition-colors"
+              />
+            </div>
+
             {project.scenes.map((scene, i) => (
               <div key={i} className="bg-slate-900 p-6 rounded-xl border border-slate-800">
                 <div className="flex justify-between mb-2">
