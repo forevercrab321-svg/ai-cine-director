@@ -96,7 +96,8 @@ export function buildVideoPrompt(
 
     immutableElements += `Do not change these elements: ${pkg.immutable_elements.join(', ')}.\n`;
     if (isExtreme) {
-      immutableElements += `Keep exact background geometry unchanged. Keep exact subject design unchanged.\n`;
+      immutableElements += `[IDENTITY LOCK]: KEEP EXACT SUBJECT DESIGN, FACE, WARDROBE, AND PROPORTIONS UNCHANGED. ZERO HALLUCINATION PERMITTED.\n`;
+      immutableElements += `[SCENE TOPOLOGY LOCK]: KEEP EXACT BACKGROUND GEOMETRY UNCHANGED. NO ENVIRONMENT DRIFT.\n`;
     }
 
     cameraInstruction += `${pkg.anchor_camera_description}. No drastic camera movements.\n`;
@@ -110,10 +111,10 @@ export function buildVideoPrompt(
       negativesArr.push(pkg.negative_constraints);
     }
 
-    outputIntent = '[OUTPUT INTENT]\nAnimate this exact frame with restrained realistic motion. The result should feel like the still image came alive, not like a new scene was invented. Maintain 100% identity and structural continuity.';
+    outputIntent = '[OUTPUT INTENT]\nAnimate this exact frame with restrained realistic motion. The result should feel like the still image came alive, not like a new scene was invented. Maintain 100% identity and structural continuity. ZERO HALLUCINATION.';
   } else {
     // Fallback or Loose mode
-    immutableElements += 'Maintain general character design and environment.\n';
+    immutableElements += '[IDENTITY & ENVIRONMENT LOCK]: Maintain exact character design and environment geometry.\n';
     cameraInstruction += [options.shotType, options.cameraMotion, options.lens].filter(Boolean).join('; ');
     allowedMotion += `Motion based on: ${filteredSceneText}`;
   }

@@ -3303,13 +3303,13 @@ function buildProfessionalImagePrompt(params: {
 
     const enforced = [
         base,
-        `SHOT DESIGN: ${shotScale}, eye-line coherent camera placement, lens choice ${lens}, camera motion ${movement}.`,
-        anchor ? `IDENTITY LOCK: ${anchor}.` : '',
-        `BLOCKING: ${action}.`,
-        `ENVIRONMENT: ${location}, ${tod}, atmospheric continuity with scene context ${scene || 'consistent set geography'}.`,
-        `COMPOSITION: ${composition}.`,
-        `LIGHTING & COLOR: ${lighting}, color script aligned with ${style}.`,
-        `TEXTURE & RENDER: photoreal cinematic image, micro-texture detail in skin/fabric/materials, physically plausible reflections, subtle film grain, high dynamic range, production-grade frame.`
+        `[SHOT DESIGN]: ${shotScale}, eye-line coherent camera placement, lens choice ${lens}, camera motion ${movement}.`,
+        anchor ? `[IDENTITY LOCK]: ${anchor}. NO HALLUCINATION. DO NOT change facial features, race, gender, body proportions, or wardrobe.` : '',
+        `[BLOCKING]: ${action}.`,
+        `[SCENE TOPOLOGY LOCK]: ${location}, ${tod}, atmospheric continuity with scene context ${scene || 'consistent set geography'}. Keep exact architectural geometry, room layout, and background elements stable. DO NOT drift or hallucinate new environment structures.`,
+        `[COMPOSITION]: ${composition}.`,
+        `[LIGHTING & COLOR]: ${lighting}, color script aligned with ${style}. Maintain exact color temperature and shadow direction.`,
+        `[TEXTURE & RENDER]: photoreal cinematic image, micro-texture detail, physically plausible reflections, high dynamic range.`
     ].filter(Boolean).join(' ');
 
     return sanitizePromptInput(enforced, 1800);
@@ -3331,10 +3331,10 @@ function buildProfessionalVideoPrompt(params: {
 
     const enforced = [
         base,
-        `CAMERA PLAN: ${shotScale}, ${movement}.`,
-        `TIMED BLOCKING: second 0-1 settle frame and breathing micro-motion; second 1-2 ${action}; second 2-3 add a clear head/hand/body secondary action; final beat hold for edit point.`,
-        anchor ? `IDENTITY LOCK: keep exact same subject identity and wardrobe - ${anchor}.` : 'IDENTITY LOCK: keep exact same subject identity and wardrobe.',
-        `SCENE CONTINUITY: remain in ${location}, keep lighting logic ${lighting}, no environment jump, no costume drift.`
+        `[CAMERA PLAN]: ${shotScale}, ${movement}.`,
+        `[TIMED BLOCKING]: second 0-1 settle frame and breathing micro-motion; second 1-2 ${action}; second 2-3 add a clear head/hand/body secondary action; final beat hold for edit point.`,
+        anchor ? `[IDENTITY LOCK]: KEEP EXACT SAME SUBJECT IDENTITY AND WARDROBE. ZERO TOLERANCE FOR FACE/BODY DRIFT - ${anchor}.` : '[IDENTITY LOCK]: keep exact same subject identity and wardrobe.',
+        `[SCENE TOPOLOGY LOCK]: remain in exact same ${location}, keep lighting logic ${lighting}. DO NOT hallucinate new geometry. NO environment jump. NO costume drift. DO NOT change background.`
     ].filter(Boolean).join(' ');
 
     return sanitizePromptInput(enforced, 1600);
