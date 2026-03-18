@@ -2799,7 +2799,10 @@ app.post('/api/gemini/analyze-bible', requireAuth, async (req: any, res: any) =>
 
     Output a JSON object with two top-level keys: \`bible\` and \`anchorPackage\`.
     
-    \`bible\` MUST have these string keys: main_subject, subject_shape, key_facial_features, wardrobe, environment_type, building_geometry, skyline_composition, camera_angle, lens_feeling, time_of_day, lighting_direction, motion_intention, forbidden_changes.
+    \`bible\` MUST have these keys: 
+    - (strings) main_subject, subject_shape, key_facial_features, wardrobe, environment_type, building_geometry, skyline_composition, camera_angle, lens_feeling, time_of_day, lighting_direction, motion_intention, forbidden_changes
+    - (strings) architecture_signature, composition_signature, camera_signature, lighting_signature
+    - (numbers 0-100) motion_budget (how much motion the subject implies), drift_budget (how much the background can reasonably change without breaking continuity)
 
     \`anchorPackage\` MUST have these keys:
     - reference_image_path: "" (leave empty)

@@ -59,8 +59,15 @@ export interface Shot {
   immutable_environment?: boolean;
   immutable_camera?: boolean;
   immutable_lighting?: boolean;
-  motion_intensity?: number;     // 0-100
-  scene_drift_allowed?: number;  // 0-100
+  motion_intensity?: number;     // 0-100, deprecated in favor of specific budgets
+  scene_drift_allowed?: number;  // 0-100, deprecated in favor of specific budgets
+  motion_budget?: number;        // 0-100, strict allowed motion
+  drift_budget?: number;         // 0-100, allowed background drift
+  spectacle_budget?: number;     // 0-100, how much new "epic" generation is allowed
+
+  source_of_truth_image?: string; // The explicit anchor frame
+  negative_constraints?: string;  // Explicit things to omit
+
   anchor_package?: AnchorPackage;
 
   // Generated assets (populated after generation)
@@ -334,7 +341,7 @@ export type VideoModel =
   | 'seedance_pro'          // ★ ByteDance Seedance Pro - 首帧尾帧 $0.30-0.72
   | 'sora_2';              // ★ OpenAI Sora 2 - 最新AI视频 $2.50
 
-export type GenerationMode = 'storyboard' | 'story' | 'loose' | 'balanced' | 'strict_reference';
+export type GenerationMode = 'storyboard' | 'story' | 'loose' | 'balanced' | 'strict_reference' | 'extreme_lock';
 
 export interface AnchorPackage {
   reference_image_path: string;
@@ -361,6 +368,16 @@ export interface ShotBible {
   lighting_direction: string;
   motion_intention: string;
   forbidden_changes: string;
+
+  // High-precision physical signatures
+  architecture_signature?: string;
+  composition_signature?: string;
+  camera_signature?: string;
+  lighting_signature?: string;
+
+  // Numerical budgets (0-100) extracted from reference image feeling
+  motion_budget?: number;
+  drift_budget?: number;
 }
 
 export type VideoMethod = 'stable' | 'ai';

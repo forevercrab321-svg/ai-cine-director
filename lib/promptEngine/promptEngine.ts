@@ -1,12 +1,9 @@
 /**
- * Director Prompt Engine — v2 prompt builder for cinematic video generation
- *
- * Usage:
- *   import { buildVideoPrompt, VIDEO_PROMPT_PRESETS } from './lib/promptEngine/promptEngine';
- *
- * - buildVideoPrompt(input, options?)
- * - input: { scene_text: string, ... }
- * - options: { stylePreset, shotType, cameraMotion, lens, lighting, colorGrade, negatives, continuityLock }
+ * Extreme Precision Shot-Control Engine
+ * 
+ * Replaces the old v1/v2 generation logic with a strict PromptCompiler.
+ * It compiles 6 distinct sections and forces models to treat the reference frame
+ * as absolute physical truth, scrubbing out vague cinematic "fluff" words.
  */
 
 import { AnchorPackage, GenerationMode } from '../../types';
@@ -18,132 +15,133 @@ export type VideoPromptInput = {
 };
 
 export type VideoPromptOptions = {
-  stylePreset?: keyof typeof VIDEO_PROMPT_PRESETS;
   shotType?: string;
   cameraMotion?: string;
   lens?: string;
   lighting?: string;
   colorGrade?: string;
   negatives?: string[];
-  continuityLock?: string;
   generationMode?: GenerationMode;
 };
 
-export const VIDEO_PROMPT_PRESETS = {
-  cinematic_realism: {
-    shotType: 'Wide, medium, and close-up shots, naturalistic camera movement',
-    lighting: 'Soft key light, practicals, natural daylight, balanced contrast',
-    colorGrade: 'Subtle teal-orange, filmic LUT, gentle highlight rolloff',
-    texture: 'Visible skin pores, micro-expressions, realistic cloth physics, subtle motion blur',
-    negatives: [
-      'cheap CGI', 'plastic skin', 'overexposed glow', 'low-res', 'jitter', 'warped hands', 'distorted face',
-      'text artifacts', 'logo', 'watermark', 'subtitle overlay', 'inconsistent character', 'flicker',
-    ],
-  },
-  neo_noir: {
-    shotType: 'Low angle, Dutch tilt, long lens, slow push-in',
-    lighting: 'High contrast, hard shadows, neon rim light, rainy reflections',
-    colorGrade: 'Desaturated, blue-green, deep blacks, neon accents',
-    texture: 'Wet surfaces, sharp reflections, film grain, smoke haze',
-    negatives: ['cartoonish', 'flat lighting', 'washed out', 'posterization'],
-  },
-  warm_romance: {
-    shotType: 'Soft focus, handheld, gentle dolly',
-    lighting: 'Golden hour, backlight, soft fill, warm practicals',
-    colorGrade: 'Warm pastel, creamy highlights, low contrast',
-    texture: 'Smooth skin, soft bokeh, gentle lens flare',
-    negatives: ['harsh shadows', 'cold color', 'overexposed', 'plastic look'],
-  },
-  documentary_handheld: {
-    shotType: 'Handheld, observational, zooms, whip pans',
-    lighting: 'Available light, practical, uncorrected white balance',
-    colorGrade: 'Natural, minimal grading, true-to-life',
-    texture: 'Visible grain, motion blur, imperfect focus',
-    negatives: ['cinematic over-stylization', 'artificial lighting', 'CGI'],
-  },
-  anime_liveaction_hybrid: {
-    shotType: 'Dynamic angles, exaggerated perspective, fast dolly',
-    lighting: 'Cel-shaded, rim light, saturated highlights',
-    colorGrade: 'Vivid, high saturation, anime palette',
-    texture: 'Clean lines, painterly shading, stylized motion blur',
-    negatives: ['muddy colors', 'uncanny valley', 'photorealism'],
-  },
-};
+// Vague cinematic adjectives that cause hallucination and model drift.
+const FLUFF_WORDS = [
+  'epic', 'stunning', 'dramatic', 'intense', 'blockbuster', 'emotional',
+  'shocking', 'apocalyptic', 'breathtaking', 'cinematic', 'masterpiece',
+  'mind-blowing', 'unbelievable', 'spectacular', 'jaw-dropping', 'highly romanticized'
+];
 
-const DEFAULT_PRESET = 'cinematic_realism';
+/**
+ * Removes vague emotive adjectives to force physical precision.
+ */
+function fluffFilter(text: string): string {
+  if (!text) return '';
+  let cleaned = text;
+  FLUFF_WORDS.forEach(word => {
+    const regex = new RegExp(`\\b${word}\\b`, 'gi');
+    cleaned = cleaned.replace(regex, '');
+  });
+  // Cleanup double spaces and leading/trailing commas
+  cleaned = cleaned.replace(/\s+/g, ' ').replace(/\s+,/g, ',').replace(/^,\s*/, '').trim();
+  return cleaned;
+}
 
 function joinNegatives(...arrs: (string[] | undefined)[]): string {
   return Array.from(new Set(arrs.flat().filter(Boolean))).join(', ');
 }
 
+/**
+ * The core compiler that orchestrates the 6 physical layers of generation.
+ */
 export function buildVideoPrompt(
   input: VideoPromptInput,
   options: VideoPromptOptions = {}
 ): string {
-  const preset = VIDEO_PROMPT_PRESETS[options.stylePreset || DEFAULT_PRESET];
-  const shotType = options.shotType || preset.shotType;
-  const cameraMotion = options.cameraMotion || '';
-  const lens = options.lens || '';
-  const lighting = options.lighting || preset.lighting;
-  const colorGrade = options.colorGrade || preset.colorGrade;
-  const texture = preset.texture;
-  const isStrict = options.generationMode === 'strict_reference';
+  const isStrict = options.generationMode === 'strict_reference' || options.generationMode === 'extreme_lock';
+  const isExtreme = options.generationMode === 'extreme_lock';
 
-  // Base Continuity
-  let continuityLock = options.continuityLock || 'Maintain same character face, outfit, and proportions throughout.';
-  let structure = [
-    '[Narrative Layer]',
-    input.scene_text || '(No scene text provided)',
-  ];
+  const rawSceneText = input.scene_text || '';
+  const filteredSceneText = fluffFilter(rawSceneText);
 
-  // Inject Anchor Package Constraints if present and in strict mode
+  // Section 1: Scene Facts
+  let sceneFacts = `[SCENE FACTS]\n${filteredSceneText}`;
+
+  // Section 2: Immutable Elements
+  let immutableElements = '[IMMUTABLE ELEMENTS]\n';
+
+  // Section 3: Camera Instruction
+  let cameraInstruction = '[CAMERA INSTRUCTION]\n';
+
+  // Section 4: Allowed Motion
+  let allowedMotion = '[ALLOWED MOTION]\n';
+
+  // Section 5: Negative Constraints
+  let negativesArr = options.negatives ? [...options.negatives] : [];
+
+  // Section 6: Output Intent
+  let outputIntent = '[OUTPUT INTENT]\nYou must animate exactly what is present in the frame. No reinterpretation.';
+
+  // Populate constraints from Anchor Package if present
   if (isStrict && input.anchorPackage) {
     const pkg = input.anchorPackage;
-    structure = [
-      '[HARD VISUAL CONSTRAINTS - DO NOT DEVIATE OVER TIME]',
-      `Subject: ${pkg.anchor_subject_description}`,
-      `Environment: ${pkg.anchor_environment_description}`,
-      `Camera: ${pkg.anchor_camera_description}`,
-      `Style: ${pkg.anchor_style_description}`,
-      `Immutable Elements to Preserve: ${pkg.immutable_elements.join(', ')}`,
-      '',
-      '[ALLOWED MOTION ONLY]',
-      pkg.allowed_motion_only,
-      '',
-      '[NARRATIVE LAYER (Secondary to Constraints)]',
-      input.scene_text || '(No scene text provided)',
-    ];
-    continuityLock = `CRITICAL: Animate exactly this frame. Do not redesign the scene, subject, camera angle, or lighting. Preserve visual identity perfectly.`;
 
-    // Auto-inject negative constraints from the package
-    if (pkg.negative_constraints) {
-      if (!options.negatives) options.negatives = [];
-      options.negatives.push(pkg.negative_constraints);
+    sceneFacts = `[SCENE FACTS]\nSubject: ${pkg.anchor_subject_description}\nEnvironment: ${pkg.anchor_environment_description}`;
+
+    immutableElements += `Do not change these elements: ${pkg.immutable_elements.join(', ')}.\n`;
+    if (isExtreme) {
+      immutableElements += `Keep exact background geometry unchanged. Keep exact subject design unchanged.\n`;
     }
+
+    cameraInstruction += `${pkg.anchor_camera_description}. No drastic camera movements.\n`;
+
+    allowedMotion += `Only allow the following motion: ${pkg.allowed_motion_only}.\n`;
+    if (isExtreme) {
+      allowedMotion += `No dramatic secondary motion. No new spectacles. No explosions or fire unless already present.\n`;
+    }
+
+    if (pkg.negative_constraints) {
+      negativesArr.push(pkg.negative_constraints);
+    }
+
+    outputIntent = '[OUTPUT INTENT]\nAnimate this exact frame with restrained realistic motion. The result should feel like the still image came alive, not like a new scene was invented. Maintain 100% identity and structural continuity.';
+  } else {
+    // Fallback or Loose mode
+    immutableElements += 'Maintain general character design and environment.\n';
+    cameraInstruction += [options.shotType, options.cameraMotion, options.lens].filter(Boolean).join('; ');
+    allowedMotion += `Motion based on: ${filteredSceneText}`;
   }
 
-  const negatives = joinNegatives(preset.negatives, options.negatives, [
+  // Default System Negatives
+  const defaultNegatives = [
     'cheap CGI', 'plastic skin', 'overexposed glow', 'low-res', 'jitter', 'warped hands', 'distorted face',
-    'text artifacts', 'logo', 'watermark', 'subtitle overlay', 'inconsistent character', 'flicker',
-    isStrict ? 'different building, different skyline, different creature design, different perspective, different lighting setup, alternate composition, scene drift, redesign, new architecture, changing time of day' : ''
-  ]);
+    'text artifacts', 'logo', 'watermark', 'subtitle overlay', 'flicker'
+  ];
 
-  // Append remaining layers
-  structure.push(
-    '',
-    '[Cinematic Layer]',
-    [shotType, cameraMotion, lens].filter(Boolean).join('; '),
-    '',
-    '[Lighting & Color Layer]',
-    [lighting, colorGrade].filter(Boolean).join('; '),
-    '',
-    '[Texture Realism Layer]',
-    texture,
-    '',
-    '[Continuity Lock + Negative Constraints]',
-    continuityLock,
-    'Negatives (soft constraints): ' + negatives
-  );
+  if (isStrict) {
+    defaultNegatives.push(
+      'different building', 'different skyline', 'different creature design', 'different perspective',
+      'different lighting setup', 'alternate composition', 'scene drift', 'redesign', 'new architecture',
+      'changing time of day', 'identity replacement'
+    );
+  }
 
-  return structure.join('\n');
+  const finalNegatives = joinNegatives(defaultNegatives, negativesArr);
+  const negativeConstraints = `[NEGATIVE CONSTRAINTS]\n${finalNegatives}`;
+
+  // Compile the final prompt string
+  const compiledPrompt = [
+    sceneFacts,
+    '',
+    immutableElements,
+    '',
+    cameraInstruction,
+    '',
+    allowedMotion,
+    '',
+    negativeConstraints,
+    '',
+    outputIntent
+  ].join('\n');
+
+  return compiledPrompt.trim();
 }

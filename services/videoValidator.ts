@@ -9,7 +9,12 @@ import { supabase } from '../lib/supabaseClient';
 const API_BASE = '/api/gemini';
 
 export interface ValidationResult {
-    score: number; // 0 - 100
+    subject_score: number;
+    environment_score: number;
+    lighting_score: number;
+    camera_score: number;
+    style_score: number;
+    score: number; // overall 0 - 100
     passed: boolean; // score >= threshold
     feedback: string;
 }
@@ -41,6 +46,11 @@ export const validateVideoDrift = async (
 
         const data = await response.json();
         return {
+            subject_score: data.subject_score,
+            environment_score: data.environment_score,
+            lighting_score: data.lighting_score,
+            camera_score: data.camera_score,
+            style_score: data.style_score,
             score: data.score,
             passed: data.passed,
             feedback: data.feedback
@@ -49,6 +59,11 @@ export const validateVideoDrift = async (
         console.error('[VideoValidator] ❌ Error validating video drift:', error);
         // If validation fails (network/api error), fail open by default to not block the pipeline
         return {
+            subject_score: 100,
+            environment_score: 100,
+            lighting_score: 100,
+            camera_score: 100,
+            style_score: 100,
             score: 100,
             passed: true,
             feedback: "Validation API failed - bypassing validation constraint."

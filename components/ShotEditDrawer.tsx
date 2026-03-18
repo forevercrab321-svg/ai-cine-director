@@ -58,12 +58,15 @@ const FIELD_DEFS: FieldDef[] = [
 
     // Image Generation
     { key: 'image_prompt', label: '图片提示词 Image Prompt', group: '🖼 Generation', type: 'textarea', placeholder: 'Full image generation prompt...' },
-    { key: 'negative_prompt', label: '负面提示词 Negative', group: '🖼 Generation', type: 'textarea', placeholder: 'What to avoid...' },
+    { key: 'negative_prompt', label: '基础负面词 Base Negative', group: '🖼 Generation', type: 'textarea', placeholder: 'What to avoid generally...' },
+    { key: 'negative_constraints', label: '严格物理锁定排斥词 Strong Negatives', group: '🖼 Generation', type: 'textarea', placeholder: 'Strict negative constraints from anchor...' },
 
     // Consistency Locks
     { key: 'immutable_subject', label: '锁定主角容貌身份 Identity Lock', group: '🔒 Consistency', type: 'boolean' },
     { key: 'immutable_environment', label: '锁定环境背景 Architecture Lock', group: '🔒 Consistency', type: 'boolean' },
-    { key: 'scene_drift_allowed', label: '允许场景漂移容忍度 Drift Tolerance (0-100)', group: '🔒 Consistency', type: 'number' },
+    { key: 'motion_budget', label: '允许画面运动程度 Motion Budget (0-100)', group: '🔒 Consistency', type: 'number' },
+    { key: 'drift_budget', label: '允许环境漂移容忍度 Drift Budget (0-100)', group: '🔒 Consistency', type: 'number' },
+    { key: 'spectacle_budget', label: '允许AI发散创作程度 Spectacle Budget (0-100)', group: '🔒 Consistency', type: 'number' },
 ];
 
 const ShotEditDrawer: React.FC<ShotEditDrawerProps> = ({ shot, onClose, onSave, onRewrite, projectContext }) => {
@@ -161,8 +164,8 @@ const ShotEditDrawer: React.FC<ShotEditDrawerProps> = ({ shot, onClose, onSave, 
                         <button
                             onClick={() => setShowRewritePanel(!showRewritePanel)}
                             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${showRewritePanel
-                                    ? 'bg-amber-600/20 text-amber-400 border border-amber-500/30'
-                                    : 'bg-slate-800 text-slate-400 hover:text-amber-400 hover:bg-amber-600/10'
+                                ? 'bg-amber-600/20 text-amber-400 border border-amber-500/30'
+                                : 'bg-slate-800 text-slate-400 hover:text-amber-400 hover:bg-amber-600/10'
                                 }`}
                         >
                             🤖 AI Rewrite
@@ -270,9 +273,9 @@ const ShotEditDrawer: React.FC<ShotEditDrawerProps> = ({ shot, onClose, onSave, 
                                                     value={draft[f.key] as number}
                                                     onChange={e => updateField(f.key, parseFloat(e.target.value) || 0)}
                                                     disabled={isLocked}
-                                                    step={0.5}
-                                                    min={0.5}
-                                                    max={30}
+                                                    step={f.key.includes('budget') ? 1 : 0.5}
+                                                    min={f.key.includes('budget') ? 0 : 0.5}
+                                                    max={f.key.includes('budget') ? 100 : 30}
                                                     className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-indigo-500 outline-none disabled:cursor-not-allowed"
                                                 />
                                             ) : f.type === 'tags' ? (
