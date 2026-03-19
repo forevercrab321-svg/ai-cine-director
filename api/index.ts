@@ -1847,6 +1847,14 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
             }
         }
 
+        // ★ Heavily restricted: 1 action/shot
+        if (promptField && isVideoModelRequest(version)) {
+            const strictMotionRule = " CRITICAL MOTION RULE: Perform ONLY ONE single, continuous, and minimal physical action or camera movement. Do NOT change scenes, do NOT jump cut, do NOT perform multiple complex actions, do NOT morph identities. Maintain absolute visual consistency with the first frame.";
+            if (!String(input[promptField] || '').includes('CRITICAL MOTION RULE')) {
+                input[promptField] = String(input[promptField] || '') + strictMotionRule;
+            }
+        }
+
         // ★ Use request queue to avoid Replicate 429 rate limits
         const response = await enqueueReplicateRequest(() =>
             fetch(targetUrl, {
@@ -2077,19 +2085,15 @@ const getGeminiTextCompletion = async (promptContent: any, options: {
     throw new Error(`Gemini returned empty response: ${JSON.stringify(response).slice(0, 500)}`);
 };
 
-const geminiResponseSchema = {
+const storyBrainSchema = {
     // @ts-ignore
     type: Type.OBJECT,
     properties: {
         // @ts-ignore
-        project_title: { type: Type.STRING },
+        logline: { type: Type.STRING },
         // @ts-ignore
-        visual_style: { type: Type.STRING },
-        // @ts-ignore
-        characterAnchor: { type: Type.STRING },
-        // ★ FIX: story_entities MUST be in schema — Gemini structured output only returns schema-declared fields.
-        // Without this, all character definitions are silently stripped, breaking the consistency lock chain.
-        story_entities: {
+        world_setting: { type: Type.STRING },
+        character_bible: {
             // @ts-ignore
             type: Type.ARRAY,
             items: {
@@ -2097,15 +2101,35 @@ const geminiResponseSchema = {
                 type: Type.OBJECT,
                 properties: {
                     // @ts-ignore
-                    type: { type: Type.STRING },
+                    character_id: { type: Type.STRING },
                     // @ts-ignore
                     name: { type: Type.STRING },
                     // @ts-ignore
-                    description: { type: Type.STRING },
-                    // @ts-ignore (BUG FIX #4) is_locked needed for protagonist identification
-                    is_locked: { type: Type.BOOLEAN },
+                    face_traits: { type: Type.STRING },
+                    // @ts-ignore
+                    hair: { type: Type.STRING },
+                    // @ts-ignore
+                    outfit: { type: Type.STRING },
+                    // @ts-ignore
+                    age: { type: Type.STRING },
+                    // @ts-ignore
+                    body_type: { type: Type.STRING },
+                    // @ts-ignore
+                    props: { type: Type.STRING },
                 },
-                required: ['type', 'name', 'description'],
+                required: ['character_id', 'name', 'face_traits'],
+            },
+        },
+        style_bible: {
+            // @ts-ignore
+            type: Type.OBJECT,
+            properties: {
+                // @ts-ignore
+                color_palette: { type: Type.STRING },
+                // @ts-ignore
+                lens_language: { type: Type.STRING },
+                // @ts-ignore
+                lighting: { type: Type.STRING },
             },
         },
         scenes: {
@@ -2116,38 +2140,64 @@ const geminiResponseSchema = {
                 type: Type.OBJECT,
                 properties: {
                     // @ts-ignore
-                    scene_id: { type: Type.INTEGER },
+                    scene_id: { type: Type.STRING },
+                    // @ts-ignore
+                    scene_number: { type: Type.INTEGER },
                     // @ts-ignore
                     location: { type: Type.STRING },
-                    // @ts-ignore (BUG FIX #6) negative_prompt for identity protection
-                    negative_prompt: { type: Type.STRING },
-                    shots: {
-                        // @ts-ignore
-                        type: Type.ARRAY,
-                        items: {
-                            // @ts-ignore
-                            type: Type.OBJECT,
-                            properties: {
-                                // @ts-ignore
-                                shot_index: { type: Type.INTEGER },
-                                // @ts-ignore
-                                image_prompt: { type: Type.STRING },
-                                // @ts-ignore
-                                video_prompt: { type: Type.STRING },
-                                // @ts-ignore
-                                audio_description: { type: Type.STRING },
-                                // @ts-ignore (BUG FIX #2) characters array for shot tracking
-                                characters: { type: Type.ARRAY, items: { type: Type.STRING } },
-                            },
-                            required: ['shot_index', 'image_prompt', 'video_prompt'],
-                        }
-                    }
+                    // @ts-ignore
+                    time_of_day: { type: Type.STRING },
+                    // @ts-ignore
+                    synopsis: { type: Type.STRING },
+                    // @ts-ignore
+                    emotional_goal: { type: Type.STRING },
                 },
-                required: ['scene_id', 'location', 'shots'],
+                required: ['scene_id', 'scene_number', 'location', 'synopsis'],
             },
         },
     },
-    required: ['project_title', 'visual_style', 'characterAnchor', 'story_entities', 'scenes'],
+    required: ['logline', 'world_setting', 'character_bible', 'style_bible', 'scenes'],
+};
+
+const shotListSchema = {
+    // @ts-ignore
+    type: Type.OBJECT,
+    properties: {
+        shots: {
+            // @ts-ignore
+            type: Type.ARRAY,
+            items: {
+                // @ts-ignore
+                type: Type.OBJECT,
+                properties: {
+                    // @ts-ignore
+                    shot_id: { type: Type.STRING },
+                    // @ts-ignore
+                    shot_number: { type: Type.INTEGER },
+                    characters: {
+                        // @ts-ignore
+                        type: Type.ARRAY,
+                        // @ts-ignore
+                        items: { type: Type.STRING },
+                    },
+                    // @ts-ignore
+                    action: { type: Type.STRING },
+                    // @ts-ignore
+                    camera_angle: { type: Type.STRING },
+                    // @ts-ignore
+                    camera_movement: { type: Type.STRING },
+                    // @ts-ignore
+                    composition: { type: Type.STRING },
+                    // @ts-ignore
+                    lighting: { type: Type.STRING },
+                    // @ts-ignore
+                    duration_sec: { type: Type.INTEGER },
+                },
+                required: ['shot_id', 'shot_number', 'action', 'camera_movement'],
+            },
+        },
+    },
+    required: ['shots'],
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -2284,428 +2334,190 @@ app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
             if (reserveErr) return res.status(500).json({ error: 'Credit verification failed' });
             if (!reserved) return res.status(402).json({ error: 'INSUFFICIENT_CREDITS', code: 'INSUFFICIENT_CREDITS' });
         }
-        const systemInstruction = `You are an elite cinematic AI director capable of pre-visualizing both character-driven narratives and zero-character sequences (like disaster, environment, architecture, or object studies).
+        // ==========================================
+        // NEW PIPELINE: STAGE 1 - STORY BRAIN
+        // ==========================================
+        const { generateStoryBrainPrompt, generateShotListPrompt } = await import('./promptTemplates.js');
 
-YOUR FIRST AND MOST IMPORTANT TASK:
-1. Classify the "project_type" based strictly on the user narrative. It must be ONE of: character_driven, environment_driven, destruction_driven, architecture_driven, object_driven, hybrid.
-2. Determine "has_cast": boolean. If the narrative is environment/destruction/architecture-led AND DOES NOT EXPLICITLY specify a protagonist/character, set "has_cast" to false. Do NOT invent or hallucinate characters for a scene that is meant to be empty or event-driven.
-3. If has_cast is false, "characterAnchor" MUST be an empty string, and "story_entities" MUST NOT contain any 'character' type entities.
+        const storyBrainPrompt = generateStoryBrainPrompt({
+            storyIdea: safeStoryIdea,
+            visualStyle: safeVisualStyle,
+            identityAnchor: safeIdentityAnchor,
+            sceneCount: targetScenes
+        });
 
-For character-driven stories: Create a rich 'characterAnchor' and detailed 'character' entities.
-For zero-character stories: Focus entirely on cinematic lighting, camera movement, scale, and environmental or destruction dynamics.
+        const systemInstruction = `You are an elite cinematic AI director capable of pre-visualizing both character-driven narratives and zero-character sequences.
+Output strictly valid JSON according to the schema. No markdown formatting.`;
 
-Each scene needs exactly ${targetScenes} shots combined. Provide high-quality visual and motion prompts.
-★ Spielberg's visual storytelling mastery and emotional intelligence
-★ Nolan's architectural complexity and temporal brilliance  
-★ Villeneuve's vast immersive scale and intimate human moments
-★ Park Chan-wook's visual poetry, bold compositions, and color symbolism
-★ Kurosawa's compositional perfection and emotional depth
-
-Your sacred mission: Craft BREATHTAKING visual narratives that transcend film — create TIMELESS MASTERPIECES with LEGENDARY cinematic excellence.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎬 MASTER CINEMATOGRAPHER VISUAL EXCELLENCE PILLARS (FOUNDATIONAL)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-**COMPOSITION MASTERY**: Rule of thirds perfection, depth layering through foreground/subject/background, leading lines guiding eye, negative space breathing room, geometric harmony
-**LIGHTING LANGUAGE**: Chiaroscuro storytelling (light reveals character), color temperature psychology (warm=hope, cool=fear), practical source integration, volumetric atmosphere
-**CAMERA PSYCHOLOGY**: Every angle communicates (wide=isolation/grandeur, close=intimacy/scrutiny, overhead=god perspective, low=power, dutch=unease)
-**MOVEMENT POETRY**: Every camera move serves narrative (dolly=fate/approach, crane=revelation, pan=discovery, handheld=chaos/truth, slow-mo=weight/importance)
-**COLOR ARCHITECTURE**: Unified chromatic language (warm oranges for hope, cold blues for dread, desaturated for loss, vivid for wonder)
-**SCALE & BREATHING**: Cinematic breathing room through foreground objects, depth cues, atmospheric haze, leading the viewer's eye deliberately
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📖 STORY STRUCTURE & NARRATIVE RULES (MANDATORY)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Your mission: Craft BREATHTAKING visual narratives
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📖 STORY STRUCTURE & NARRATIVE RULES (MANDATORY)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-1. **THREE-ACT STRUCTURE**: Your script MUST follow a clear story arc:
-   - ACT 1 (Setup ~33%): Establish world, introduce protagonist, present the inciting incident
-   - ACT 2 (Confrontation ~33%): Rising action, obstacles, character development, stakes escalate
-   - ACT 3 (Resolution ~33%): Climax, resolution, emotional payoff
-
-2. **SCENE PROGRESSION LOGIC**: Each scene MUST be a DISTINCT story beat:
-   - Scene N+1 must show WHAT HAPPENS NEXT after Scene N (time advances, location changes, or both)
-   - FORBIDDEN: Repeating the same moment, location, or action across scenes
-   - Each scene must have a PURPOSE: advance plot, reveal character, or escalate conflict
-
-3. **LOCATION & SETTING DIVERSITY**: 
-   - EVERY scene must have a UNIQUE location (e.g., Scene 1: Rooftop → Scene 2: Underground Lab → Scene 3: Highway Chase)
-   - Vary environments: Indoor/Outdoor, Day/Night, Public/Private spaces
-   - Use location changes to show time passing and story advancing
-
-4. **ACTION & EVENT UNIQUENESS**:
-   - ZERO repetition of events. If Scene 1 shows "character enters room", Scene 2 cannot be "character enters room again"
-   - Each scene must introduce NEW information, conflict, or character revelation
-   - Build narrative momentum: start → complication → escalation → crisis → resolution
-
-5. **GENRE & TONE MASTERY**:
-   - STRICT adherence to premise's implied genre (sci-fi = future tech, fantasy = magic, noir = dark urban)
-   - Maintain consistent tone throughout (don't mix comedy with horror unless intentional tonal shift)
-   - Avoid anachronisms (no smartphones in medieval settings, no swords in modern office dramas)
-
-6. **EMOTIONAL & DRAMATIC PACING**:
-   - Hook audience in Scene 1 (visual spectacle, mystery, or emotional punch)
-   - Vary intensity: tension → relief → escalation → climax
-   - Ensure character emotional journey is clear and compelling
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎬 CINEMATOGRAPHY & AI PROMPTING RULES (CRITICAL)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-7. **IMAGE_PROMPT (First Shot of Each Scene)**:
-   - FIRST shot = FULL detailed prompt with: Subject + Environment + Lighting + Camera Angle + Lens + Mood
-   - Example: "A lone astronaut in white spacesuit floating near shattered space station, Earth glowing blue in background, volumetric god rays piercing through debris, wide angle 24mm lens, dramatic cinematic chiaroscuro lighting, sense of isolation and wonder, 8k photorealistic"
-   - SUBSEQUENT shots in same scene = EMPTY string "" (for video chain consistency)
-
-8. **VIDEO_PROMPT (Physical Motion Only)**:
-   - Describe EXACT physical actions: "Camera slowly dollies forward. Woman in red coat turns head 45 degrees left, hair flowing. She lifts right hand to touch glass window."
-   - FORBIDDEN: Abstract concepts ("feels sad", "time passes", "realizes truth")
-   - Focus on: Camera movement + Character body/limb motion + Object interaction
-
-9. **STORY_ENTITIES (Character Consistency)**:
-   - Define 2-5 core characters with HYPER-DETAILED physical descriptions:
-     * Face: age, ethnicity, distinctive features (scars, glasses, tattoos)
-     * Body: build, height, clothing style
-     * Signature trait: always wears X, has Y hairstyle
-   - LOCKED CAST: Only use characters defined in story_entities. NO random extras or unnamed people.
-
-10. **AUDIO_DESCRIPTION**: 
-    - Specific sound design: "Glass shattering, distant sirens wailing, protagonist's heavy breathing"
-    - Include music cues if relevant: "Ominous string crescendo"
-
-11. **SPECIES FIDELITY (CRITICAL)**:
-    - If the premise mentions animals, pets, creatures, mascots, monsters, or non-human protagonists, keep them non-human.
-    - NEVER silently convert cats, dogs, rabbits, bears, or any other creatures into human actors.
-    - Preserve original species in characterAnchor, story_entities, image_prompt, and video_prompt.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-👤 CHARACTER ANCHOR RULE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-${safeIdentityAnchor ? `The protagonist MUST EXACTLY match this description: "${safeIdentityAnchor}"
-Use this VERBATIM in story_entities and all character mentions.` : `Create a visually striking protagonist derived from the premise "${safeStoryIdea}" and the style "${safeVisualStyle}". Do not default to a human if the premise implies an animal or non-human hero.`}
-${nonHumanGuide.guidance ? `
-${nonHumanGuide.guidance}` : ''}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🌍 LANGUAGE RULES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-- Technical fields (image_prompt, video_prompt, location): ENGLISH ONLY
-- Narrative fields (audio_description, dialogue): ${safeLanguage === 'zh' ? 'Chinese (Simplified)' : 'English'}
-- Return ONLY valid JSON. No markdown, no code blocks, no explanations.`;
-
-        let responseText = '';
+        let storyBrainResponse = '';
         try {
-            const promptContent = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎬 YOUR MISSION: CRAFT AN OSCAR-WORTHY SHORT FILM
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-📖 **PREMISE**: "${safeStoryIdea}"
-🎨 **VISUAL STYLE**: ${safeVisualStyle}
-🎞️ **STRUCTURE**: EXACTLY ${targetScenes} SCENES (with 1-3 shots each)
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚡ MANDATORY EXECUTION RULES - FAILURE = REJECTION
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-✅ **RULE 1: EXACT COUNT**
-   → Return EXACTLY ${targetScenes} scenes. Not ${targetScenes - 1}, not ${targetScenes + 1}. EXACTLY ${targetScenes}.
-
-✅ **RULE 2: ZERO REPETITION**
-   → Every scene must be COMPLETELY DIFFERENT:
-   → Scene 1: Location A, Event X
-   → Scene 2: Location B, Event Y (NOT "Location A again" or "Event X repeats")
-   → Scene 3: Location C, Event Z
-   → THINK: "What happens NEXT in the story?" not "Let me describe the same moment again"
-
-✅ **RULE 3: STORY PROGRESSION**
-   → Timeline must move FORWARD. Show the JOURNEY:
-   → Example Good: Scene 1 (Morning, Office) → Scene 2 (Afternoon, Street) → Scene 3 (Night, Home)
-   → Example BAD: Scene 1 (Office) → Scene 2 (Office again) → Scene 3 (Still in office)
-
-✅ **RULE 4: LOCATION DIVERSITY**
-   → Use DIFFERENT locations for each scene. Vary scale and type:
-   → Mix: Interior/Exterior, Urban/Nature, Intimate/Vast, Grounded/Surreal
-   → Show the world EXPANDING as story unfolds
-
-✅ **RULE 5: DRAMATIC STRUCTURE**
-   → Scene 1: HOOK (grab attention with mystery/action/emotion)
-   → Middle Scenes: ESCALATION (raise stakes, deepen conflict)
-   → Final Scene: PAYOFF (resolve tension, land emotional punch)
-
-✅ **RULE 6: GENRE CONSISTENCY**
-   → If premise implies Sci-Fi → use futuristic tech, space, cyberpunk aesthetics
-   → If premise implies Fantasy → use magic, mythical creatures, medieval/ethereal settings
-   → If premise implies Drama → use realistic settings, emotional conflicts, character-driven moments
-   → DO NOT MIX incompatible elements (no laser guns in Victorian romance unless premise demands it)
-
-✅ **RULE 7: VISUAL MASTERY**
-   → First shot's image_prompt must be EPIC (20+ words describing lighting, camera, subject, mood)
-   → Subsequent shots in same scene: image_prompt = "" (empty string for video chain)
-   → Video_prompt: describe physics ("camera tilts up", "character walks forward 3 steps")
-
-✅ **RULE 8: SPECIES FIDELITY**
-    → If the premise says cat, dog, pet, animal, creature, mascot, or similar, the cast MUST stay that species.
-    → Do NOT output human actors unless the user explicitly asks for humanized characters.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📋 REQUIRED JSON SCHEMA (STRICT COMPLIANCE)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-You MUST return this EXACT JSON structure with EXACTLY ${targetScenes} scenes:
-{
-  "project_title": "string",
-  "project_type": "character_driven|environment_driven|destruction_driven|architecture_driven|object_driven|hybrid",
-  "has_cast": "boolean",
-  "visual_style": "string",
-  "characterAnchor": "string (Empty if has_cast is false)",
-  "story_entities": [
-    {
-      "type": "character|prop|location",
-      "name": "string",
-      "description": "highly detailed visual string"
-    }
-  ],
-  "scenes": [
-    {
-      "scene_id": 1,
-      "location": "string",
-      "shots": [
-        {
-          "shot_index": 1,
-          "image_prompt": "string",
-          "video_prompt": "string",
-          "audio_description": "string"
-        }
-      ]
-    }
-  ]
-}`;
-
-            responseText = await getGeminiTextCompletion(
-                promptContent,
+            storyBrainResponse = await getGeminiTextCompletion(
+                storyBrainPrompt,
                 {
                     systemInstruction,
                     temperature: 0.7,
                     responseMimeType: 'application/json',
-                    responseSchema: geminiResponseSchema,
+                    responseSchema: storyBrainSchema,
                 }
             );
         } catch (initialError: any) {
-            console.error('[Gemini Generate] Primary call failed, retrying...', initialError.message);
-            // Simple retry without JSON schema enforcement if it failed
-            responseText = await getGeminiTextCompletion(
-                `Write a premium SHORT DRAMA based on: "${storyIdea}". Target total shots: ~${targetScenes}.`,
+            console.error('[Story Brain] Primary call failed, retrying...', initialError.message);
+            storyBrainResponse = await getGeminiTextCompletion(
+                storyBrainPrompt,
                 {
-                    systemInstruction: systemInstruction + "\nOutput strictly valid JSON, no markdown formatting.",
+                    systemInstruction: systemInstruction + " Ensure strict JSON output.",
                     temperature: 0.5,
                     responseMimeType: 'application/json',
                 }
             );
         }
 
-        const text = responseText;
-        if (!text) throw new Error('No response from AI Director.');
+        if (!storyBrainResponse) throw new Error('No response from AI Director (Story Brain).');
 
-        let parsedData;
+        let parsedBrain;
         try {
-            parsedData = parseAiJsonWithRepair(text, 'Gemini Generate');
+            parsedBrain = parseAiJsonWithRepair(storyBrainResponse, 'Story Brain');
         } catch (parseError: any) {
-            console.warn('[Gemini Generate] JSON parse failed after repair attempts:', parseError.message);
+            console.warn('[Story Brain] JSON parse failed:', parseError.message);
             throw parseError;
         }
 
-        // Extract and map the top-level project data
-        const entitiesRaw = Array.isArray(parsedData.story_entities) ? parsedData.story_entities : [];
-        const story_entities = entitiesRaw.map((e: any) => ({
+        const project_id = crypto.randomUUID();
+
+        // Build locked characters
+        const rawBible = Array.isArray(parsedBrain.character_bible) ? parsedBrain.character_bible : [];
+        const story_entities = rawBible.map((c: any) => ({
             id: crypto.randomUUID(),
-            type: normalizeEntityType(e.type),
-            name: sanitizePromptInput(e.name || 'Unknown', 120) || 'Unknown',
-            description: sanitizePromptInput(e.description || '', 1200),
-            is_locked: normalizeEntityType(e.type) === 'character' // Auto-lock characters for consistency by default
+            type: 'character',
+            name: sanitizePromptInput(c.name || 'Unknown', 120),
+            description: sanitizePromptInput(
+                `${c.face_traits || ''}. Age: ${c.age || 'N/A'}, Body: ${c.body_type || 'N/A'}. Hair: ${c.hair || 'N/A'}. Outfit: ${c.outfit || 'N/A'}. Props: ${c.props || 'none'}.`,
+                1200
+            ),
+            is_locked: true,
+            structured_data: c // Save the structured bible for later
         }));
 
         const project: any = {
-            id: crypto.randomUUID(),
-            project_title: parsedData.project_title,
-            visual_style: parsedData.visual_style,
-            project_type: parsedData.project_type || 'character_driven',
-            has_cast: parsedData.has_cast !== false, // Default to true unless explicitly false
-            character_anchor: parsedData.characterAnchor || parsedData.character_anchor || '',
-            story_entities: story_entities
+            id: project_id,
+            project_title: parsedBrain.logline || 'Untitled AI Film',
+            visual_style: safeVisualStyle,
+            project_type: nonHumanGuide.hasNonHuman ? 'hybrid' : 'character_driven',
+            has_cast: story_entities.length > 0,
+            character_anchor: safeIdentityAnchor || (story_entities[0]?.description) || '',
+            story_entities: story_entities,
+            style_bible: parsedBrain.style_bible,
+            world_setting: parsedBrain.world_setting,
+            scenes: []
         };
 
-        // ★ FALSE POSITIVE BLOCKER: Zero-Character Enforcement
-        // If the project is explicitly classified as non-character, brutally suppress any hallucinated characters.
-        if (project.has_cast === false || ['environment_driven', 'destruction_driven', 'architecture_driven'].includes(project.project_type)) {
-            console.log(`[Zero-Character Enforcement] Stripped hallucinated cast anchor for ${project.project_type}`);
-            project.has_cast = false;
-            project.character_anchor = '';
-            project.story_entities = project.story_entities.filter((e: any) => e.type !== 'character');
-        }
+        // ==========================================
+        // NEW PIPELINE: STAGE 2 - SHOT PLANNER
+        // ==========================================
+        const rawScenes = Array.isArray(parsedBrain.scenes) ? parsedBrain.scenes : [];
+        console.log(`[Gemini Generate] Story Brain created ${rawScenes.length} scenes. Planning shots...`);
 
-        if (project.has_cast !== false && !project.character_anchor && nonHumanGuide.hasNonHuman) {
-            project.character_anchor = `A ${nonHumanGuide.species[0]} protagonist with consistent species-specific anatomy and features`;
-        }
+        const convertedScenes: any[] = [];
+        let globalShotIndex = 1;
 
-        if (nonHumanGuide.hasNonHuman) {
-            const speciesText = nonHumanGuide.species.join(', ');
-            if (!new RegExp(nonHumanGuide.species.join('|'), 'i').test(project.character_anchor || '')) {
-                project.character_anchor = `${project.character_anchor || 'Main protagonist'}. This character is a ${speciesText} and must remain non-human with clear species-specific anatomy.`;
+        // Process scenes sequentially or in small batches to respect rate limits
+        for (let i = 0; i < Math.min(rawScenes.length, targetScenes); i++) {
+            const scn = rawScenes[i];
+            console.log(`[Shot Planner] Planning Scene ${i + 1}/${rawScenes.length}: ${scn.location}`);
+
+            const shotPrompt = generateShotListPrompt({
+                scene: scn,
+                characterBible: parsedBrain.character_bible,
+                styleBible: parsedBrain.style_bible
+            });
+
+            let shotResponse = '';
+            try {
+                shotResponse = await getGeminiTextCompletion(
+                    shotPrompt,
+                    {
+                        systemInstruction: "You are a master storyboard artist. Break the scene down into a precise cinematic shot list. Output strict JSON.",
+                        temperature: 0.6,
+                        responseMimeType: 'application/json',
+                        responseSchema: shotListSchema,
+                    }
+                );
+            } catch (shotErr: any) {
+                console.error(`[Shot Planner] Failed for scene ${i + 1}, skipping.`, shotErr.message);
+                continue; // Skip this scene if it fails, or we could retry
             }
 
-            story_entities.forEach((entity: any) => {
-                if (entity.type !== 'character') return;
-                if (!new RegExp(nonHumanGuide.species.join('|'), 'i').test(entity.description || '')) {
-                    entity.description = `${entity.description}. Non-human ${speciesText} character with clear species-specific anatomy.`.trim();
-                }
-            });
-        }
+            let parsedShots;
+            try {
+                parsedShots = parseAiJsonWithRepair(shotResponse, `Shot Planner Scene ${i + 1}`);
+            } catch (e) {
+                console.warn(`[Shot Planner] JSON parse failed for scene ${i + 1}`);
+                continue;
+            }
 
-        // ★ CRITICAL: Force character_anchor to match identityAnchor if provided
-        if (safeIdentityAnchor && safeIdentityAnchor.trim().length > 10) {
-            project.character_anchor = safeIdentityAnchor.trim();
-        }
+            const shots = Array.isArray(parsedShots.shots) ? parsedShots.shots : [];
 
-        // Ensure we always have at least one locked character entity for continuity enforcement, BUT ONLY IF has_cast is true
-        const hasLockedCharacter = story_entities.some((e: any) => e.type === 'character' && e.is_locked && e.name);
-        if (project.has_cast !== false && !hasLockedCharacter && project.character_anchor) {
-            story_entities.unshift({
-                id: crypto.randomUUID(),
-                type: 'character',
-                name: nonHumanGuide.hasNonHuman ? `${nonHumanGuide.species[0]} protagonist` : 'Main Character',
-                description: project.character_anchor,
-                is_locked: true,
-            });
-        }
+            for (let j = 0; j < shots.length; j++) {
+                const shot = shots[j];
 
-        const lockedCharacters = story_entities
-            .filter((e: any) => e.type === 'character' && e.is_locked)
-            .map((e: any) => ({
-                name: sanitizePromptInput(e.name, 120),
-                description: sanitizePromptInput(e.description, 1200),
-            }))
-            .filter((e: any) => e.name.length > 0);
+                // Construct the visual description & image prompt
+                const setting = scn.location || 'Unknown Location';
+                const timeStr = scn.time_of_day || 'Day';
 
-        const lockedCharacterNameSet = new Set(lockedCharacters.map((c: any) => c.name.toLowerCase()));
-        const lockedCharacterLine = lockedCharacters.length > 0
-            ? `Locked Cast: ${lockedCharacters.map((c: any) => `${c.name} (${c.description})`).join(' | ')}.`
-            : '';
+                // Map character IDs back to names for the UI
+                const charNames = Array.isArray(shot.characters)
+                    ? shot.characters.map((cid: string) => {
+                        const found = parsedBrain.character_bible?.find((c: any) => c.character_id === cid);
+                        return found ? found.name : cid;
+                    }).filter(Boolean)
+                    : [];
 
-        const anchor = project.character_anchor;
-        const anchorLower = anchor.toLowerCase().trim();
-        const anchorKeywords = extractCriticalKeywordsFromAnchor(anchor);
+                const characterPrefix = charNames.length > 0 ? `Characters: ${charNames.join(', ')}. ` : '';
 
-        // ★ FIX: Convert AI's nested scenes properly - each AI scene becomes ONE frontend Scene
-        // Previous bug: was flattening ALL shots into individual "scenes", causing identical content
-        const convertedScenes: any[] = [];
+                // For the UI, we just need to return these as flat "scenes" arrays, because 
+                // the frontend App.tsx handles them as `Shot` objects mapped 1:1 to frontend "scenes".
+                // We'll mimic the old structure so App.tsx doesn't break initially,
+                // while storing the richer metadata.
 
-        // ★ DEBUG: Log AI response structure
-        console.log(`[Gemini Generate] AI returned ${parsedData.scenes?.length || 0} scenes`);
-        if (parsedData.scenes && parsedData.scenes.length > 0) {
-            parsedData.scenes.slice(0, 3).forEach((s: any, idx: number) => {
-                console.log(`  Scene ${idx + 1}: location="${s.location || 'N/A'}", shots=${s.shots?.length || 0}`);
-            });
-        }
+                const isFirstShotInScene = (j === 0);
+                const visualDesc = `${characterPrefix}${setting}, ${timeStr}. ${shot.action}. Camera: ${shot.camera_angle}, ${shot.composition}.`;
 
-        if (Array.isArray(parsedData.scenes)) {
-            for (let sceneIdx = 0; sceneIdx < Math.min(parsedData.scenes.length, targetScenes); sceneIdx++) {
-                const scn = parsedData.scenes[sceneIdx];
-                const setting = scn.location || `Location ${sceneIdx + 1}`;
-                const shots = Array.isArray(scn.shots) ? scn.shots : [];
-
-                console.log(`[Scene ${sceneIdx + 1}] Processing: location="${setting}", shots=${shots.length}`);
-
-                // BUG FIX #2,#7: Use FIRST shot as the scene's primary content
-                // Empty image_prompt for shots 2+ maintains video continuity
-                const firstShot = shots[0] || {};
-
-                // Validate and enforce empty image_prompt for non-first shots
-                if (Array.isArray(shots)) {
-                    for (let shotIdx = 1; shotIdx < shots.length; shotIdx++) {
-                        if (shots[shotIdx] && typeof shots[shotIdx].image_prompt === 'string') {
-                            // Second and subsequent shots should have empty image_prompt
-                            const isNotEmpty = shots[shotIdx].image_prompt.trim().length > 0;
-                            if (isNotEmpty) {
-                                console.warn(`[Shot ${shotIdx + 1}] BUG: image_prompt not empty for non-first shot, clearing it for chain continuity`);
-                                shots[shotIdx].image_prompt = '';
-                            }
-                        }
-                    }
-                }
-
-                const rawCharacters = Array.isArray(firstShot.characters) ? firstShot.characters : [];
-                let sceneCharacters = rawCharacters
-                    .map((c: any) => sanitizePromptInput(c, 120))
-                    .filter((c: string) => c && lockedCharacterNameSet.has(c.toLowerCase()));
-
-                if (sceneCharacters.length === 0 && lockedCharacters.length > 0) {
-                    sceneCharacters = [lockedCharacters[0].name];
-                }
-
-                const characterPrefix = sceneCharacters.length > 0
-                    ? `Characters: ${sceneCharacters.join(', ')}. `
-                    : '';
-
-                // Build image prompt from FIRST shot
-                let rawImagePrompt = (firstShot.image_prompt || firstShot.video_prompt || `Scene at ${setting}`).trim();
-
-                console.log(`[Scene ${sceneIdx + 1}] Raw image_prompt from AI: "${rawImagePrompt.substring(0, 80)}..."`);
-
-                // Remove duplicate character anchor if present
-                if (anchorLower.length > 20 && rawImagePrompt.toLowerCase().startsWith(anchorLower)) {
-                    rawImagePrompt = rawImagePrompt.slice(anchor.length).replace(/^[,;.:\s]+/, '').trim();
-                }
-
-                const finalImagePrompt = anchor
-                    ? `${anchor}. ${characterPrefix}Setting: ${setting}. ${rawImagePrompt}. Cinematic establishing shot, 8k photorealistic.`
-                    : `${characterPrefix}${setting}. ${rawImagePrompt}. Cinematic establishing shot.`;
-
-                // Visual description for UI display
-                const visualDesc = `${characterPrefix}${setting}. ${rawImagePrompt}`;
-
-                console.log(`[Scene ${sceneIdx + 1}] Final visual_description: "${visualDesc.substring(0, 80)}..."`);
-
-                // Audio from first shot
-                const audioDesc = firstShot.audio_description || scn.audio_description || `Ambient sound at ${setting}`;
-
-                const imagePromptLower = finalImagePrompt.toLowerCase();
-                const motionPromptLower = String(firstShot.video_prompt || '').toLowerCase();
-                const hasAnchorPrefix = anchorLower.length > 0
-                    ? imagePromptLower.startsWith(anchorLower.slice(0, Math.min(20, anchorLower.length)))
-                    : true;
-                const effectiveKeywords = anchorKeywords.length > 0
-                    ? anchorKeywords
-                    : (anchorLower ? [anchorLower] : []);
-                const criticalKeywordsPresent = effectiveKeywords.filter((kw) => imagePromptLower.includes(kw) || motionPromptLower.includes(kw)).length;
+                // Generate a rich image prompt combining everything
+                const imagePrompt = [
+                    project.character_anchor ? project.character_anchor + '.' : '',
+                    characterPrefix,
+                    `Action: ${shot.action}`,
+                    `Setting: ${setting}, ${timeStr}, ${shot.lighting}`,
+                    `Camera: ${shot.camera_angle} shot, ${shot.composition}, ${parsedBrain.style_bible?.lens_language || ''}, ${parsedBrain.style_bible?.color_palette || ''}`,
+                    `Style: Cinematic photography, highly detailed`
+                ].filter(Boolean).join(' | ');
 
                 convertedScenes.push({
-                    scene_number: sceneIdx + 1,
+                    scene_number: globalShotIndex++, // Frontend expects a flat ordinal
                     scene_setting: setting,
-                    characters: sceneCharacters,
+                    characters: charNames,
                     visual_description: visualDesc,
-                    audio_description: audioDesc,
-                    shot_type: firstShot.video_prompt || "cinematic establishing shot",
-                    image_prompt: finalImagePrompt,
-                    video_motion_prompt: firstShot.video_prompt || "Camera slowly reveals the scene",
-                    video_prompt: firstShot.video_prompt,
-                    _consistency_check: {
-                        has_anchor_prefix: hasAnchorPrefix,
-                        critical_keywords_present: criticalKeywordsPresent,
-                        total_critical_keywords: Math.max(1, effectiveKeywords.length),
-                    },
+                    audio_description: `Sound of ${shot.action}`,
+                    shot_type: `${shot.camera_angle} shot, ${shot.camera_movement}`,
+
+                    // First shot of scene gets the full prompt, rest get an empty prompt to force video frame chaining
+                    image_prompt: isFirstShotInScene ? imagePrompt : "",
+
+                    video_motion_prompt: shot.camera_movement,
+                    video_prompt: shot.camera_movement, // Video should just execute the camera move based on image
+
+                    // Store the rich structured data for later API usage
+                    _bible_context: {
+                        scene_id: scn.scene_id,
+                        shot_action: shot.action,
+                        lighting: shot.lighting,
+                        composition: shot.composition
+                    }
                 });
             }
         }
 
-        console.log(`[Gemini Generate] Converted ${convertedScenes.length} scenes for frontend`);
-
-        project.scenes = convertedScenes.slice(0, targetScenes);
+        project.scenes = convertedScenes;
 
         if (!skipCreditCheck) {
             await supabaseUser.rpc('finalize_reserve', { ref_type: 'gemini', ref_id: jobRef });
@@ -4241,7 +4053,7 @@ app.post('/api/shot-images/:imageId/edit', async (req: any, res: any) => {
 // ───────────────────────────────────────────────────────────────
 app.post('/api/batch/gen-images', async (req: any, res: any) => {
     try {
-        const { project_id, shots, count = 100, model = 'flux', aspect_ratio = '16:9', style = 'none', character_anchor = '', concurrency = 2, reference_image_url = '' } = req.body;
+        const { project_id, shots, count = 100, model = 'flux', aspect_ratio = '16:9', style = 'none', character_anchor = '', concurrency = 2, reference_image_url = '', story_entities, style_bible } = req.body;
         if (!project_id) return res.status(400).json({ error: 'Missing project_id' });
         if (!shots?.length) return res.status(400).json({ error: 'Missing or empty shots array' });
 
@@ -4352,10 +4164,12 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
                     scene_memory: {
                         scene_id: shotData.scene_id,
                         scene_number: shotData.scene_number,
-                        location: shotData.location,
+                        environment: shotData.location,
                         time_of_day: shotData.time_of_day,
-                        lighting_continuity: shotData.lighting,
+                        lighting: shotData.lighting,
                     },
+                    character_bible: story_entities?.length ? story_entities[0] : undefined,
+                    style_bible: style_bible,
                     project_context: {
                         project_id,
                         visual_style: style,
@@ -4471,7 +4285,7 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
 // ───────────────────────────────────────────────────────────────
 app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
     try {
-        const { project_id, shots, shots_with_images = [], count = 100, strategy = 'strict', model = 'flux', aspect_ratio = '16:9', style = 'none', character_anchor = '', concurrency = 2, anchor_image_url = '', reference_image_url = '' } = req.body;
+        const { project_id, shots, shots_with_images = [], count = 100, strategy = 'strict', model = 'flux', aspect_ratio = '16:9', style = 'none', character_anchor = '', concurrency = 2, anchor_image_url = '', reference_image_url = '', story_entities, style_bible } = req.body;
         if (!project_id) return res.status(400).json({ error: 'Missing project_id' });
         if (!shots?.length) return res.status(400).json({ error: 'Missing or empty shots array' });
 
@@ -4677,9 +4491,9 @@ app.post('/api/batch/:jobId/retry', async (req: any, res: any) => {
                 scene_memory: {
                     scene_id: shotData?.scene_id,
                     scene_number: shotData?.scene_number,
-                    location: shotData?.location,
+                    environment: shotData?.location,
                     time_of_day: shotData?.time_of_day,
-                    lighting_continuity: shotData?.lighting,
+                    lighting: shotData?.lighting,
                 },
                 project_context: {
                     project_id: retryProjectId,

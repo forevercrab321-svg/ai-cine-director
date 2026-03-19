@@ -961,6 +961,8 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                     characterAnchor={project.character_anchor}
                     visualStyle={project.visual_style}
                     referenceImageDataUrl={referenceImageDataUrl}
+                    storyEntities={project.story_entities}
+                    styleBible={project.style_bible}
                     imagesByShot={imagesByShot}
                     onSetGlobalAnchor={onSetGlobalAnchor} // ★ Proxy to batch panel
                     onImagesGenerated={(results) => {

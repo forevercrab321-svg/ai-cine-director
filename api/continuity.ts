@@ -1,33 +1,36 @@
 export type ContinuityStrictness = 'low' | 'medium' | 'high';
 
 export interface CharacterBible {
-  face_description?: string;
-  age_range?: string;
+  character_id: string;
+  name: string;
+  face_traits?: string;
+  age?: string;
+  body_type?: string;
   skin_tone?: string;
   eye_shape?: string;
   nose_lips?: string;
-  hair_color_style?: string;
+  hair?: string;
   signature_accessories?: string;
-  costume_palette?: string;
-  primary_props?: string;
+  outfit?: string;
+  props?: string;
 }
 
 export interface StyleBible {
   realism_level?: string;
-  lens_look?: string;
+  lens_language?: string;
   color_palette?: string;
   mood?: string;
-  lighting_logic?: string;
+  lighting?: string;
   rendering_style?: string;
 }
 
 export interface SceneContinuityMemory {
   scene_id?: string;
   scene_number?: number;
-  location?: string;
+  environment?: string;
   time_of_day?: string;
   weather_atmosphere?: string;
-  lighting_continuity?: string;
+  lighting?: string;
   active_costume?: string;
   prop_state?: string;
 }
@@ -143,23 +146,25 @@ export function buildContinuityProfile(config: ContinuityConfig | undefined, fal
   const visualStyle = pick(config?.project_context?.visual_style, fallback.visualStyle);
 
   const characterBible: CharacterBible = {
-    face_description: pick(config?.character_bible?.face_description, characterAnchor),
-    age_range: config?.character_bible?.age_range || '',
+    character_id: pick(config?.character_bible?.character_id, characterAnchor),
+    name: pick(config?.character_bible?.name, 'Main Character'),
+    face_traits: pick(config?.character_bible?.face_traits, characterAnchor),
+    age: config?.character_bible?.age || '',
     skin_tone: config?.character_bible?.skin_tone || '',
     eye_shape: config?.character_bible?.eye_shape || '',
     nose_lips: config?.character_bible?.nose_lips || '',
-    hair_color_style: config?.character_bible?.hair_color_style || '',
+    hair: config?.character_bible?.hair || '',
     signature_accessories: config?.character_bible?.signature_accessories || '',
-    costume_palette: config?.character_bible?.costume_palette || '',
-    primary_props: config?.character_bible?.primary_props || '',
+    outfit: config?.character_bible?.outfit || '',
+    props: config?.character_bible?.props || '',
   };
 
   const styleBible: StyleBible = {
     realism_level: pick(config?.style_bible?.realism_level, 'cinematic live-action photorealistic'),
-    lens_look: pick(config?.style_bible?.lens_look, '35mm cinematic lens look'),
+    lens_language: pick(config?.style_bible?.lens_language, '35mm cinematic lens look'),
     color_palette: pick(config?.style_bible?.color_palette, visualStyle),
     mood: pick(config?.style_bible?.mood, 'elegant cinematic'),
-    lighting_logic: pick(config?.style_bible?.lighting_logic, 'consistent lighting and color grading'),
+    lighting: pick(config?.style_bible?.lighting, 'consistent lighting and color grading'),
     rendering_style: pick(config?.style_bible?.rendering_style, 'live-action cinematic realism'),
   };
 
@@ -190,7 +195,7 @@ export function applyContinuityLocks(basePrompt: string, profile: ContinuityProf
   const parts: string[] = [normalize(basePrompt)];
 
   if (profile.lockStyle) {
-    parts.push(`[STYLE LOCK] realism=${normalize(profile.styleBible.realism_level)}; rendering=${normalize(profile.styleBible.rendering_style)}; lens=${normalize(profile.styleBible.lens_look)}; palette=${normalize(profile.styleBible.color_palette)}; mood=${normalize(profile.styleBible.mood)}; lighting=${normalize(profile.styleBible.lighting_logic)}.`);
+    parts.push(`[STYLE LOCK] realism=${normalize(profile.styleBible.realism_level)}; rendering=${normalize(profile.styleBible.rendering_style)}; lens=${normalize(profile.styleBible.lens_language)}; palette=${normalize(profile.styleBible.color_palette)}; mood=${normalize(profile.styleBible.mood)}; lighting=${normalize(profile.styleBible.lighting)}.`);
     parts.push('Do not switch to anime, illustration, cartoon, doll-face, painterly, or stylized 2D output. Keep cinematic live-action realism.');
   }
 
@@ -206,9 +211,9 @@ export function applyContinuityLocks(basePrompt: string, profile: ContinuityProf
 
   if (profile.lockCostume) {
     const costumeLine = [
-      normalize(profile.characterBible.costume_palette),
+      normalize(profile.characterBible.outfit),
       normalize(profile.characterBible.signature_accessories),
-      normalize(profile.characterBible.primary_props),
+      normalize(profile.characterBible.props),
       normalize(profile.sceneMemory.active_costume),
       normalize(profile.sceneMemory.prop_state),
     ].filter(Boolean).join(' | ');
@@ -220,10 +225,10 @@ export function applyContinuityLocks(basePrompt: string, profile: ContinuityProf
 
   if (profile.lockScene) {
     const sceneLine = [
-      normalize(profile.sceneMemory.location),
+      normalize(profile.sceneMemory.environment),
       normalize(profile.sceneMemory.time_of_day),
       normalize(profile.sceneMemory.weather_atmosphere),
-      normalize(profile.sceneMemory.lighting_continuity),
+      normalize(profile.sceneMemory.lighting),
     ].filter(Boolean).join(' | ');
     if (sceneLine) {
       parts.push(`[SCENE LOCK] ${sceneLine}`);
@@ -254,34 +259,34 @@ export function scoreContinuityPrompt(prompt: string, profile: ContinuityProfile
 
   const identityKeywords = tokenizeCritical([
     profile.identityAnchorLine,
-    profile.characterBible.face_description,
-    profile.characterBible.hair_color_style,
+    profile.characterBible.face_traits,
+    profile.characterBible.hair,
     profile.characterBible.signature_accessories,
   ].filter(Boolean).join(', '));
 
   const styleKeywords = tokenizeCritical([
     profile.styleBible.realism_level,
     profile.styleBible.rendering_style,
-    profile.styleBible.lens_look,
+    profile.styleBible.lens_language,
     profile.styleBible.color_palette,
   ].filter(Boolean).join(', '));
 
   const costumeKeywords = tokenizeCritical([
-    profile.characterBible.costume_palette,
+    profile.characterBible.outfit,
     profile.characterBible.signature_accessories,
     profile.sceneMemory.active_costume,
   ].filter(Boolean).join(', '));
 
   const propKeywords = tokenizeCritical([
-    profile.characterBible.primary_props,
+    profile.characterBible.props,
     profile.sceneMemory.prop_state,
   ].filter(Boolean).join(', '));
 
   const sceneKeywords = tokenizeCritical([
-    profile.sceneMemory.location,
+    profile.sceneMemory.environment,
     profile.sceneMemory.time_of_day,
     profile.sceneMemory.weather_atmosphere,
-    profile.sceneMemory.lighting_continuity,
+    profile.sceneMemory.lighting,
   ].filter(Boolean).join(', '));
 
   let identity = keywordPresence(lower, identityKeywords);

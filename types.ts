@@ -223,33 +223,36 @@ export interface StoryEntity {
 export type ContinuityStrictness = 'low' | 'medium' | 'high';
 
 export interface CharacterBible {
-  face_description?: string;
-  age_range?: string;
+  character_id: string;
+  name: string;
+  face_traits?: string;
+  age?: string;
+  body_type?: string;
+  hair?: string;
+  outfit?: string;
+  props?: string;
   skin_tone?: string;
   eye_shape?: string;
   nose_lips?: string;
-  hair_color_style?: string;
   signature_accessories?: string;
-  costume_palette?: string;
-  primary_props?: string;
 }
 
 export interface StyleBible {
-  realism_level?: string;
-  lens_look?: string;
   color_palette?: string;
+  lens_language?: string;
+  lighting?: string;
+  realism_level?: string;
   mood?: string;
-  lighting_logic?: string;
   rendering_style?: string;
 }
 
 export interface SceneContinuityMemory {
   scene_id?: string;
   scene_number?: number;
-  location?: string;
+  environment?: string;
   time_of_day?: string;
   weather_atmosphere?: string;
-  lighting_continuity?: string;
+  lighting?: string;
   active_costume?: string;
   prop_state?: string;
 }
@@ -342,6 +345,7 @@ export interface StoryboardProject {
   has_cast?: boolean;
 
   scenes: Scene[];
+  style_bible?: any;
 }
 
 export interface GenerateRequest {

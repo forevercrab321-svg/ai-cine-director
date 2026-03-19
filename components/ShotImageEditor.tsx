@@ -88,9 +88,9 @@ const ShotImageEditor: React.FC<ShotImageEditorProps> = ({
                     usePreviousApprovedAsReference: true,
                     scene_memory: {
                         scene_id: shot.scene_id,
-                        location: shot.location,
+                        environment: shot.location,
                         time_of_day: shot.time_of_day,
-                        lighting_continuity: shot.lighting,
+                        lighting: shot.lighting,
                         active_costume: shot.art_direction,
                         prop_state: shot.sfx_vfx,
                     },
@@ -109,7 +109,7 @@ const ShotImageEditor: React.FC<ShotImageEditorProps> = ({
             };
 
             setPreviewUrl(newImage.url);
-            refreshBalance().catch(() => {});
+            refreshBalance().catch(() => { });
 
             // Auto-close after a short delay
             setTimeout(() => onEditComplete(newImage), 500);

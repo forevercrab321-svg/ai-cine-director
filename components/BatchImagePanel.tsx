@@ -33,6 +33,8 @@ interface BatchImagePanelProps {
     visualStyle: string;
     /** ★ Compressed reference image data URL for Flux Redux consistency */
     referenceImageDataUrl?: string;
+    storyEntities?: any[];
+    styleBible?: any;
     /** Current images for each shot — used to determine which shots need generation */
     imagesByShot: Record<string, ShotImage[]>;
     /** Called when images are generated — parent updates imagesByShot */
@@ -141,7 +143,7 @@ const StrategyDialog: React.FC<{
 // Main BatchImagePanel
 // ═══════════════════════════════════════════════════════════════
 const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
-    allShots, projectId, characterAnchor, visualStyle, referenceImageDataUrl, imagesByShot, onImagesGenerated, onSetGlobalAnchor
+    allShots, projectId, characterAnchor, visualStyle, referenceImageDataUrl, storyEntities, styleBible, imagesByShot, onImagesGenerated, onSetGlobalAnchor
 }) => {
     const { settings, isAuthenticated, hasEnoughCredits, openPricingModal, refreshBalance } = useAppContext();
 
@@ -248,6 +250,8 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                 character_anchor: characterAnchor,
                 concurrency: 1,
                 reference_image_url: referenceImageDataUrl || '',
+                story_entities: storyEntities,
+                style_bible: styleBible,
             }, handleSSEProgress);
 
             // SSE stream completed — final results already handled in handleSSEProgress
@@ -291,6 +295,8 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                 concurrency: 1,
                 anchor_image_url: anchorImageUrl || '',
                 reference_image_url: referenceImageDataUrl || '',
+                story_entities: storyEntities,
+                style_bible: styleBible,
             }, handleSSEProgress);
 
             setJobId(result.job?.id || null);

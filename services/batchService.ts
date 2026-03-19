@@ -69,14 +69,14 @@ async function readSSEStream(
             if (done) break;
 
             buffer += decoder.decode(value, { stream: true });
-            
+
             // Parse SSE events from buffer
             const lines = buffer.split('\n');
             buffer = lines.pop() || ''; // Keep incomplete last line in buffer
-            
+
             let currentEvent = '';
             let currentData = '';
-            
+
             for (const line of lines) {
                 if (line.startsWith('event: ')) {
                     currentEvent = line.slice(7).trim();
@@ -127,6 +127,8 @@ export async function startBatchGenImagesSSE(params: {
     character_anchor?: string;
     concurrency?: number;
     reference_image_url?: string;  // ★ Compressed base64 data URL for Flux Redux consistency
+    story_entities?: any[];
+    style_bible?: any;
 }, onProgress: (data: BatchProgressResult) => void): Promise<BatchProgressResult> {
     const headers = await getAuthHeaders();
     const abortController = new AbortController();
@@ -144,6 +146,8 @@ export async function startBatchGenImagesSSE(params: {
             character_anchor: params.character_anchor ?? '',
             concurrency: params.concurrency ?? 3,
             reference_image_url: params.reference_image_url ?? '',  // ★ 修复：传递参考图片URL
+            story_entities: params.story_entities,
+            style_bible: params.style_bible,
         }),
         signal: abortController.signal,
     });
@@ -270,6 +274,8 @@ export async function continueBatchGenImagesSSE(params: {
     concurrency?: number;
     anchor_image_url?: string;     // ★ Anchor from previous batch for cross-batch consistency
     reference_image_url?: string;  // ★ User's reference photo for Flux Redux
+    story_entities?: any[];
+    style_bible?: any;
 }, onProgress: (data: BatchProgressResult) => void): Promise<BatchProgressResult & { range_label?: string; remaining_count?: number; all_done?: boolean }> {
     const headers = await getAuthHeaders();
 
@@ -289,6 +295,8 @@ export async function continueBatchGenImagesSSE(params: {
             concurrency: params.concurrency ?? 3,
             anchor_image_url: params.anchor_image_url ?? '',
             reference_image_url: params.reference_image_url ?? '',
+            story_entities: params.story_entities,
+            style_bible: params.style_bible,
         }),
     });
 
