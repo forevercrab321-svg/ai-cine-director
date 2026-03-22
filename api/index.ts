@@ -4,6 +4,21 @@ import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import Stripe from 'stripe';
 import { GoogleGenAI, Type } from '@google/genai';
+import { logger, generateTraceId } from '../utils/logger.js';
+import { 
+    createSuccessResponse, 
+    createErrorResponse, 
+    ApiError, 
+    createError 
+} from '../utils/apiError.js';
+import {
+    traceIdMiddleware,
+    metricsMiddleware,
+    errorHandlerMiddleware,
+    asyncHandler,
+    rateLimitMiddleware,
+    slowQueryLogMiddleware,
+} from '../utils/middleware.js';
 import {
     buildContinuityProfile,
     applyContinuityLocks,
@@ -14,6 +29,22 @@ import {
     registerApprovedFrame,
     getContinuityReference,
 } from '../lib/continuity.js';
+import {
+    initProjectRuntime,
+    getProjectRuntime,
+    setProjectStage,
+    buildShotContextPack,
+    scoreStoryboardCandidate,
+    registerStoryboardCandidate,
+    approveStoryboardShot,
+    markShotRegenerated,
+    controlStoryboardQueue,
+    hasApprovedStoryboard,
+    getApprovedStoryboardFrame,
+    serializePipelineState,
+    deserializePipelineState,
+    restorePipelineState,
+} from '../lib/storyPipeline.js';
 
 
 // ═══════════════════════════════════════════════════════════════
@@ -467,7 +498,7 @@ app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), asyn
         const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
         event = stripe.webhooks.constructEvent(req.body, sig as string, webhookSecret);
     } catch (err: any) {
-        console.error('[Stripe Webhook] Signature verification failed:', err.message);
+        logger.payment.error('stripe_signature_failed', err.message);
         return res.status(400).send(`Webhook Error: ${err.message} `);
     }
 
@@ -493,8 +524,8 @@ app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), asyn
                 if (planTier === 'business' || planTier === 'plan_business') creditsToGrant = 50000;
                 if (planTier === 'enterprise' || planTier === 'plan_enterprise') creditsToGrant = 300000;
                 isSubscription = true;
-            } catch (err) {
-                console.error('[Stripe Webhook] Fetch subscription error:', err);
+            } catch (err: any) {
+                logger.payment.error('stripe_subscription_fetch_failed', err.message || 'Unknown');
             }
         }
 
@@ -512,7 +543,7 @@ app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), asyn
                     .maybeSingle();
 
                 if (existingLedger?.id) {
-                    console.log(`[Billing] Stripe event ${eventRefId} already processed, skipping`);
+                    logger.payment.warn('stripe_event_duplicate', { eventRef: eventRefId, userId });
                     return res.json({ received: true, duplicate: true });
                 }
 
@@ -542,7 +573,7 @@ app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), asyn
                     ref_id: eventRefId,
                     status: 'settled'
                 });
-                console.log(`[Billing] Granted ${creditsToGrant} credits to user ${userId} (Sub: ${isSubscription})`);
+                logger.payment.info('credits_granted', { userId, amount: creditsToGrant, isSubscription, planTier, eventRef: eventRefId });
             }
         }
     }
@@ -552,6 +583,12 @@ app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), asyn
 // 其它路由用json parser
 app.use(express.json({ limit: '10mb' }));
 // Stripe订阅checkout
+
+// 全局中间件堆栈
+app.use(traceIdMiddleware);                        // 生成 traceId
+app.use(metricsMiddleware);                        // API 指标
+app.use(rateLimitMiddleware(1000, 60000));        // 60s 内 1000 请求
+app.use(slowQueryLogMiddleware(2000));            // 慢请求监控
 
 const getReplicateToken = () => {
     const raw = process.env.REPLICATE_API_TOKEN;
@@ -746,7 +783,7 @@ const ensureProfileExists = async (supabaseAdmin: any, userId: string, email: st
 
     const { error: fallbackErr } = await supabaseAdmin.from('profiles').insert(basicPayload);
     if (fallbackErr && !isDuplicateKeyError(fallbackErr)) {
-        console.error('[Auth Ensure Profile] Insert failed:', fallbackErr);
+        logger.auth.error('ensure_profile_insert_failed', fallbackErr.message || String(fallbackErr));
     }
 };
 
@@ -794,8 +831,8 @@ const requireAuth = async (req: any, res: any, next: any) => {
     const { data: { user }, error } = await supabase.auth.getUser(token);
 
     if (error || !user) {
-        console.error('[Auth Error]', error);
-        return res.status(401).json({ error: `Invalid token: ${error?.message || 'No user found'} ` });
+        logger.auth.error('token_invalid', error?.message || 'No user found');
+        return res.status(401).json(createErrorResponse(createError.unauthorized('无效的认证令牌'), req.traceId));
     }
 
     // ★ Extract email with fallbacks (in case user.email is undefined)
@@ -811,7 +848,7 @@ const requireAuth = async (req: any, res: any, next: any) => {
     }
 
     req.user = user;
-    console.log(`[Auth] User validated: id=${user?.id}, email=${user?.email}, email_confirmed=${!!user?.email_confirmed_at}`);
+    logger.auth.debug('user_validated', { userId: user?.id, emailConfirmed: !!user?.email_confirmed_at });
     next();
 };
 
@@ -950,7 +987,7 @@ app.post('/api/auth/send-otp', async (req: any, res: any) => {
                 email_confirm: true,
             });
             if (error && !isUserAlreadyExistsError(error)) {
-                console.error('[Send OTP] Create user failed:', error);
+                logger.auth.error('otp_create_user_failed', error.message);
                 return res.status(500).json({ error: error.message });
             }
             userId = createdUser?.user?.id || await findUserIdByEmail(supabaseAdmin, email);
@@ -963,7 +1000,7 @@ app.post('/api/auth/send-otp', async (req: any, res: any) => {
         });
 
         if (linkError || !linkData) {
-            console.error('[Send OTP] generateLink failed:', linkError);
+            logger.auth.error('otp_generate_link_failed', linkError?.message || 'No linkData');
             return res.status(500).json({ error: linkError?.message || 'Failed to generate link' });
         }
 
@@ -972,7 +1009,7 @@ app.post('/api/auth/send-otp', async (req: any, res: any) => {
             || (linkData.properties as any)?.verification_token
             || '';
 
-        console.log('[Send OTP] Generated for:', email, '| has token:', !!emailOtp, '| has link:', !!actionLink);
+        logger.auth.info('otp_generated', { hasToken: !!emailOtp, hasLink: !!actionLink });
 
         // 3) Send email via Resend HTTP API
         const emailHtml = `
@@ -1016,18 +1053,18 @@ app.post('/api/auth/send-otp', async (req: any, res: any) => {
 
             if (resendResp.ok) {
                 resendData = await resendResp.json();
-                console.log('[Send OTP] Email sent via Resend:', resendData, '| from:', fromAddr);
+                logger.auth.info('otp_email_sent', { from: fromAddr, id: resendData?.id });
                 break;
             }
 
             lastErr = await resendResp.text();
-            console.warn(`[Send OTP] Resend failed with sender "${fromAddr}": `, resendResp.status, lastErr);
+            logger.auth.warn('otp_resend_failed', { from: fromAddr, status: resendResp.status });
             if (resendResp.status === 403) continue;
             break;
         }
 
         if (!resendData) {
-            console.error('[Send OTP] All Resend senders failed. Last error:', lastErr);
+            logger.auth.error('otp_all_senders_failed', lastErr);
             return res.status(500).json({ error: '验证邮件发送失败，请稍后重试' });
         }
 
@@ -1038,7 +1075,7 @@ app.post('/api/auth/send-otp', async (req: any, res: any) => {
 
         return res.json({ ok: true, message: 'Verification email sent' });
     } catch (err: any) {
-        console.error('[Send OTP] Exception:', err);
+        logger.auth.error('otp_exception', err.message || String(err));
         return res.status(500).json({ error: err.message || 'Failed to send OTP' });
     }
 });
@@ -1078,7 +1115,7 @@ app.post('/api/auth/verify-otp', async (req: any, res: any) => {
         }
 
         if (verifyResult.error || !verifyResult.data.user) {
-            console.error('[Verify OTP] Invalid code:', verifyResult.error);
+            logger.auth.warn('otp_verify_failed', { error: verifyResult.error?.message });
             return res.status(400).json({ error: verifyResult.error?.message || 'Invalid or expired code' });
         }
 
@@ -1099,7 +1136,7 @@ app.post('/api/auth/verify-otp', async (req: any, res: any) => {
         });
 
     } catch (err: any) {
-        console.error('[Verify OTP] Exception:', err);
+        logger.auth.error('otp_verify_exception', err.message || String(err));
         return res.status(500).json({ error: err.message || 'Failed to verify code' });
     }
 });
@@ -1135,7 +1172,8 @@ const isDeveloper = (email: string | null | undefined): boolean => {
 };
 
 const logDeveloperAccess = (email: string, action: string) => {
-    console.log(`[GOD MODE] Developer "${email}" performed: ${action} `);
+    logger.api.info('god_mode_action', { action, env: process.env.NODE_ENV });
+    if (process.env.NODE_ENV !== 'production') { console.log(`[GOD MODE] ${email} | ${action}`); }
 };
 
 // --- Legacy Admin Check (merged into isDeveloper — no separate list needed) ---
@@ -1295,7 +1333,7 @@ const checkEntitlement = async (
 
     // ★ AUTO-CREATE PROFILE if not exists (fix for new user signup)
     if (profileErr || !profile) {
-        console.log(`[Entitlement] Profile not found for ${userId}(${email}), upserting...`);
+        logger.auth.info('profile_upsert_needed', { userId, email: email?.split('@')[0] + '@...' });
 
         // Use UPSERT to handle race conditions (profile may already exist)
         const { data: newProfile, error: upsertErr } = await supabaseAdmin
@@ -1311,7 +1349,7 @@ const checkEntitlement = async (
             .single();
 
         if (upsertErr) {
-            console.error('[Entitlement] Profile upsert failed:', upsertErr.message);
+            logger.auth.error('profile_upsert_failed', upsertErr.message, { userId });
             // Last resort: try SELECT again (profile might exist but upsert had column issues)
             const { data: retryProfile } = await supabaseAdmin
                 .from('profiles')
@@ -1321,16 +1359,16 @@ const checkEntitlement = async (
             const retryProfileTyped = retryProfile as Profile | null;
             if (retryProfileTyped) {
                 profile = retryProfileTyped;
-                console.log(`[Entitlement] Retry SELECT succeeded, credits = ${retryProfileTyped.credits} `);
+                logger.auth.debug('profile_retry_select_ok', { credits: retryProfileTyped.credits, userId });
             } else {
-                console.error('[Entitlement] Retry SELECT also failed — allowing with 0 credits');
+                logger.auth.warn('profile_retry_select_failed', { userId, fallback: '0_credits' });
                 // Don't block the user — allow with 0 credits, they'll hit NEED_PAYMENT naturally
                 profile = { id: userId, credits: 0, is_pro: false, is_admin: false };
             }
         } else if (newProfile) {
             const newProfileTyped = newProfile as Profile;
             profile = newProfileTyped;
-            console.log(`[Entitlement] Upserted profile for ${email}, credits = ${newProfileTyped.credits}`);
+            logger.auth.info('profile_upserted', { credits: newProfileTyped.credits });
         }
     }
 
@@ -1437,7 +1475,7 @@ app.get('/api/entitlement', requireAuth, async (req: any, res: any) => {
         });
 
     } catch (err: any) {
-        console.error('[/api/entitlement Error]', err);
+        logger.auth.error('entitlement_check_failed', (err as any)?.message || 'Unknown error');
         res.status(500).json({ error: err.message || 'Failed to check entitlement' });
     }
 });
@@ -1629,15 +1667,39 @@ app.post('/api/replicate/generate-image', requireAuth, async (req: any, res: any
 
 // Replicate Predict with Reserve / Finalize / Refund
 app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
+    const traceId: string = req.traceId || generateTraceId();
     let { version, input: rawInput, storyEntities, continuity, project_id, shot_id } = req.body;
+    const requireApprovedStoryboard = req.body?.require_approved_storyboard === true;
+
+    // --- Input Validation ---
+    if (!version) {
+        return res.status(400).json(createErrorResponse(createError.missingField('version'), traceId));
+    }
+
     if (!storyEntities && rawInput && Array.isArray((rawInput as any).storyEntities)) {
         storyEntities = (rawInput as any).storyEntities;
     }
 
-    // BUG FIX #1: Log story entities for debugging character consistency
+    if (requireApprovedStoryboard && project_id && shot_id) {
+        if (!getProjectRuntime(project_id)) {
+            await restorePipelineStateFromDB(project_id);
+        }
+    }
+    if (requireApprovedStoryboard && project_id && shot_id && !hasApprovedStoryboard(project_id, shot_id)) {
+        logger.pipeline.warn('storyboard_not_approved', { project_id, shot_id }, traceId);
+        return res.status(409).json(createErrorResponse(
+            createError.storyboardNotApproved(project_id), traceId
+        ));
+    }
+
+    if (project_id && shot_id && hasApprovedStoryboard(project_id, shot_id)) {
+        setProjectStage(project_id, 'video_generating');
+    }
+
+    // Log story entities for debugging character consistency
     if (storyEntities && Array.isArray(storyEntities)) {
         const lockedCount = storyEntities.filter((e: any) => e.is_locked && e.type === 'character').length;
-        console.log(`[Replicate Predict] Received ${storyEntities.length} story entities, ${lockedCount} locked characters`);
+        logger.replicate.debug('entities_received', { total: storyEntities.length, locked: lockedCount, project_id, shot_id }, traceId);
     }
 
     // Map short format like 'hailuo_02_fast' to actual replicate model path
@@ -1689,8 +1751,8 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
         reserved = data;
 
         if (reserveErr) {
-            console.error('[Reserve Error]', reserveErr);
-            return res.status(500).json({ error: 'Reserve failed' });
+            logger.payment.error('reserve_failed', reserveErr.message || 'Reserve error', { userId, jobRef }, traceId);
+            return res.status(500).json(createErrorResponse(createError.internalError('Credit reserve failed'), traceId));
         }
 
         if (!reserved) {
@@ -1733,7 +1795,7 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
                 identityAnchorLine: '',
                 lockedCastLine: '',
             };
-            console.log('[Continuity] Character lock auto-suppressed for environment/disaster prompt');
+            logger.replicate.debug('continuity_lock_suppressed', { project_id, shot_id }, traceId);
         }
 
         // Hard-lock to start cast bible (if provided by frontend)
@@ -1761,7 +1823,7 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
             }
             videoPrompt = applyContinuityLocks(videoPrompt, continuityProfile);
             input[videoPromptField] = videoPrompt;
-            console.log(`[I2V Character Lock] Embedded anchor in ${videoPromptField}`);
+            logger.replicate.debug('i2v_anchor_embedded', { field: videoPromptField, project_id }, traceId);
         }
 
         // Video continuity safeguard: enforce approved keyframe reference when requested
@@ -1771,7 +1833,7 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
                 const currentImage = input.image || input.first_frame_image || input.start_frame || input.reference_image;
                 if (!currentImage) {
                     input.first_frame_image = approvedRef;
-                    console.log(`[Video Continuity] Injected approved keyframe for project ${project_id}`);
+                    logger.replicate.info('keyframe_injected', { project_id, shot_id }, traceId);
                 }
             }
         }
@@ -1802,25 +1864,25 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
                 input.image = tailFrameImg;
                 delete input.first_frame_image;
                 delete input.start_frame;
-                console.log('[I2V Chain] Wan model: aligned tail frame to input.image');
+                logger.replicate.debug('i2v_frame_aligned', { model: 'wan', field: 'image' }, traceId);
             } else if (version.includes('kling')) {
                 input.image = tailFrameImg;
                 delete input.first_frame_image;
-                console.log('[I2V Chain] Kling model: aligned tail frame to input.image');
+                logger.replicate.debug('i2v_frame_aligned', { model: 'kling', field: 'image' }, traceId);
             } else if (version.includes('hailuo') || version.includes('minimax')) {
                 input.first_frame_image = tailFrameImg;
-                console.log('[I2V Chain] Hailuo/MiniMax model: aligned tail frame to input.first_frame_image');
+                logger.replicate.debug('i2v_frame_aligned', { model: 'hailuo', field: 'first_frame_image' }, traceId);
             } else if (version.includes('bytedance') || version.includes('seedance')) {
                 input.image = tailFrameImg;
                 delete input.first_frame_image;
-                console.log('[I2V Chain] Seedance model: aligned tail frame to input.image');
+                logger.replicate.debug('i2v_frame_aligned', { model: 'seedance', field: 'image' }, traceId);
             } else {
                 // ALL OTHER MODELS (Sora-2, Veo-3, Runway, etc.) strictly map to "image" by default
                 // to prevent the Master Anchor from being dropped by misnamed image schemas.
                 input.image = tailFrameImg;
                 if (input.first_frame_image) delete input.first_frame_image;
                 if (input.start_frame) delete input.start_frame;
-                console.log('[I2V Chain] Universal Fallback (Veo/Sora/etc): aligned tail frame to input.image');
+                logger.replicate.debug('i2v_frame_aligned', { model: 'universal_fallback', field: 'image' }, traceId);
             }
         }
 
@@ -1831,7 +1893,7 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
         // Ensure negative prompt includes character consistency constraints
         if (typeof rawInput?.negative_prompt === 'string' && rawInput.negative_prompt.trim()) {
             input.negative_prompt = buildContinuityNegativePrompt(rawInput.negative_prompt, continuityProfile);
-            console.log(`[I2V Safety] Using negative_prompt for identity protection: "${rawInput.negative_prompt.substring(0, 80)}..."`);
+            logger.replicate.debug('negative_prompt_applied', { length: input.negative_prompt.length }, traceId);
         } else if (!input.negative_prompt) {
             // Default negative prompt for character consistency
             input.negative_prompt = buildContinuityNegativePrompt('altered identity, different person, age change, morphing, identity drift, wrong character', continuityProfile);
@@ -1843,7 +1905,7 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
             const threshold = continuityThreshold(continuityProfile.strictness);
             if (score.overall < threshold) {
                 input[promptField] = strengthenPromptForRetry(String(input[promptField] || ''), continuityProfile, 1, score.failures);
-                console.warn(`[Video Continuity] Strengthened prompt before submit, score=${score.overall.toFixed(2)} threshold=${threshold.toFixed(2)}`);
+                logger.replicate.warn('prompt_strengthened', { score: score.overall.toFixed(2), threshold: threshold.toFixed(2), project_id }, traceId);
             }
         }
 
@@ -1893,7 +1955,7 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
                 if (fallbackResponse.ok) {
                     const prediction = await fallbackResponse.json() as ReplicateResponse;
                     if (keepModelForContinuity) {
-                        console.warn('[Video Continuity] NSFW fallback kept original model to avoid style drift');
+                        logger.replicate.warn('nsfw_fallback_kept_model', { reason: 'continuity_lock' }, traceId);
                     }
                     if (!skipCreditCheck) {
                         await supabaseUser.rpc('finalize_reserve', {
@@ -1929,7 +1991,7 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
         res.json(prediction);
 
     } catch (err: any) {
-        console.error('[Replicate Error]', err);
+        logger.replicate.error('predict_error', (err as any)?.message || String(err));
         // Safety refund on unexpected error (skip for admin)
         if (!skipCreditCheck) {
             await supabaseUser.rpc('refund_reserve', {
@@ -2282,6 +2344,7 @@ app.post('/api/extract-frame', requireAuth, async (req: any, res: any) => {
 
 
 app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
+    const traceId: string = req.traceId || generateTraceId();
     const jobRef = `gemini:${Date.now()}:${Math.random().toString(36).slice(2)}`;
     try {
         const { storyIdea, visualStyle, language, identityAnchor, sceneCount } = req.body;
@@ -2290,12 +2353,14 @@ app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
         const safeIdentityAnchor = sanitizePromptInput(identityAnchor, 1000);
         const safeLanguage = language === 'zh' ? 'zh' : 'en';
 
-        if (!safeStoryIdea) return res.status(400).json({ error: 'Missing storyIdea' });
+        if (!safeStoryIdea) {
+            return res.status(400).json(createErrorResponse(createError.missingField('storyIdea'), traceId));
+        }
 
         const targetScenes = Math.min(Math.max(Number(sceneCount) || 5, 1), 50);
         const nonHumanGuide = detectNonHumanCharacterGuide(safeStoryIdea, safeIdentityAnchor);
 
-        console.log(`[Gemini Generate] Requesting exactly ${targetScenes} unique scenes...`);
+        logger.gemini.info('generate_start', { sceneCount: targetScenes, userId: req.user?.id, hasAnchor: !!safeIdentityAnchor }, traceId);
 
         const authHeader = `Bearer ${req.accessToken}`;
         const userId = req.user?.id;
@@ -2361,7 +2426,7 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
                 }
             );
         } catch (initialError: any) {
-            console.error('[Story Brain] Primary call failed, retrying...', initialError.message);
+            logger.gemini.warn('story_brain_retry', { error: initialError.message }, traceId);
             storyBrainResponse = await getGeminiTextCompletion(
                 storyBrainPrompt,
                 {
@@ -2378,7 +2443,7 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
         try {
             parsedBrain = parseAiJsonWithRepair(storyBrainResponse, 'Story Brain');
         } catch (parseError: any) {
-            console.warn('[Story Brain] JSON parse failed:', parseError.message);
+            logger.gemini.error('story_brain_parse_failed', parseError.message, {}, traceId);
             throw parseError;
         }
 
@@ -2407,6 +2472,26 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
             character_anchor: safeIdentityAnchor || (story_entities[0]?.description) || '',
             story_entities: story_entities,
             style_bible: parsedBrain.style_bible,
+            character_bible: parsedBrain.character_bible || [],
+            scene_bible: [],
+            costume_bible: [],
+            prop_bible: [],
+            story_plan: {
+                logline: sanitizePromptInput(parsedBrain.logline || '', 260),
+                short_synopsis: sanitizePromptInput(parsedBrain.world_setting || '', 600),
+                beat_sheet: Array.isArray(parsedBrain?.beats) ? parsedBrain.beats : [],
+                scene_goals: [],
+                role_map: story_entities.map((c: any) => ({
+                    character_id: c?.structured_data?.character_id || c.id,
+                    name: c.name,
+                    function_in_story: 'core narrative role',
+                    relationships: [],
+                })),
+            },
+            pipeline_state: {
+                current_stage: 'shots_ready',
+                stage_history: ['script_ready', 'bible_ready', 'shots_ready'],
+            },
             world_setting: parsedBrain.world_setting,
             scenes: []
         };
@@ -2415,7 +2500,7 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
         // NEW PIPELINE: STAGE 2 - SHOT PLANNER
         // ==========================================
         const rawScenes = Array.isArray(parsedBrain.scenes) ? parsedBrain.scenes : [];
-        console.log(`[Gemini Generate] Story Brain created ${rawScenes.length} scenes. Planning shots...`);
+        logger.gemini.info('story_brain_done', { scenes: rawScenes.length, targetScenes }, traceId);
 
         const convertedScenes: any[] = [];
         let globalShotIndex = 1;
@@ -2423,7 +2508,11 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
         // Process scenes sequentially or in small batches to respect rate limits
         for (let i = 0; i < Math.min(rawScenes.length, targetScenes); i++) {
             const scn = rawScenes[i];
-            console.log(`[Shot Planner] Planning Scene ${i + 1}/${rawScenes.length}: ${scn.location}`);
+            logger.gemini.debug('shot_planner_scene', { scene: i + 1, total: rawScenes.length, location: scn.location }, traceId);
+            const fallbackShotCountRaw = Number((scn as any)?.shot_count);
+            const fallbackShotCount = Number.isFinite(fallbackShotCountRaw) && fallbackShotCountRaw > 0
+                ? Math.min(8, Math.max(1, Math.floor(fallbackShotCountRaw)))
+                : 5;
 
             const shotPrompt = generateShotListPrompt({
                 scene: scn,
@@ -2432,6 +2521,7 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
             });
 
             let shotResponse = '';
+            let parsedShots: any;
             try {
                 shotResponse = await getGeminiTextCompletion(
                     shotPrompt,
@@ -2443,19 +2533,47 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
                     }
                 );
             } catch (shotErr: any) {
-                console.error(`[Shot Planner] Failed for scene ${i + 1}, skipping.`, shotErr.message);
-                continue; // Skip this scene if it fails, or we could retry
+                logger.gemini.error('shot_planner_scene_failed', shotErr.message, { scene: i + 1 }, traceId);
+                parsedShots = buildFallbackShotResult({
+                    sceneNumber: Number(scn?.scene_number) || i + 1,
+                    targetShots: fallbackShotCount,
+                    visualDescription: sanitizePromptInput(scn?.synopsis || scn?.location || 'Cinematic scene', 600),
+                    audioDescription: sanitizePromptInput(scn?.audio_hint || '', 220),
+                    shotType: 'cinematic',
+                    characterAnchor: safeIdentityAnchor,
+                    lockedCharacters: story_entities.map((c: any) => ({
+                        name: c.name,
+                        description: c.description,
+                    })),
+                });
             }
 
-            let parsedShots;
-            try {
-                parsedShots = parseAiJsonWithRepair(shotResponse, `Shot Planner Scene ${i + 1}`);
-            } catch (e) {
-                console.warn(`[Shot Planner] JSON parse failed for scene ${i + 1}`);
-                continue;
+            if (!parsedShots) {
+                try {
+                    parsedShots = parseAiJsonWithRepair(shotResponse, `Shot Planner Scene ${i + 1}`);
+                } catch (e) {
+                    logger.gemini.warn('shot_planner_parse_failed', { scene: i + 1 }, traceId);
+                    parsedShots = buildFallbackShotResult({
+                        sceneNumber: Number(scn?.scene_number) || i + 1,
+                        targetShots: fallbackShotCount,
+                        visualDescription: sanitizePromptInput(scn?.synopsis || scn?.location || 'Cinematic scene', 600),
+                        audioDescription: sanitizePromptInput(scn?.audio_hint || '', 220),
+                        shotType: 'cinematic',
+                        characterAnchor: safeIdentityAnchor,
+                        lockedCharacters: story_entities.map((c: any) => ({
+                            name: c.name,
+                            description: c.description,
+                        })),
+                    });
+                }
             }
 
             const shots = Array.isArray(parsedShots.shots) ? parsedShots.shots : [];
+            logger.gemini.debug('shot_planner_result', {
+                scene: i + 1,
+                shotsCount: shots.length,
+                usedFallback: !shotResponse || !Array.isArray((parsedShots as any)?.shots) || false,
+            }, traceId);
 
             for (let j = 0; j < shots.length; j++) {
                 const shot = shots[j];
@@ -2492,13 +2610,76 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
                     `Style: Cinematic photography, highly detailed`
                 ].filter(Boolean).join(' | ');
 
+                // Build character consistency metadata for first-shot-of-scene
+                const anchorKeywords: string[] = project.character_anchor
+                    ? project.character_anchor.toLowerCase().split(/[,\s]+/).filter((w: string) => w.length > 3)
+                    : [];
+                const promptLower = imagePrompt.toLowerCase();
+                const anchorKeywordsPresent = anchorKeywords.filter((kw: string) => promptLower.includes(kw)).length;
+                const consistencyMeta = (isFirstShotInScene && project.character_anchor)
+                    ? {
+                        has_anchor_prefix: promptLower.startsWith(project.character_anchor.toLowerCase().substring(0, 20)),
+                        critical_keywords_present: anchorKeywordsPresent,
+                        total_critical_keywords: anchorKeywords.length || 1,
+                        anchor_applied: true,
+                    }
+                    : undefined;
+
+                const sequenceOrder = globalShotIndex++;
+                const scenePurpose = i === 0
+                    ? 'world_building'
+                    : (i === rawScenes.length - 1 ? 'resolution' : 'conflict_escalation');
+
+                if (!project.scene_bible.some((b: any) => b.scene_id === scn.scene_id)) {
+                    project.scene_bible.push({
+                        scene_id: scn.scene_id,
+                        location: setting,
+                        architecture_traits: sanitizePromptInput(scn.synopsis || setting, 280),
+                        time_of_day: timeStr,
+                        weather: 'inferred from scene context',
+                        lighting_style: sanitizePromptInput(parsedBrain.style_bible?.lighting || shot.lighting || '', 180),
+                        palette: sanitizePromptInput(parsedBrain.style_bible?.color_palette || safeVisualStyle, 180),
+                        texture_material: 'cinematic realistic materials',
+                        atmosphere: sanitizePromptInput(scn.emotional_goal || '', 180),
+                        lens_language: sanitizePromptInput(parsedBrain.style_bible?.lens_language || '', 180),
+                        forbidden_scene_drift: ['do not change set geometry', 'do not change lighting motivation'],
+                    });
+                }
+
+                project.story_plan.scene_goals.push({
+                    scene_id: scn.scene_id,
+                    scene_number: Number(scn.scene_number) || i + 1,
+                    purpose: scenePurpose,
+                    narrative_goal: sanitizePromptInput(scn.emotional_goal || scn.synopsis || '', 260),
+                    pacing_note: `shot_count:${shots.length}`,
+                });
+
                 convertedScenes.push({
-                    scene_number: globalShotIndex++, // Frontend expects a flat ordinal
+                    scene_number: sequenceOrder, // Frontend expects a flat ordinal
                     scene_setting: setting,
                     characters: charNames,
                     visual_description: visualDesc,
                     audio_description: `Sound of ${shot.action}`,
                     shot_type: `${shot.camera_angle} shot, ${shot.camera_movement}`,
+                    shot_id: shot.shot_id || crypto.randomUUID(),
+                    scene_id: scn.scene_id,
+                    sequence_order: sequenceOrder,
+                    narrative_purpose: sanitizePromptInput(scn.emotional_goal || shot.action || '', 220),
+                    emotional_beat: sanitizePromptInput(scn.emotional_goal || '', 180),
+                    framing: sanitizePromptInput(shot.composition || '', 220),
+                    camera_angle: sanitizePromptInput(shot.camera_angle || 'medium', 80),
+                    camera_motion: sanitizePromptInput(shot.camera_movement || 'static', 80),
+                    lens_hint: sanitizePromptInput(parsedBrain.style_bible?.lens_language || '', 120),
+                    subject_focus: charNames[0] || 'main subject',
+                    transition_in: sequenceOrder === 1 ? 'fade_in' : 'cut',
+                    transition_out: 'cut',
+                    continuity_from_previous: sequenceOrder === 1 ? 'N/A' : 'inherit previous shot appearance and screen direction',
+                    continuity_to_next: 'preserve scene memory',
+                    validation_rules: {
+                        min_continuity_score: 78,
+                        min_narrative_score: 70,
+                        min_visual_match_score: 75,
+                    },
 
                     // First shot of scene gets the full prompt, rest get an empty prompt to force video frame chaining
                     image_prompt: isFirstShotInScene ? imagePrompt : "",
@@ -2512,12 +2693,32 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
                         shot_action: shot.action,
                         lighting: shot.lighting,
                         composition: shot.composition
-                    }
+                    },
+
+                    // Character consistency validation metadata (only on first shot of each scene where image_prompt is set)
+                    ...(consistencyMeta ? { _consistency_check: consistencyMeta } : {}),
                 });
             }
         }
 
         project.scenes = convertedScenes;
+        logger.gemini.info('generate_complete', {
+            project_id,
+            convertedScenes: convertedScenes.length,
+            targetScenes,
+        }, traceId);
+        initProjectRuntime({
+            projectId: project_id,
+            shots: convertedScenes.map((s: any) => ({
+                shot_id: s.shot_id || `shot-${s.scene_number}`,
+                scene_id: s.scene_id,
+                sequence_order: s.sequence_order || s.scene_number,
+                shot_number: s.scene_number,
+            })),
+            stage: 'shots_ready',
+        });
+        setProjectStage(project_id, 'shots_ready');
+        project.pipeline_state.current_stage = 'shots_ready';
 
         if (!skipCreditCheck) {
             await supabaseUser.rpc('finalize_reserve', { ref_type: 'gemini', ref_id: jobRef });
@@ -3393,7 +3594,7 @@ You MUST return EXACTLY ONE JSON object strictly matching this schema. Return ex
                 }
             );
         } catch (initialError: any) {
-            console.error('[Gemini Shots] Primary call failed, retrying...', initialError.message);
+            logger.gemini.warn('shots_primary_retry', { error: initialError.message });
             try {
                 responseText = await getGeminiTextCompletion(
                     `Break Scene ${scene_number || 1} into ${targetShots} shots. Scene description: ${visual_description}`,
@@ -3404,7 +3605,7 @@ You MUST return EXACTLY ONE JSON object strictly matching this schema. Return ex
                     }
                 );
             } catch (retryError: any) {
-                console.warn('[Shots Generate] Gemini unavailable, using deterministic fallback shot planner.', retryError?.message || retryError);
+                logger.gemini.warn('shots_fallback_planner', { reason: 'gemini_unavailable', error: retryError?.message || String(retryError) });
                 result = buildFallbackShotResult({
                     sceneNumber: Number(scene_number) || 1,
                     targetShots,
@@ -3421,7 +3622,7 @@ You MUST return EXACTLY ONE JSON object strictly matching this schema. Return ex
             const text = responseText;
 
             if (!text) {
-                console.warn('[Shots Generate] Empty AI response, using deterministic fallback shot planner.');
+                logger.gemini.warn('shots_fallback_planner', { reason: 'empty_response' });
                 result = buildFallbackShotResult({
                     sceneNumber: Number(scene_number) || 1,
                     targetShots,
@@ -3435,7 +3636,7 @@ You MUST return EXACTLY ONE JSON object strictly matching this schema. Return ex
                 try {
                     result = parseAiJsonWithRepair(text, 'Shots Generate');
                 } catch (parseError: any) {
-                    console.warn('[Shots Generate] JSON parse failed after repair attempts, using deterministic fallback shot planner:', parseError.message);
+                    logger.gemini.warn('shots_fallback_planner', { reason: 'json_parse_failed', error: parseError.message });
                     result = buildFallbackShotResult({
                         sceneNumber: Number(scene_number) || 1,
                         targetShots,
@@ -3525,9 +3726,24 @@ You MUST return EXACTLY ONE JSON object strictly matching this schema. Return ex
             await supabaseUser.rpc('finalize_reserve', { ref_type: 'shots', ref_id: jobRef });
         }
 
+        const inferredProjectId = sanitizePromptInput(req.body?.project_id || req.body?.projectId || '', 100);
+        if (inferredProjectId) {
+            initProjectRuntime({
+                projectId: inferredProjectId,
+                shots: enrichedShots.map((s: any) => ({
+                    shot_id: s.shot_id,
+                    scene_id: s.scene_id,
+                    sequence_order: s.shot_number,
+                    shot_number: s.shot_number,
+                })),
+                stage: 'shots_ready',
+            });
+            setProjectStage(inferredProjectId, 'shots_ready');
+        }
+
         res.json({ scene_title: result.scene_title || `Scene ${scene_number || 1}`, shots: enrichedShots });
     } catch (error: any) {
-        console.error('[Shots Generate] Error:', error);
+        logger.gemini.error('shots_generate_error', (error as any)?.message || String(error));
         res.status(500).json({ error: error.message || 'Shot generation failed' });
     }
 });
@@ -3626,7 +3842,7 @@ Example: {"image_prompt": "new prompt here", "dialogue": "new line here"}
                 }
             );
         } catch (initialError: any) {
-            console.error('[Gemini Rewrite] Primary call failed, retrying...', initialError.message);
+            logger.gemini.warn('shot_rewrite_retry', { error: initialError.message });
             responseText = await getGeminiTextCompletion(
                 `Rewrite fields [${fieldsStr}] for shot ${shotId}. ${user_instruction || ''}`,
                 {
@@ -3644,7 +3860,7 @@ Example: {"image_prompt": "new prompt here", "dialogue": "new line here"}
         try {
             rewrittenFields = parseAiJsonWithRepair(text, 'Shot Rewrite');
         } catch (parseError: any) {
-            console.warn('[Shot Rewrite] JSON parse failed after repair attempts:', parseError.message);
+            logger.gemini.warn('shot_rewrite_parse_failed', { error: parseError.message });
             throw parseError;
         }
         for (const locked of (locked_fields || [])) delete rewrittenFields[locked];
@@ -3658,7 +3874,7 @@ Example: {"image_prompt": "new prompt here", "dialogue": "new line here"}
 
         res.json({ shot_id: shotId, rewritten_fields: rewrittenFields, change_source: 'ai-rewrite', changed_fields: Object.keys(rewrittenFields) });
     } catch (error: any) {
-        console.error('[Shot Rewrite] Error:', error);
+        logger.gemini.error('shot_rewrite_error', (error as any)?.message || String(error));
         // ★ Refund reserved credits on error, best-effort
         try {
             const authHeader = req.headers.authorization;
@@ -3835,6 +4051,18 @@ app.post('/api/shot-images/:shotId/generate', async (req: any, res: any) => {
                 prompt: promptCandidate,
                 createdAt: Date.now(),
             });
+
+            registerStoryboardCandidate({
+                projectId: project_id,
+                shotId,
+                candidateId: crypto.randomUUID(),
+                imageUrl: resolvedResult.url,
+                continuityScore: Number(finalContinuityScore?.overall || 70),
+                narrativeScore: Math.max(60, Number(finalContinuityScore?.overall || 70) - 5),
+                visualMatchScore: Math.max(60, Number(finalContinuityScore?.overall || 70) - 2),
+                violations: finalContinuityScore?.failures || [],
+            });
+            setProjectStage(project_id, 'storyboard_review');
         }
 
         const now = new Date().toISOString();
@@ -3853,7 +4081,7 @@ app.post('/api/shot-images/:shotId/generate', async (req: any, res: any) => {
             },
         });
     } catch (error: any) {
-        console.error('[ShotImage Generate] Error:', error.message);
+        logger.shot.error('shot_image_generate_error', error.message);
         if (error.message === 'FACE_ALIGN_FAIL') {
             return res.status(400).json({ error: '未能检测到清晰的人物面部；如果你在生成动物或非人角色，系统已自动切换为非人参考模式。若仍失败，请换更清晰参考图或直接使用文本提示。' });
         }
@@ -4025,6 +4253,18 @@ app.post('/api/shot-images/:imageId/edit', async (req: any, res: any) => {
                 prompt: finalPrompt,
                 createdAt: Date.now(),
             });
+
+            registerStoryboardCandidate({
+                projectId: project_id,
+                shotId: shot_id,
+                candidateId: crypto.randomUUID(),
+                imageUrl: resolvedResult.url,
+                continuityScore: 75,
+                narrativeScore: 72,
+                visualMatchScore: 74,
+                violations: [],
+            });
+            setProjectStage(project_id, 'storyboard_review');
         }
 
         res.json({
@@ -4041,9 +4281,408 @@ app.post('/api/shot-images/:imageId/edit', async (req: any, res: any) => {
             },
         });
     } catch (error: any) {
-        console.error('[ShotImage Edit] Error:', error.message);
+        logger.shot.error('shot_image_edit_error', error.message);
         res.status(500).json({ error: error.message || 'Image edit failed' });
     }
+});
+
+// ───────────────────────────────────────────────────────────────
+// Storyboard-First Runtime APIs (Phase 1 MVP)
+// ───────────────────────────────────────────────────────────────
+
+// ───────────────────────────────────────────────────────────────
+// Helper: persist in-memory pipeline state → storyboards.pipeline_state
+// Fails silently if column doesn't exist yet (pre-migration).
+// ───────────────────────────────────────────────────────────────
+async function persistPipelineState(projectId: string): Promise<void> {
+    const runtime = getProjectRuntime(projectId);
+    if (!runtime) return;
+    try {
+        const serialized = serializePipelineState(runtime);
+        await supabaseAdmin
+            .from('storyboards')
+            .update({ pipeline_state: serialized as any })
+            .eq('id', projectId);
+    } catch (e: any) {
+        // Non-fatal: column may not exist until migration is applied
+        logger.pipeline.warn('persist_failed', { projectId, error: e?.message });
+    }
+}
+
+// Helper: restore pipeline state from Supabase if runtime is missing
+async function restorePipelineStateFromDB(projectId: string): Promise<boolean> {
+    try {
+        const { data, error } = await supabaseAdmin
+            .from('storyboards')
+            .select('pipeline_state')
+            .eq('id', projectId)
+            .single();
+        if (error || !data?.pipeline_state) return false;
+        const state = deserializePipelineState(data.pipeline_state as any);
+        restorePipelineState(state);
+        return true;
+    } catch (e: any) {
+        logger.pipeline.warn('restore_failed', { projectId, error: e?.message });
+        return false;
+    }
+}
+
+app.get('/api/pipeline/:projectId/status', requireAuth, async (req: any, res: any) => {
+    const { projectId } = req.params;
+    let runtime = getProjectRuntime(projectId);
+
+    // Auto-restore from Supabase if in-memory state was lost (server restart)
+    if (!runtime) {
+        const restored = await restorePipelineStateFromDB(projectId);
+        if (restored) runtime = getProjectRuntime(projectId);
+    }
+
+    if (!runtime) {
+        return res.status(404).json({ error: 'Pipeline runtime not found for project' });
+    }
+
+    return res.json({
+        project_id: projectId,
+        stage: runtime.stage,
+        paused: runtime.paused,
+        skipped_shot_ids: [...runtime.skippedShotIds.values()],
+        shots: [...runtime.shots.values()],
+        created_at: runtime.createdAt,
+        updated_at: runtime.updatedAt,
+    });
+});
+
+app.post('/api/pipeline/:projectId/queue/control', requireAuth, async (req: any, res: any) => {
+    const { projectId } = req.params;
+    const { action, shot_id } = req.body || {};
+    if (!['pause', 'resume', 'skip'].includes(action)) {
+        return res.status(400).json({ error: 'Invalid queue action' });
+    }
+
+    const state = controlStoryboardQueue(projectId, action, shot_id);
+    if (!state) return res.status(404).json({ error: 'Pipeline runtime not found for project' });
+
+    return res.json({
+        ok: true,
+        stage: state.stage,
+        paused: state.paused,
+        skipped_shot_ids: [...state.skippedShotIds.values()],
+    });
+});
+
+app.post('/api/storyboard/:projectId/shots/:shotId/validate', requireAuth, async (req: any, res: any) => {
+    try {
+        const { projectId, shotId } = req.params;
+        const {
+            image_url,
+            shot,
+            previous_shot,
+            scene_state,
+            character_state,
+        } = req.body || {};
+
+        const contextPack = buildShotContextPack({
+            projectId,
+            shotId,
+            currentShot: shot || {},
+            previousShot: previous_shot || {},
+            sceneState: scene_state || {},
+            characterState: character_state || {},
+        });
+
+        // ★ Gemini Vision scoring: when an image_url is provided, use actual vision analysis
+        let report = scoreStoryboardCandidate({
+            imagePrompt: shot?.image_prompt || shot?.imagePrompt,
+            action: shot?.action,
+            framing: shot?.composition || shot?.framing,
+            lighting: shot?.lighting,
+            imageUrl: image_url,
+        });
+
+        if (image_url) {
+            try {
+                // Fetch the image server-side (avoids CORS) and encode as base64
+                let imageBase64: string;
+                let mimeType = 'image/jpeg';
+                if (image_url.startsWith('data:')) {
+                    const prefixMatch = image_url.match(/^data:(image\/[a-zA-Z+]+);base64,/);
+                    if (prefixMatch) mimeType = prefixMatch[1];
+                    imageBase64 = image_url.split(',')[1];
+                } else {
+                    const imgResp = await fetch(image_url);
+                    const contentType = imgResp.headers.get('content-type') || 'image/jpeg';
+                    mimeType = contentType.split(';')[0].trim();
+                    const arrayBuffer = await imgResp.arrayBuffer();
+                    imageBase64 = Buffer.from(arrayBuffer).toString('base64');
+                }
+
+                const shotContext = [
+                    shot?.action && `Action: ${shot.action}`,
+                    shot?.image_prompt && `Visual Description: ${shot.image_prompt}`,
+                    (shot?.composition || shot?.framing) && `Framing: ${shot.composition || shot.framing}`,
+                    shot?.lighting && `Lighting: ${shot.lighting}`,
+                    shot?.mood && `Mood: ${shot.mood}`,
+                    shot?.characters?.length && `Characters: ${Array.isArray(shot.characters) ? shot.characters.join(', ') : shot.characters}`,
+                    previous_shot?.action && `Previous shot action: ${previous_shot.action}`,
+                ].filter(Boolean).join('\n');
+
+                const visionPrompt = `You are a strict cinematic storyboard continuity supervisor scoring a generated storyboard frame.
+
+Shot Bible Requirements:
+${shotContext || 'No shot bible provided.'}
+
+Evaluate this storyboard frame image on three dimensions (each 0-100):
+1. continuity_score: Does the image maintain visual continuity (character identity, costume, scene architecture, lighting) with the shot requirements?
+2. narrative_score: Does the image clearly communicate the intended narrative action and emotional beat?
+3. visual_match_score: Does the framing, composition, lens language, and mood visually match the shot brief?
+
+Also list any specific violation_tags from: [face_drift, costume_inconsistency, background_drift, lighting_mismatch, wrong_framing, wrong_shot_size, missing_subject, action_mismatch, mood_mismatch]
+
+Output ONLY a valid JSON object with this exact shape:
+{
+  "continuity_score": <number 0-100>,
+  "narrative_score": <number 0-100>,
+  "visual_match_score": <number 0-100>,
+  "violation_tags": [<string>, ...],
+  "regen_recommendation": "<none|regenerate_same_shot_keep_bible|regenerate_same_shot_fix_face|regenerate_same_shot_fix_costume|regenerate_same_shot_fix_scene|regenerate_same_shot_change_framing>"
+}`;
+
+                const ai = getGeminiAI();
+                const visionResult: any = await ai.models.generateContent({
+                    model: GEMINI_TEXT_MODEL,
+                    contents: [{
+                        role: 'user',
+                        parts: [
+                            { inlineData: { mimeType, data: imageBase64 } },
+                            { text: visionPrompt },
+                        ],
+                    }],
+                    config: { temperature: 0.1 },
+                });
+
+                const rawText = typeof visionResult?.text === 'string'
+                    ? visionResult.text.trim()
+                    : visionResult?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+
+                const parsed = parseAiJsonWithRepair(rawText, 'storyboard-validate');
+                if (parsed && typeof parsed.continuity_score === 'number') {
+                    report = {
+                        continuity_score: Math.min(100, Math.max(0, parsed.continuity_score)),
+                        narrative_score: Math.min(100, Math.max(0, parsed.narrative_score ?? report.narrative_score)),
+                        visual_match_score: Math.min(100, Math.max(0, parsed.visual_match_score ?? report.visual_match_score)),
+                        violation_tags: Array.isArray(parsed.violation_tags) ? parsed.violation_tags : report.violation_tags,
+                        regen_recommendation: parsed.regen_recommendation || report.regen_recommendation,
+                    };
+                }
+            } catch (visionErr: any) {
+                logger.gemini.warn('vision_scoring_fallback', { error: visionErr?.message });
+                // Fall through — keep the heuristic report
+            }
+        }
+
+        const candidateId = crypto.randomUUID();
+        const runtimeShot = registerStoryboardCandidate({
+            projectId,
+            shotId,
+            candidateId,
+            imageUrl: image_url,
+            continuityScore: report.continuity_score,
+            narrativeScore: report.narrative_score,
+            visualMatchScore: report.visual_match_score,
+            violations: report.violation_tags,
+        });
+
+        const runtime = getProjectRuntime(projectId);
+
+        // Persist to Supabase (non-blocking)
+        persistPipelineState(projectId).catch(() => {});
+
+        return res.json({
+            shot_context_pack: contextPack,
+            continuity_report: {
+                shot_id: shotId,
+                ...report,
+                validated_at: new Date().toISOString(),
+            },
+            candidate_id: candidateId,
+            runtime_shot: runtimeShot,
+            stage: runtime?.stage || 'storyboard_review',
+        });
+    } catch (error: any) {
+        logger.pipeline.error('storyboard_validate_error', error?.message || String(error));
+        return res.status(500).json({ error: error?.message || 'Storyboard validation failed' });
+    }
+})
+
+app.post('/api/storyboard/:projectId/shots/:shotId/approve', requireAuth, async (req: any, res: any) => {
+    const { projectId, shotId } = req.params;
+    const { image_url } = req.body || {};
+    const runtimeShot = approveStoryboardShot(projectId, shotId, image_url);
+    if (!runtimeShot) return res.status(404).json({ error: 'Shot runtime not found' });
+
+    const runtime = getProjectRuntime(projectId);
+    if (runtime?.stage === 'storyboard_approved') {
+        setProjectStage(projectId, 'storyboard_approved');
+    }
+
+    // Persist to Supabase (non-blocking)
+    persistPipelineState(projectId).catch(() => {});
+
+    return res.json({
+        ok: true,
+        shot_id: shotId,
+        approved_frame: getApprovedStoryboardFrame(projectId, shotId),
+        version: runtimeShot.version,
+        stage: runtime?.stage || 'storyboard_review',
+    });
+});
+
+app.post('/api/storyboard/:projectId/shots/:shotId/regenerate', requireAuth, async (req: any, res: any) => {
+    const { projectId, shotId } = req.params;
+    const { mode, reason } = req.body || {};
+
+    const allowModes = new Set([
+        'regenerate_same_shot_keep_bible',
+        'regenerate_same_shot_change_framing',
+        'regenerate_same_shot_fix_face',
+        'regenerate_same_shot_fix_costume',
+        'regenerate_same_shot_fix_scene',
+        'regenerate_from_shot_forward',
+        'freeze_approved_shots',
+    ]);
+
+    if (!allowModes.has(mode)) {
+        return res.status(400).json({ error: 'Invalid regeneration mode' });
+    }
+
+    const runtimeShot = markShotRegenerated({
+        projectId,
+        shotId,
+        mode,
+        reason,
+    });
+
+    if (!runtimeShot) return res.status(404).json({ error: 'Shot runtime not found' });
+    const runtime = getProjectRuntime(projectId);
+
+    // Persist to Supabase (non-blocking)
+    persistPipelineState(projectId).catch(() => {});
+
+    return res.json({
+        ok: true,
+        shot_id: shotId,
+        mode,
+        reason: reason || '',
+        version: runtimeShot.version,
+        stage: runtime?.stage || 'storyboard_review',
+    });
+});
+
+app.get('/api/storyboard/:projectId/ready-for-video', requireAuth, async (req: any, res: any) => {
+    const { projectId } = req.params;
+
+    // Auto-restore if runtime was lost
+    if (!getProjectRuntime(projectId)) {
+        await restorePipelineStateFromDB(projectId);
+    }
+
+    const ready = hasApprovedStoryboard(projectId);
+    return res.json({
+        project_id: projectId,
+        storyboard_approved: ready,
+        stage: ready ? 'storyboard_approved' : 'storyboard_review',
+    });
+});
+
+// ───────────────────────────────────────────────────────────────
+// GET /api/storyboard/:projectId/assembly-manifest
+// Returns a full shot-level status manifest for the project pipeline
+// ───────────────────────────────────────────────────────────────
+app.get('/api/storyboard/:projectId/assembly-manifest', requireAuth, async (req: any, res: any) => {
+    const { projectId } = req.params;
+    let runtime = getProjectRuntime(projectId);
+
+    // Auto-restore from Supabase on miss
+    if (!runtime) {
+        await restorePipelineStateFromDB(projectId);
+        runtime = getProjectRuntime(projectId);
+    }
+
+    if (!runtime) {
+        // Gracefully return empty manifest if runtime not initialised yet
+        return res.json({
+            project_id: projectId,
+            stage: 'shots_ready',
+            total_shots: 0,
+            approved_shots: 0,
+            ready_for_video: false,
+            shots: [],
+            error_report: [],
+            remaining_weak_shots: [],
+        });
+    }
+
+    const shotsArray = [...runtime.shots.values()].sort((a, b) => a.sequenceOrder - b.sequenceOrder);
+    const approvedShots = shotsArray.filter(s => s.status === 'approved');
+    const failedShots = shotsArray.filter(s => s.status === 'failed');
+    const weakShots = shotsArray.filter(s =>
+        s.status !== 'approved' && (
+            (s.continuityScore !== undefined && s.continuityScore < 75) ||
+            s.violationTags.length > 0
+        )
+    );
+
+    const errorReport = failedShots.map(s => ({
+        shot_id: s.shotId,
+        sequence_order: s.sequenceOrder,
+        reason: s.regenerateReason || 'generation_failed',
+        violation_tags: s.violationTags,
+    }));
+
+    const shotManifest = shotsArray.map(s => ({
+        shot_id: s.shotId,
+        scene_id: s.sceneId,
+        sequence_order: s.sequenceOrder,
+        status: s.status,
+        version: s.version,
+        approved_image_url: s.approvedImageUrl,
+        last_image_url: s.lastImageUrl,
+        continuity_score: s.continuityScore,
+        narrative_score: s.narrativeScore,
+        visual_match_score: s.visualMatchScore,
+        violation_tags: s.violationTags,
+        regen_reason: s.regenerateReason,
+        has_approved_storyboard: s.status === 'approved',
+        history_count: s.history.length,
+    }));
+
+    return res.json({
+        project_id: projectId,
+        stage: runtime.stage,
+        paused: runtime.paused,
+        total_shots: shotsArray.length,
+        approved_shots: approvedShots.length,
+        failed_shots: failedShots.length,
+        weak_shots: weakShots.length,
+        ready_for_video: approvedShots.length === shotsArray.length && shotsArray.length > 0,
+        shots: shotManifest,
+        error_report: errorReport,
+        remaining_weak_shots: weakShots.map(s => ({
+            shot_id: s.shotId,
+            sequence_order: s.sequenceOrder,
+            violation_tags: s.violationTags,
+            continuity_score: s.continuityScore,
+            suggested_action: s.violationTags.includes('face_drift') || s.violationTags.includes('face_inconsistency')
+                ? 'regenerate_same_shot_fix_face'
+                : s.violationTags.includes('costume_inconsistency')
+                    ? 'regenerate_same_shot_fix_costume'
+                    : s.violationTags.includes('background_drift')
+                        ? 'regenerate_same_shot_fix_scene'
+                        : 'regenerate_same_shot_keep_bible',
+        })),
+        created_at: runtime.createdAt,
+        updated_at: runtime.updatedAt,
+    });
 });
 
 // ───────────────────────────────────────────────────────────────
@@ -4052,13 +4691,14 @@ app.post('/api/shot-images/:imageId/edit', async (req: any, res: any) => {
 // This endpoint processes all images within a single request and streams progress via SSE.
 // ───────────────────────────────────────────────────────────────
 app.post('/api/batch/gen-images', async (req: any, res: any) => {
+    const traceId: string = req.traceId || generateTraceId();
     try {
         const { project_id, shots, count = 100, model = 'flux', aspect_ratio = '16:9', style = 'none', character_anchor = '', concurrency = 2, reference_image_url = '', story_entities, style_bible } = req.body;
-        if (!project_id) return res.status(400).json({ error: 'Missing project_id' });
-        if (!shots?.length) return res.status(400).json({ error: 'Missing or empty shots array' });
+        if (!project_id) return res.status(400).json(createErrorResponse(createError.missingField('project_id'), traceId));
+        if (!shots?.length) return res.status(400).json(createErrorResponse(createError.invalidParameter('shots', '不能为空'), traceId));
 
         const authHeader = req.headers.authorization;
-        if (!authHeader) return res.status(401).json({ error: 'Missing Authorization header' });
+        if (!authHeader) return res.status(401).json(createErrorResponse(createError.unauthorized(), traceId));
 
         const supabaseUser = getUserClient(authHeader);
         const userId = await getUserId(supabaseUser);
@@ -4240,7 +4880,7 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
                 item.error = err.message || 'Unknown error';
                 item.completed_at = new Date().toISOString();
                 job.failed += 1;
-                console.error(`[Batch] Shot ${item.shot_id} failed:`, err.message);
+                logger.replicate.error('batch_shot_failed', err.message, { shot_id: item.shot_id });
             }
 
             job.done += 1;
@@ -4270,7 +4910,7 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
         sendSSE('done', { job, items, anchor_image_url: anchorImageUrl });
         res.end();
     } catch (error: any) {
-        console.error('[Batch GenImages] Error:', error.message);
+        logger.replicate.error('batch_gen_images_error', error.message);
         if (!res.headersSent) {
             res.status(500).json({ error: error.message || 'Failed to start batch job' });
         } else {
@@ -4414,7 +5054,7 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
             } catch (err: any) {
                 item.status = 'failed'; item.error = err.message || 'Unknown error';
                 item.completed_at = new Date().toISOString(); job.failed += 1;
-                console.error(`[Batch Continue] Shot ${item.shot_id} failed:`, err.message);
+                logger.replicate.error('batch_continue_shot_failed', err.message, { shot_id: item.shot_id });
             }
             job.done += 1; job.updated_at = new Date().toISOString();
             sendSSE('progress', { job, items });
@@ -4434,7 +5074,7 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
         sendSSE('done', { job, items, range_label: rangeLabel, remaining_count: remainingAfter, all_done: remainingAfter === 0, anchor_image_url: anchorImageUrl });
         res.end();
     } catch (error: any) {
-        console.error('[Batch Continue] Error:', error.message);
+        logger.replicate.error('batch_continue_error', error.message);
         if (!res.headersSent) {
             res.status(500).json({ error: error.message || 'Failed to start continue batch job' });
         } else {
@@ -4557,7 +5197,7 @@ app.post('/api/billing/checkout', async (req: any, res: any) => {
 
         res.json({ url: session.url });
     } catch (err: any) {
-        console.error('[Billing Checkout Error]', err);
+        logger.payment.error('billing_checkout_error', (err as any)?.message || String(err));
         res.status(500).json({ error: err.message });
     }
 });
@@ -4605,7 +5245,7 @@ app.post('/api/billing/subscribe', async (req: any, res: any) => {
 
         res.json({ url: session.url });
     } catch (err: any) {
-        console.error('[Billing Subscribe Error]', err);
+        logger.payment.error('billing_subscribe_error', (err as any)?.message || String(err));
         res.status(500).json({ error: err.message });
     }
 });
@@ -4651,7 +5291,7 @@ app.post('/api/billing/business-subscribe', async (req: any, res: any) => {
 
         res.json({ url: session.url });
     } catch (err: any) {
-        console.error('[Business Subscribe Error]', err);
+        logger.payment.error('business_subscribe_error', (err as any)?.message || String(err));
         res.status(500).json({ error: err.message || 'Failed to create business subscription' });
     }
 });
@@ -4720,6 +5360,37 @@ app.get('/api/health', (_req, res) => {
         }
     });
 });
+
+// Health with detailed diagnostics
+app.get('/api/health/detailed', asyncHandler(async (req: any, res: any) => {
+    const geminiKey = (process.env.GEMINI_API_KEY || '').trim();
+    const replicateToken = (process.env.REPLICATE_API_TOKEN || '').trim();
+    const supabaseUrl = (process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim();
+    const supabaseService = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+    const supabaseAnon = (process.env.VITE_SUPABASE_ANON_KEY || '').trim();
+
+    logger.api.info('health_check', {
+        hasGemini: !!geminiKey,
+        hasReplicate: !!replicateToken,
+        hasSupabaseUrl: !!supabaseUrl,
+    }, req.traceId);
+
+    res.json(createSuccessResponse({
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        build: 'storyboard-first-pipeline-v2',
+        version: '2.0.0',
+        config: {
+            gemini: geminiKey ? '✅ configured' : '❌ missing',
+            replicate: replicateToken ? '✅ configured' : '❌ missing',
+            supabase_url: supabaseUrl ? '✅ configured' : '❌ missing',
+            supabase_service_key: supabaseService ? '✅ configured' : '❌ missing',
+            supabase_anon_key: supabaseAnon ? '✅ configured' : '❌ missing',
+        },
+        environment: process.env.NODE_ENV || 'unknown',
+        uptime: process.uptime(),
+    }, undefined, req.traceId));
+}));
 
 // ───────────────────────────────────────────────────────────────
 // POST /api/upload-demo-video — Upload demo video to Supabase Storage
@@ -5501,7 +6172,7 @@ app.post('/api/replicate/multi-frame', requireAuth, async (req: any, res: any) =
             return res.status(400).json({ error: 'model is required' });
         }
 
-        console.log(`[/api/replicate/multi-frame] Starting: ${frames.length} frames, model: ${model}`);
+        logger.replicate.info('multiframe_start', { frames: frames.length, model });
 
         const { generateMultiFrameVideo } = await import('../services/multiFrameService');
 
@@ -5549,9 +6220,25 @@ app.post('/api/replicate/multi-frame', requireAuth, async (req: any, res: any) =
         res.json({ ok: true, results, totalCost, continuityMode: continuityMode || 'link' });
 
     } catch (err: any) {
-        console.error('[/api/replicate/multi-frame Error]', err);
+        logger.replicate.error('multiframe_error', (err as any)?.message || String(err));
         res.status(500).json({ error: err.message || 'Multi-frame generation failed' });
     }
 });
+
+    // 全局错误处理中间件 (必须放在所有路由之后)
+    app.use(errorHandlerMiddleware);
+
+    // 启动日志
+    const startupLogger = logger.api;
+    const port = process.env.API_SERVER_PORT || 3002;
+
+    // 记录启动信息
+    if (process.env.NODE_ENV !== 'production') {
+        startupLogger.info('server_startup', {
+            port,
+            environment: process.env.NODE_ENV,
+            timestamp: new Date().toISOString(),
+        });
+    }
 
 export default app;

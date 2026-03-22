@@ -382,6 +382,9 @@ export const startVideoTask = async (
       continuity: promptOptions?.continuity,
       project_id: promptOptions?.project_id,
       shot_id: promptOptions?.shot_id,
+      // Only gate on storyboard approval when caller explicitly opts in.
+      // Auto-enabling it for every project_id+shot_id combo would block all normal video generation.
+      require_approved_storyboard: promptOptions?.requireApprovedStoryboard ?? false,
     })
   });
 

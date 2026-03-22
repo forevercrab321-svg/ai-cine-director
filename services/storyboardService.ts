@@ -44,16 +44,21 @@ export const saveStoryboard = async (
             }
         } else {
             // Create new project
-            const { data, error } = await supabase
-                .from('storyboards')
-                .insert({
+                // Include the project.id (Gemini-generated UUID) so the Supabase row
+                // gets the SAME primary key as the pipeline runtime — required for
+                // persistPipelineState() to update the correct row.
+                const insertPayload: any = {
                     user_id: userId,
                     title: project.project_title,
                     visual_style: project.visual_style,
-                    character_anchor: project.character_anchor
-                })
-                .select()
-                .single();
+                    character_anchor: project.character_anchor,
+                };
+                if (project.id) insertPayload.id = project.id;
+                const { data, error } = await supabase
+                    .from('storyboards')
+                    .insert(insertPayload)
+                    .select()
+                    .single();
 
             if (error) throw error;
             projectData = data;
@@ -62,16 +67,18 @@ export const saveStoryboard = async (
 
         // If update path found no row, create a new storyboard entry.
         if (!projectData || !storyboardId) {
-            const { data, error } = await supabase
-                .from('storyboards')
-                .insert({
+                const fallbackPayload: any = {
                     user_id: userId,
                     title: project.project_title,
                     visual_style: project.visual_style,
-                    character_anchor: project.character_anchor
-                })
-                .select()
-                .single();
+                    character_anchor: project.character_anchor,
+                };
+                if (project.id) fallbackPayload.id = project.id;
+                const { data, error } = await supabase
+                    .from('storyboards')
+                    .insert(fallbackPayload)
+                    .select()
+                    .single();
 
             if (error) throw error;
             projectData = data;

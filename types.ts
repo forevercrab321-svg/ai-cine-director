@@ -995,3 +995,170 @@ export interface MultiFrameProgress {
   message?: string;
   progress?: number; // 0-100
 }
+
+// ═══════════════════════════════════════════════════════════════
+// Storyboard-First Pipeline v2 Types
+// ═══════════════════════════════════════════════════════════════
+
+export type PipelineStage =
+  | 'script_ready'
+  | 'bible_ready'
+  | 'shots_ready'
+  | 'storyboard_generating'
+  | 'storyboard_review'
+  | 'storyboard_partial_failed'
+  | 'storyboard_approved'
+  | 'video_generating'
+  | 'video_partial_failed'
+  | 'assembly_ready'
+  | 'final_ready';
+
+export interface StoryPlan {
+  logline: string;
+  short_synopsis: string;
+  beat_sheet: string[];
+  scene_goals: Array<{
+    scene_id: string;
+    scene_number: number;
+    purpose: 'world_building' | 'character_intro' | 'conflict_escalation' | 'turning_point' | 'climax' | 'resolution';
+    narrative_goal: string;
+    pacing_note: string;
+  }>;
+  role_map: Array<{
+    character_id: string;
+    name: string;
+    function_in_story: string;
+    relationships: string[];
+  }>;
+}
+
+export interface CostumeBible {
+  character_id: string;
+  default_outfit_by_scene: Record<string, string>;
+  allowed_states: string[];
+  forbidden_outfit_drift: string[];
+}
+
+export interface SceneBible {
+  scene_id: string;
+  location: string;
+  architecture_traits: string;
+  time_of_day: string;
+  weather: string;
+  lighting_style: string;
+  palette: string;
+  texture_material: string;
+  atmosphere: string;
+  lens_language: string;
+  forbidden_scene_drift: string[];
+}
+
+export interface PropBible {
+  prop_id: string;
+  name: string;
+  must_keep_traits: string[];
+  scale: string;
+  material: string;
+  color: string;
+  continuity_states: string[];
+}
+
+export interface ShotContextPack {
+  shot_id: string;
+  scene_id: string;
+  sequence_order: number;
+  narrative_purpose: string;
+  involved_characters: string[];
+  emotional_beat: string;
+  action: string;
+  environment_state: Record<string, any>;
+  framing: string;
+  shot_size: string;
+  camera_angle: string;
+  camera_motion: string;
+  lens_hint: string;
+  subject_focus: string;
+  continuity_from_previous: string;
+  continuity_to_next: string;
+  previous_shot_summary?: Record<string, any> | null;
+}
+
+export interface StoryboardImageCandidate {
+  candidate_id: string;
+  shot_id: string;
+  image_url?: string;
+  image_prompt_payload: string;
+  video_prompt_payload: string;
+  continuity_score: number;
+  narrative_score: number;
+  visual_match_score: number;
+  violation_tags: string[];
+  created_at: string;
+}
+
+export interface ContinuityReport {
+  shot_id: string;
+  continuity_score: number;
+  narrative_score: number;
+  visual_match_score: number;
+  violation_tags: string[];
+  regen_recommendation:
+    | 'none'
+    | 'regenerate_same_shot_keep_bible'
+    | 'regenerate_same_shot_change_framing'
+    | 'regenerate_same_shot_fix_face'
+    | 'regenerate_same_shot_fix_costume'
+    | 'regenerate_same_shot_fix_scene'
+    | 'regenerate_from_shot_forward';
+  validated_at: string;
+}
+
+export interface ApprovedStoryboardFrame {
+  shot_id: string;
+  version: number;
+  image_url: string;
+  approved_at: string;
+  source_candidate_id: string;
+  report?: ContinuityReport;
+}
+
+export interface VideoShot {
+  shot_id: string;
+  version: number;
+  status: 'pending' | 'generating' | 'approved' | 'failed';
+  input_frame_url: string;
+  video_url?: string;
+  error?: string;
+}
+
+export interface RegenerationJob {
+  id: string;
+  shot_id: string;
+  project_id: string;
+  mode:
+    | 'regenerate_same_shot_keep_bible'
+    | 'regenerate_same_shot_change_framing'
+    | 'regenerate_same_shot_fix_face'
+    | 'regenerate_same_shot_fix_costume'
+    | 'regenerate_same_shot_fix_scene'
+    | 'regenerate_from_shot_forward'
+    | 'freeze_approved_shots';
+  reason: string;
+  from_version: number;
+  to_version: number;
+  created_at: string;
+}
+
+export interface AssemblyManifest {
+  project_id: string;
+  sequence_preview_url?: string;
+  final_cut_url?: string;
+  shot_manifest: Array<{
+    shot_id: string;
+    storyboard_frame_url?: string;
+    video_url?: string;
+    status: 'approved' | 'missing_storyboard' | 'missing_video' | 'failed';
+  }>;
+  error_report: string[];
+  remaining_weak_shots: string[];
+}

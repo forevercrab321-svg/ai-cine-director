@@ -30,6 +30,21 @@ export interface EditImageResult {
     generation: ImageGeneration;
 }
 
+export interface StoryboardValidationResult {
+    shot_context_pack: any;
+    continuity_report: {
+        shot_id: string;
+        continuity_score: number;
+        narrative_score: number;
+        visual_match_score: number;
+        violation_tags: string[];
+        regen_recommendation: string;
+        validated_at: string;
+    };
+    candidate_id: string;
+    stage: string;
+}
+
 /**
  * Generate a new image for a specific shot.
  * Uses the shot's image_prompt by default, with optional overrides.
@@ -120,4 +135,91 @@ export async function editShotImage(params: {
  */
 export function getImageCost(model: ImageModel = 'flux'): number {
     return IMAGE_MODEL_COSTS[model] ?? CREDIT_COSTS.IMAGE_FLUX;
+}
+
+export async function validateStoryboardShot(params: {
+    project_id: string;
+    shot_id: string;
+    image_url?: string;
+    shot?: any;
+    previous_shot?: any;
+    scene_state?: any;
+    character_state?: any;
+}): Promise<StoryboardValidationResult> {
+    const headers = await getAuthHeaders();
+    const response = await fetch(`/api/storyboard/${params.project_id}/shots/${params.shot_id}/validate`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(params),
+    });
+
+    if (!response.ok) {
+        const errData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+        throw new Error(errData.error || `Storyboard validation failed (${response.status})`);
+    }
+    return await response.json();
+}
+
+export async function approveStoryboardShot(params: {
+    project_id: string;
+    shot_id: string;
+    image_url?: string;
+}): Promise<any> {
+    const headers = await getAuthHeaders();
+    const response = await fetch(`/api/storyboard/${params.project_id}/shots/${params.shot_id}/approve`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(params),
+    });
+    if (!response.ok) {
+        const errData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+        throw new Error(errData.error || `Storyboard approval failed (${response.status})`);
+    }
+    return await response.json();
+}
+
+export async function regenerateStoryboardShot(params: {
+    project_id: string;
+    shot_id: string;
+    mode:
+    | 'regenerate_same_shot_keep_bible'
+    | 'regenerate_same_shot_change_framing'
+    | 'regenerate_same_shot_fix_face'
+    | 'regenerate_same_shot_fix_costume'
+    | 'regenerate_same_shot_fix_scene'
+    | 'regenerate_from_shot_forward'
+    | 'freeze_approved_shots';
+    reason?: string;
+}): Promise<any> {
+    const headers = await getAuthHeaders();
+    const response = await fetch(`/api/storyboard/${params.project_id}/shots/${params.shot_id}/regenerate`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(params),
+    });
+    if (!response.ok) {
+        const errData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+        throw new Error(errData.error || `Storyboard regeneration failed (${response.status})`);
+    }
+    return await response.json();
+}
+
+export async function getPipelineStatus(projectId: string): Promise<any> {
+    const headers = await getAuthHeaders();
+    const response = await fetch(`/api/pipeline/${projectId}/status`, { method: 'GET', headers });
+    if (!response.ok) {
+        const errData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+        throw new Error(errData.error || `Pipeline status failed (${response.status})`);
+    }
+    return await response.json();
+}
+
+export async function getAssemblyManifest(projectId: string): Promise<any> {
+    const headers = await getAuthHeaders();
+    const response = await fetch(`/api/storyboard/${projectId}/assembly-manifest`, { method: 'GET', headers });
+    if (!response.ok) {
+        const errData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+        throw new Error(errData.error || `Assembly manifest failed (${response.status})`);
+    }
+    return await response.json();
 }

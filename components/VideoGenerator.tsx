@@ -148,6 +148,10 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
   const [isFinalizingVideo, setIsFinalizingVideo] = useState(false);
   const [chainProgress, setChainProgress] = useState({ completed: 0, total: 0 });
 
+  // ★ Storyboard approval gate
+  const [storyboardWarning, setStoryboardWarning] = useState<'not_approved' | null>(null);
+  const [approvalChecked, setApprovalChecked] = useState(false);
+
   // ★ Auto-audio: called automatically when a video finishes generating
   const generateAutoAudio = async (sceneNum: number, scene: Scene) => {
     // ★ Use audio_description first, then shot_type (which holds video_motion_prompt), then visual_description
@@ -258,7 +262,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
     return () => clearInterval(interval);
   }, [activeVideoJobs]);
 
-  const handleRenderChain = async () => {
+  const handleRenderChain = async (force = false) => {
     if (!isAuthenticated) return alert("请先登录以生成分镜序列。");
     if (isRenderingChain) return;
     if (!project.scenes || project.scenes.length === 0) return alert("请先生成分镜脚本。");
@@ -271,6 +275,26 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
       openPricingModal();
       return;
     }
+
+    // ★ Pre-flight: check storyboard approval status (non-blocking soft gate)
+    if (project.id && !approvalChecked && !force) {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const resp = await fetch(`/api/storyboard/${project.id}/ready-for-video`, {
+          headers: { Authorization: `Bearer ${session?.access_token}` },
+        });
+        if (resp.ok) {
+          const readyData = await resp.json();
+          if (!readyData.storyboard_approved) {
+            setStoryboardWarning('not_approved');
+            setApprovalChecked(true);
+            return; // Block until user confirms
+          }
+        }
+      } catch { /* non-fatal: skip if pipeline runtime not initialized yet */ }
+      setApprovalChecked(true);
+    }
+    setStoryboardWarning(null);
 
     setIsRenderingChain(true);
     setChainProgress({ completed: 0, total: project.scenes.length });
@@ -752,6 +776,35 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
             onClick={() => setChainError(null)}
             className="text-red-400/60 hover:text-red-300 text-lg leading-none shrink-0"
           >×</button>
+        </div>
+      )}
+
+      {/* ★ Storyboard approval gate warning */}
+      {storyboardWarning === 'not_approved' && (
+        <div className="max-w-2xl mx-auto mb-4 p-4 bg-amber-900/30 border border-amber-500/40 rounded-xl flex items-start gap-3 animate-in fade-in">
+          <span className="text-amber-400 text-xl mt-0.5 shrink-0">⚠️</span>
+          <div className="flex-1">
+            <p className="text-amber-300 font-semibold text-sm">分镜故事板未全部通过审批</p>
+            <p className="text-amber-400/80 text-xs mt-1">
+              建议先在「镜头列表」中为每个镜头生成图片并点击 <strong>Approve</strong>，
+              确保人物、服装、场景一致性后再生成视频，效果更佳。
+            </p>
+            <div className="flex gap-2 mt-3">
+              <button
+                onClick={() => { setStoryboardWarning(null); setApprovalChecked(true); handleRenderChain(true); }}
+                className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold"
+              >
+                强制继续生成
+              </button>
+              <button
+                onClick={() => { setStoryboardWarning(null); onBackToScript(); }}
+                className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-bold"
+              >
+                返回审批故事板
+              </button>
+            </div>
+          </div>
+          <button onClick={() => setStoryboardWarning(null)} className="text-amber-400/60 hover:text-amber-300 text-lg leading-none shrink-0">×</button>
         </div>
       )}
 

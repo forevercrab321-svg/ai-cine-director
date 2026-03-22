@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { AppProvider, useAppContext } from './context/AppContext';
 import { generateStoryboard, analyzeImageForAnchor } from './services/geminiService';
 import { saveStoryboard } from './services/storyboardService';
-import { StoryboardProject } from './types';
+import { StoryboardProject, PipelineStage } from './types';
 import Header from './components/Header';
 import SettingsModal from './components/SettingsModal';
 import PricingModal from './components/PricingModal';
@@ -36,6 +36,7 @@ const MainLayout: React.FC = () => {
   } = useAppContext();
 
   const [workflowStage, setWorkflowStageRaw] = useState<'input' | 'scripting' | 'shots' | 'production'>('input');
+  const [pipelineStage, setPipelineStage] = useState<PipelineStage>('script_ready');
   const workflowStageRef = useRef(workflowStage);
   const [storyIdea, setStoryIdea] = useState('A cyberpunk cat delivering pizza in Neo-Tokyo');
   const [project, setProject] = useState<StoryboardProject | null>(null);
@@ -128,6 +129,7 @@ const MainLayout: React.FC = () => {
       console.log(`[App] Generating with extractedAnchor: "${extractedAnchor?.substring(0, 80) || 'EMPTY'}..." (length: ${extractedAnchor?.length || 0})`);
       const data = await generateStoryboard(storyIdea, settings.videoStyle, settings.lang, settings.generationMode, extractedAnchor, sceneCount, forceHasCast, projectType);
       setProject(data);
+      setPipelineStage((data as any)?.pipeline_state?.current_stage || 'shots_ready');
 
       // ★ Auto-populate anchor from story entities if still empty
       if (!extractedAnchor && data.story_entities?.length > 0) {
@@ -192,12 +194,18 @@ const MainLayout: React.FC = () => {
     // We don't block UI for saving, but maybe show a toast or small indicator if needed
     // For now, fire and forget or simple await
     try {
-      await saveStoryboard(profile.id, project);
+      const saved = await saveStoryboard(profile.id, project);
+      // Sync project state: if Supabase returned a different ID (shouldn't happen after our
+      // storyboardService fix, but be defensive), update so pipeline APIs use the correct key.
+      if (saved && saved.id && saved.id !== project.id) {
+        setProject(saved);
+      }
     } catch (e) {
       console.error("Failed to save storyboard", e);
     }
 
     setWorkflowStage('production');
+    setPipelineStage('video_generating');
   };
 
   // Authentication flow:
@@ -289,6 +297,36 @@ const MainLayout: React.FC = () => {
           <div>
             <p className="text-xs text-indigo-400 font-bold uppercase tracking-widest">{t(settings.lang, 'welcomeBack')}</p>
             <h2 className="text-xl font-bold text-white">{profile?.name || profile?.email || '导演'} <span className="text-slate-500 font-normal">| {profile?.role || 'Creator'}</span></h2>
+          </div>
+          <div className="text-right">
+            <p className="text-[10px] uppercase tracking-widest text-slate-500">Pipeline</p>
+            <p className={`text-[11px] font-bold px-2 py-0.5 rounded-full inline-block ${
+              pipelineStage === 'final_ready' || pipelineStage === 'assembly_ready'
+                ? 'bg-emerald-500/20 text-emerald-300'
+                : pipelineStage === 'storyboard_approved'
+                  ? 'bg-teal-500/20 text-teal-300'
+                  : pipelineStage === 'storyboard_review'
+                    ? 'bg-indigo-500/20 text-indigo-300'
+                    : pipelineStage === 'video_generating' || pipelineStage === 'storyboard_generating'
+                      ? 'bg-amber-500/20 text-amber-300 animate-pulse'
+                      : pipelineStage === 'storyboard_partial_failed' || pipelineStage === 'video_partial_failed'
+                        ? 'bg-red-500/20 text-red-400'
+                        : 'bg-slate-700/50 text-slate-400'
+            }`}>
+              {{
+                script_ready: '📝 脚本就绪',
+                bible_ready: '📖 圣经就绪',
+                shots_ready: '🎬 镜头就绪',
+                storyboard_generating: '🖼 生成中…',
+                storyboard_review: '👁 审批中',
+                storyboard_partial_failed: '⚠️ 部分失败',
+                storyboard_approved: '✅ 分镜已批',
+                video_generating: '🎥 渲染中…',
+                video_partial_failed: '⚠️ 渲染部分失败',
+                assembly_ready: '🎞 合成就绪',
+                final_ready: '🏁 完成',
+              }[pipelineStage] ?? pipelineStage}
+            </p>
           </div>
         </div>
 
@@ -429,8 +467,8 @@ const MainLayout: React.FC = () => {
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-2xl font-bold text-white">{t(settings.lang, 'writersRoom')}</h2>
               <div className="flex gap-3">
-                <button onClick={() => setWorkflowStage('input')} className="text-slate-400 hover:text-white px-4 py-2 text-sm">{t(settings.lang, 'backToConcept')}</button>
-                <button onClick={() => setWorkflowStage('shots')} className="px-6 py-2 bg-amber-600 hover:bg-amber-500 rounded-lg text-white font-bold shadow-lg shadow-amber-500/20">
+                <button onClick={() => { setWorkflowStage('input'); setPipelineStage('script_ready'); }} className="text-slate-400 hover:text-white px-4 py-2 text-sm">{t(settings.lang, 'backToConcept')}</button>
+                <button onClick={() => { setWorkflowStage('shots'); setPipelineStage('storyboard_generating'); }} className="px-6 py-2 bg-amber-600 hover:bg-amber-500 rounded-lg text-white font-bold shadow-lg shadow-amber-500/20">
                   🎬 拆分镜头 &rarr;
                 </button>
                 <button onClick={handleGoToProduction} className="px-6 py-2 bg-green-600 hover:bg-green-500 rounded-lg text-white font-bold shadow-lg shadow-green-500/20">
@@ -523,7 +561,7 @@ const MainLayout: React.FC = () => {
             project={project}
             referenceImageDataUrl={referenceImageDataUrl}
             shotCount={shotCount}
-            onBack={() => setWorkflowStage('scripting')}
+            onBack={() => { setWorkflowStage('scripting'); setPipelineStage('shots_ready'); }}
             onUpdateScene={handleSceneSync}
             onSetGlobalAnchor={handleSetGlobalAnchor}
           />
@@ -533,7 +571,7 @@ const MainLayout: React.FC = () => {
           <VideoGenerator
             project={project}
             referenceImageDataUrl={referenceImageDataUrl}
-            onBackToScript={() => setWorkflowStage('scripting')}
+            onBackToScript={() => { setWorkflowStage('scripting'); setPipelineStage('storyboard_review'); }}
             onUpdateScene={handleSceneSync}
           />
         )}

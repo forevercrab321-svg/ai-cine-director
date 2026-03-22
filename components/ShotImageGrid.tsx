@@ -5,7 +5,14 @@
  */
 import React, { useState, useRef } from 'react';
 import { Shot, ShotImage, ImageModel, AspectRatio, VideoStyle, MODEL_COSTS, StoryEntity, ContinuityConfig, ContinuityStrictness } from '../types';
-import { generateShotImage, editShotImage, getImageCost, GenerateImageResult } from '../services/shotImageService';
+import {
+    generateShotImage,
+    editShotImage,
+    getImageCost,
+    validateStoryboardShot,
+    approveStoryboardShot,
+    regenerateStoryboardShot,
+} from '../services/shotImageService';
 import { startVideoTask, checkPredictionStatus } from '../services/replicateService';
 import { useAppContext } from '../context/AppContext';
 import { LoaderIcon } from './IconComponents';
@@ -58,6 +65,10 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
     const [lockStyle, setLockStyle] = useState(true);
     const [lockCostume, setLockCostume] = useState(true);
     const [usePrevApprovedRef, setUsePrevApprovedRef] = useState(true);
+    const [validationReport, setValidationReport] = useState<any | null>(null);
+    const [isValidating, setIsValidating] = useState(false);
+    const [isApproving, setIsApproving] = useState(false);
+    const [regenMode, setRegenMode] = useState<'regenerate_same_shot_keep_bible' | 'regenerate_same_shot_change_framing' | 'regenerate_same_shot_fix_face' | 'regenerate_same_shot_fix_costume' | 'regenerate_same_shot_fix_scene' | 'regenerate_from_shot_forward'>('regenerate_same_shot_keep_bible');
 
     const continuityPayload: ContinuityConfig = {
         strictness,
@@ -283,6 +294,69 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
         onImagesChange(filtered);
     };
 
+    const handleValidateStoryboard = async () => {
+        if (!projectId || !primaryImage?.url) return;
+        setIsValidating(true);
+        setError(null);
+        try {
+            const result = await validateStoryboardShot({
+                project_id: projectId,
+                shot_id: shot.shot_id,
+                image_url: primaryImage.url,
+                shot,
+            });
+            setValidationReport(result.continuity_report);
+        } catch (e: any) {
+            setError(e.message || 'Validation failed');
+        } finally {
+            setIsValidating(false);
+        }
+    };
+
+    const handleApproveStoryboard = async () => {
+        if (!projectId || !primaryImage?.url) return;
+        setIsApproving(true);
+        setError(null);
+        try {
+            await approveStoryboardShot({
+                project_id: projectId,
+                shot_id: shot.shot_id,
+                image_url: primaryImage.url,
+            });
+            setValidationReport((prev: any) => ({ ...(prev || {}), approved: true }));
+        } catch (e: any) {
+            setError(e.message || 'Approval failed');
+        } finally {
+            setIsApproving(false);
+        }
+    };
+
+    const handleRegenerateStoryboard = async () => {
+        if (!projectId) return;
+        setError(null);
+        try {
+            await regenerateStoryboardShot({
+                project_id: projectId,
+                shot_id: shot.shot_id,
+                mode: regenMode,
+                reason: validationReport?.violation_tags?.join(', ') || 'manual regeneration',
+            });
+
+            const deltaByMode: Record<string, string> = {
+                regenerate_same_shot_keep_bible: 'Keep all bible locks unchanged. Improve continuity only.',
+                regenerate_same_shot_change_framing: 'Keep identity and scene fixed. Change framing and composition only.',
+                regenerate_same_shot_fix_face: 'Fix face identity consistency. Keep all else unchanged.',
+                regenerate_same_shot_fix_costume: 'Fix costume consistency. Keep identity and scene unchanged.',
+                regenerate_same_shot_fix_scene: 'Fix scene structure and lighting continuity. Keep character unchanged.',
+                regenerate_from_shot_forward: 'Regenerate with forward continuity alignment from this shot onward.',
+            };
+
+            await handleGenerate(deltaByMode[regenMode]);
+        } catch (e: any) {
+            setError(e.message || 'Regeneration failed');
+        }
+    };
+
     return (
         <div className="space-y-3">
             <div className="rounded-lg border border-slate-700/60 bg-slate-900/60 p-2.5 text-[11px]">
@@ -299,6 +373,65 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
                         </select>
                     </label>
                 </div>
+                {projectId && primaryImage?.url && (
+                    <div className="mt-2 pt-2 border-t border-slate-700/50 flex flex-wrap items-center gap-2">
+                        <button
+                            onClick={handleValidateStoryboard}
+                            disabled={isValidating}
+                            className="px-2.5 py-1 rounded bg-indigo-700/70 hover:bg-indigo-600 text-white text-[11px] font-semibold disabled:opacity-50"
+                        >
+                            {isValidating ? 'Validating...' : 'Validate'}
+                        </button>
+                        <button
+                            onClick={handleApproveStoryboard}
+                            disabled={isApproving || validationReport?.approved}
+                            className={`px-2.5 py-1 rounded text-white text-[11px] font-semibold disabled:opacity-70 transition-colors
+                                ${validationReport?.approved
+                                    ? 'bg-emerald-600 cursor-default'
+                                    : 'bg-emerald-700/70 hover:bg-emerald-600'}`}
+                        >
+                            {isApproving ? 'Approving...' : validationReport?.approved ? '✅ Approved' : 'Approve ✓'}
+                        </button>
+                        <select
+                            value={regenMode}
+                            onChange={(e) => setRegenMode(e.target.value as any)}
+                            className="bg-slate-800 border border-slate-600 rounded px-1.5 py-1 text-[11px]"
+                        >
+                            <option value="regenerate_same_shot_keep_bible">regen keep bible</option>
+                            <option value="regenerate_same_shot_change_framing">regen change framing</option>
+                            <option value="regenerate_same_shot_fix_face">regen fix face</option>
+                            <option value="regenerate_same_shot_fix_costume">regen fix costume</option>
+                            <option value="regenerate_same_shot_fix_scene">regen fix scene</option>
+                            <option value="regenerate_from_shot_forward">regen from shot forward</option>
+                        </select>
+                        <button
+                            onClick={handleRegenerateStoryboard}
+                            disabled={isGenerating}
+                            className="px-2.5 py-1 rounded bg-amber-700/70 hover:bg-amber-600 text-white text-[11px] font-semibold disabled:opacity-50"
+                        >
+                            Regenerate
+                        </button>
+                        {validationReport && (
+                            <div className="flex flex-col gap-0.5 w-full mt-1">
+                                <span className="text-[11px] text-slate-300">
+                                    C:<span className={`font-bold ml-0.5 ${(validationReport.continuity_score ?? 0) >= 80 ? 'text-emerald-400' : (validationReport.continuity_score ?? 0) >= 65 ? 'text-amber-400' : 'text-red-400'}`}>{validationReport.continuity_score ?? '-'}</span>
+                                    {' '}N:<span className={`font-bold ml-0.5 ${(validationReport.narrative_score ?? 0) >= 80 ? 'text-emerald-400' : 'text-amber-400'}`}>{validationReport.narrative_score ?? '-'}</span>
+                                    {' '}V:<span className={`font-bold ml-0.5 ${(validationReport.visual_match_score ?? 0) >= 80 ? 'text-emerald-400' : 'text-amber-400'}`}>{validationReport.visual_match_score ?? '-'}</span>
+                                    {validationReport.regen_recommendation && validationReport.regen_recommendation !== 'none' && (
+                                        <span className="ml-2 text-amber-400/80">→ {validationReport.regen_recommendation.replace('regenerate_same_shot_', '').replace(/_/g, ' ')}</span>
+                                    )}
+                                </span>
+                                {validationReport.violation_tags?.length > 0 && (
+                                    <div className="flex flex-wrap gap-1">
+                                        {validationReport.violation_tags.map((tag: string) => (
+                                            <span key={tag} className="px-1.5 py-0.5 rounded bg-red-900/40 text-red-300 text-[10px]">{tag.replace(/_/g, ' ')}</span>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
             {/* Error */}
             {error && (
