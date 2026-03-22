@@ -124,7 +124,13 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
         body: JSON.stringify({ email: email })
       });
 
-      const data = await res.json();
+      const raw = await res.text();
+      let data: any = {};
+      try {
+        data = raw ? JSON.parse(raw) : {};
+      } catch {
+        data = { error: raw || 'Server returned non-JSON error' };
+      }
 
       if (!res.ok) {
         console.error('[Landing] Backend error:', data);
@@ -167,7 +173,13 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
         body: JSON.stringify({ email: email })
       });
 
-      const data = await res.json();
+      const raw = await res.text();
+      let data: any = {};
+      try {
+        data = raw ? JSON.parse(raw) : {};
+      } catch {
+        data = { error: raw || 'Server returned non-JSON error' };
+      }
 
       if (!res.ok) {
         console.error('[Landing] Resend error:', data);
