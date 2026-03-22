@@ -639,6 +639,11 @@ const getClientIp = (req: any): string => {
     return String(raw).split(',')[0].trim() || 'unknown';
 };
 
+const isValidEmailFormat = (value: string): boolean => {
+    if (!value) return false;
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+};
+
 const enforceRateLimit = (req: any, res: any, options: {
     key: string;
     maxRequests: number;
@@ -888,6 +893,9 @@ app.post('/api/auth/ensure-user', async (req: any, res: any) => {
     try {
         const email = String(req.body?.email || '').trim().toLowerCase();
         if (!email) return res.status(400).json({ error: 'Missing email' });
+        if (!isValidEmailFormat(email)) {
+            return res.status(400).json({ error: 'Invalid email format', code: 'INVALID_EMAIL' });
+        }
 
         const supabaseAdmin = getSupabaseAdmin();
 
@@ -930,6 +938,9 @@ app.post('/api/auth/generate-link', requireAuth, async (req: any, res: any) => {
         const email = String(req.body?.email || '').trim().toLowerCase();
         const redirectTo = String(req.body?.redirectTo || '').trim();
         if (!email) return res.status(400).json({ error: 'Missing email' });
+        if (!isValidEmailFormat(email)) {
+            return res.status(400).json({ error: 'Invalid email format', code: 'INVALID_EMAIL' });
+        }
 
         if (!enforceRateLimit(req, res, {
             key: 'auth-generate-link',
@@ -964,6 +975,9 @@ app.post('/api/auth/send-otp', async (req: any, res: any) => {
     try {
         const email = String(req.body?.email || '').trim().toLowerCase();
         if (!email) return res.status(400).json({ error: 'Missing email' });
+        if (!isValidEmailFormat(email)) {
+            return res.status(400).json({ error: 'Invalid email format', code: 'INVALID_EMAIL' });
+        }
 
         if (!enforceRateLimit(req, res, {
             key: 'auth-send-otp',
@@ -1088,6 +1102,9 @@ app.post('/api/auth/verify-otp', async (req: any, res: any) => {
 
         if (!email || !code) {
             return res.status(400).json({ error: 'Missing email or code' });
+        }
+        if (!isValidEmailFormat(email)) {
+            return res.status(400).json({ error: 'Invalid email format', code: 'INVALID_EMAIL' });
         }
 
         if (!enforceRateLimit(req, res, {
