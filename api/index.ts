@@ -993,19 +993,17 @@ app.post('/api/auth/send-otp', async (req: any, res: any) => {
 
         const supabaseAdmin = getSupabaseAdmin();
 
-        // 1) Ensure user exists
-        let userId = await findUserIdByEmail(supabaseAdmin, email);
-        if (!userId) {
-            const { data: createdUser, error } = await supabaseAdmin.auth.admin.createUser({
-                email,
-                email_confirm: true,
-            });
-            if (error && !isUserAlreadyExistsError(error)) {
-                logger.auth.error('otp_create_user_failed', error.message);
-                return res.status(500).json({ error: error.message });
-            }
-            userId = createdUser?.user?.id || await findUserIdByEmail(supabaseAdmin, email);
+        // 1) Ensure user exists (fast path for serverless: avoid listUsers scan)
+        let userId: string | undefined;
+        const { data: createdUser, error: createErr } = await supabaseAdmin.auth.admin.createUser({
+            email,
+            email_confirm: true,
+        });
+        if (createErr && !isUserAlreadyExistsError(createErr)) {
+            logger.auth.error('otp_create_user_failed', createErr.message);
+            return res.status(500).json({ error: createErr.message });
         }
+        userId = createdUser?.user?.id;
 
         // 2) Generate magic link (Admin API — does NOT send email)
         const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
