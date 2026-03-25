@@ -4314,6 +4314,7 @@ async function persistPipelineState(projectId: string): Promise<void> {
     if (!runtime) return;
     try {
         const serialized = serializePipelineState(runtime);
+        const supabaseAdmin = getSupabaseAdmin();
         await supabaseAdmin
             .from('storyboards')
             .update({ pipeline_state: serialized as any })
@@ -4327,6 +4328,7 @@ async function persistPipelineState(projectId: string): Promise<void> {
 // Helper: restore pipeline state from Supabase if runtime is missing
 async function restorePipelineStateFromDB(projectId: string): Promise<boolean> {
     try {
+        const supabaseAdmin = getSupabaseAdmin();
         const { data, error } = await supabaseAdmin
             .from('storyboards')
             .select('pipeline_state')

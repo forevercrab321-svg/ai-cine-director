@@ -1,5 +1,8 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 /* AI Cine-Director - Custom Styles */
-/* Tailwind is loaded via CDN in index.html */
 /* This file is for additional custom styles */
 
 /* Smooth animations */
