@@ -1,9 +1,0 @@
-{
-    "framework": "vite",
-    "buildCommand": "vite build",
-    "outputDirectory": "dist",
-    "installCommand": "npm install",
-    "rewrites": [
-        { "source": "/api/auth/send-otp", "destination": "/api/route.ts" }
-    ]
-}
