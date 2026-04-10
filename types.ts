@@ -380,6 +380,10 @@ export type VideoModel =
   | 'seedance_pro'          // ★ ByteDance Seedance Pro - 首帧尾帧 $0.30-0.72
   | 'sora_2';              // ★ OpenAI Sora 2 - 最新AI视频 $2.50
 
+  // ★ 2026年新增顶级模型
+  | 'veo_3_1'              // ★ Google Veo 3.1 - 最高质量升级版 4K+原生音频
+  | 'kling_2_6_pro';       // ★ 快手Kling 2.6 Pro - 顶级物理升级版 原生音频+Lip-sync
+
 export type GenerationMode = 'storyboard' | 'story' | 'loose' | 'balanced' | 'strict_reference' | 'extreme_lock';
 
 export interface AnchorPackage {
@@ -535,9 +539,11 @@ export const MODEL_COSTS: Record<VideoModel | 'DEFAULT', number> = {
   wan_2_2_fast: 8,           // API: ~$0.02/video → 8 💎  ⚡ 最便宜
   hailuo_02_fast: 22,        // API: ~$0.10/video → 22 💎  🇨🇳 均衡之选
 
-  // ★ 顶级画质模型 (4个) - 电影级质量
+  // ★ 顶级画质模型 (6个) - 电影级质量
   kling_2_5_pro: 85,        // API: ~$0.50/video → 85 💎  🏆 顶级物理
+  kling_2_6_pro: 110,       // API: ~$0.80/video → 110 💎  🏆🔥 顶级物理升级版
   veo_3: 300,               // API: ~$3.00/video → 300 💎  👑 最高质量
+  veo_3_1: 400,             // API: ~$4.00/video → 400 💎  👑🔥 最高质量升级版 4K
   seedance_pro: 55,         // API: ~$0.35/video → 55 💎  🎬 首帧尾帧
   sora_2: 250,             // API: ~$2.50/video → 250 💎  🤖 OpenAI最新
 
@@ -556,9 +562,11 @@ export const REPLICATE_MODEL_PATHS: Record<VideoModel | ImageModel, string> = {
   wan_2_2_fast: "wan-video/wan-2.2-i2v-fast",
   hailuo_02_fast: "minimax/hailuo-02-fast",
 
-  // ★ 顶级画质模型 (4个)
+  // ★ 顶级画质模型 (6个) - 电影级质量
   kling_2_5_pro: "kwaivgi/kling-v2.5-turbo-pro",
+  kling_2_6_pro: "kwaivgi/kling-v2.6",
   veo_3: "google/veo-3",
+  veo_3_1: "google/veo-3.1",
   seedance_pro: "bytedance/seedance-1-pro",
   sora_2: "openai/sora-2",
 
@@ -622,7 +630,7 @@ export const MODEL_METADATA: Record<VideoModel, { label: string; tags: string[];
     speed: "⚡⚡⚡⚡ 41秒"
   },
 
-  // ★ 顶级画质模型 (3个) - 电影级质量
+  // ★ 顶级画质模型 (6个) - 电影级质量
   kling_2_5_pro: {
     label: "Kling 2.5 Pro (快手)",
     tags: ["🏆 顶级物理", "🎬 电影级", "📹 1080p", "🏷️ 5-10秒"],
@@ -630,6 +638,15 @@ export const MODEL_METADATA: Record<VideoModel, { label: string; tags: string[];
     priceLabel: "85 credits",
     resolution: "720p-1080p",
     duration: "5-10秒",
+    speed: "⚡⚡⚡ 2-4分钟"
+  },
+  kling_2_6_pro: {
+    label: "Kling 2.6 Pro (快手)",
+    tags: ["🏆🔥 顶级升级", "🎬 电影级", "🔊 原生音频", "💋 Lip-sync", "📹 1080p", "🏷️ 10-30秒"],
+    badge: "🔥 New",
+    priceLabel: "110 credits",
+    resolution: "720p-1080p",
+    duration: "10-30秒",
     speed: "⚡⚡⚡ 2-4分钟"
   },
   veo_3: {
@@ -640,6 +657,15 @@ export const MODEL_METADATA: Record<VideoModel, { label: string; tags: string[];
     resolution: "720p-1080p",
     duration: "8秒",
     speed: "⚡⚡⚡ 59秒"
+  },
+  veo_3_1: {
+    label: "Veo 3.1 (Google)",
+    tags: ["👑🔥 最高升级", "🎬 电影级", "🔊 原生音频", "📹 4K", "🏷️ 60秒"],
+    badge: "👑🔥 2026",
+    priceLabel: "400 credits",
+    resolution: "1080p-4K",
+    duration: "60秒",
+    speed: "⚡⚡⚡⚡ 59秒"
   },
   seedance_pro: {
     label: "Seedance Pro (ByteDance)",
@@ -683,7 +709,9 @@ export const MODEL_MULTIPLIERS: Record<VideoModel, number> = {
 
   // ★ 顶级画质模型
   kling_2_5_pro: 1.6,
+  kling_2_6_pro: 1.8,
   veo_3: 2.0,
+  veo_3_1: 2.2,
   seedance_pro: 1.3,
   sora_2: 1.8
 };

@@ -66,9 +66,11 @@ type VideoModel =
     | 'wan_2_2_fast'           // ★ Alibaba Wan 2.2 - 性价比之王
     | 'hailuo_02_fast'        // ★ MiniMax Hailuo-02 - 均衡之选
 
-    // ★ 顶级画质模型 (4个) - 电影级质量
+    // ★ 顶级画质模型 (6个) - 电影级质量
     | 'kling_2_5_pro'        // ★ 快手Kling 2.5 Pro - 顶级物理
+    | 'kling_2_6_pro'        // ★ 快手Kling 2.6 Pro - 顶级物理升级版
     | 'veo_3'                // ★ Google Veo 3 - 最高质量
+    | 'veo_3_1'              // ★ Google Veo 3.1 - 最高质量升级版
     | 'seedance_pro'          // ★ ByteDance Seedance Pro - 首帧尾帧
     | 'sora_2';              // ★ OpenAI Sora 2 - 最新AI
 type ImageModel = 'flux' | 'flux_schnell' | 'nano_banana';
@@ -116,9 +118,11 @@ const REPLICATE_MODEL_PATHS: Record<VideoModel | ImageModel, string> = {
     wan_2_2_fast: "wan-video/wan-2.2-i2v-fast",
     hailuo_02_fast: "minimax/hailuo-02-fast",
 
-    // ★ 顶级画质模型 (4个)
+    // ★ 顶级画质模型 (6个)
     kling_2_5_pro: "kwaivgi/kling-v2.5-turbo-pro",
+    kling_2_6_pro: "kwaivgi/kling-v2.6",
     veo_3: "google/veo-3",
+    veo_3_1: "google/veo-3.1",
     seedance_pro: "bytedance/seedance-1-pro",
     sora_2: "openai/sora-2",
 
@@ -139,7 +143,9 @@ const VIDEO_MODEL_COSTS: Record<VideoModel, number> = {
     wan_2_2_fast: 8,
     hailuo_02_fast: 22,
     kling_2_5_pro: 85,
+    kling_2_6_pro: 110,
     veo_3: 300,
+    veo_3_1: 400,
     seedance_pro: 55,
     sora_2: 250
 };
@@ -2116,7 +2122,8 @@ app.get('/api/replicate/status/:id', requireAuth, async (req: any, res: any) => 
 
 // --- AI Routes (Migrated from Gemini to MiniMax) ---
 
-const MINIMAX_TEXT_MODEL = 'MiniMax-Text-01';
+// ★ 2026年升级: MiniMax-M2.1 (最新旗舰模型, 超越MiniMax-Text-01)
+const MINIMAX_TEXT_MODEL = 'M2.1';
 
 const getMinimaxAI = () => {
     const apiKey = process.env.VITE_MINIMAX_API_KEY || process.env.MINIMAX_API_KEY;
