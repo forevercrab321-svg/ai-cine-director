@@ -135,33 +135,34 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
 
   const handleVerifyOtp = (e: React.FormEvent) => {
     e.preventDefault();
-    if (otp.length < 6) return; // Supabase OTP 可能是 6 或 8 位
+    if (otp.length < 6) return;
 
     setIsLoading(true);
 
     handleAction(async () => {
       try {
-        // 先尝试 magiclink 类型（signInWithOtp 发送的是 magic link）
-        const { error } = await supabase.auth.verifyOtp({
-          email: email,
-          token: otp,
-          type: 'magiclink'
+        // 使用自定义 API 验证 OTP
+        const res = await fetch('/api/auth/verify-otp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, otp })
         });
 
-        if (error) {
-          console.error('[Auth] magiclink verify failed:', error.message, error.status);
-          // 如果 magiclink 失败，再尝试 email 类型
-          const { error: emailError } = await supabase.auth.verifyOtp({
-            email: email,
-            token: otp,
-            type: 'email'
-          });
-          if (emailError) {
-            console.error('[Auth] email verify also failed:', emailError.message, emailError.status);
-            throw emailError;
-          }
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.message || data.error || 'Verification failed');
         }
-        // 验证成功，Auth state change 由 AppContext 捕获
+
+        // 保存 session token 到 localStorage
+        if (data.sessionToken) {
+          localStorage.setItem('auth_session_token', data.sessionToken);
+          localStorage.setItem('auth_user_id', data.userId || '');
+        }
+
+        console.log('[Auth] OTP verified successfully via custom API!');
+        // 验证成功，登录
+        onLogin(true);
       } catch (error: any) {
         console.error('[Auth] OTP verification error:', error);
         const msg = error?.status === 403 || error?.message?.includes('403')
@@ -293,7 +294,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
                 disabled={isLoading || otp.length < 6}
                 className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full font-bold transition-all shadow-lg shadow-indigo-500/25 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
               >
-                {isLoading ? <LoaderIcon className="w-5 h-5" /> : t(lang, 'verifyCode')}
+                {isLoading ? <LoaderIcon className="w-5 h-5 animate-spin" /> : (lang === 'zh' ? '确认并登录' : 'Confirm & Login')}
               </button>
 
               {/* Resend Timer */}
