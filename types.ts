@@ -373,16 +373,13 @@ export type VideoModel =
   // ★ 性价比模型 (2个) - 快速出片
   | 'wan_2_2_fast'           // ★ Alibaba Wan 2.2 - 性价比之王 $0.01-0.02
   | 'hailuo_02_fast'        // ★ MiniMax Hailuo-02 - 均衡之选 $0.10-0.15
-
-  // ★ 顶级画质模型 (4个) - 电影级质量
+  // ★ 顶级画质模型 (6个) - 电影级质量
   | 'kling_2_5_pro'        // ★ 快手Kling 2.5 Pro - 顶级物理 $0.50-0.90
+  | 'kling_2_6_pro'        // ★ 快手Kling 2.6 Pro - 顶级物理升级版 原生音频+Lip-sync
   | 'veo_3'                // ★ Google Veo 3 - 最高质量 $3.00+
+  | 'veo_3_1'              // ★ Google Veo 3.1 - 最高质量升级版 4K+原生音频
   | 'seedance_pro'          // ★ ByteDance Seedance Pro - 首帧尾帧 $0.30-0.72
   | 'sora_2';              // ★ OpenAI Sora 2 - 最新AI视频 $2.50
-
-  // ★ 2026年新增顶级模型
-  | 'veo_3_1'              // ★ Google Veo 3.1 - 最高质量升级版 4K+原生音频
-  | 'kling_2_6_pro';       // ★ 快手Kling 2.6 Pro - 顶级物理升级版 原生音频+Lip-sync
 
 export type GenerationMode = 'storyboard' | 'story' | 'loose' | 'balanced' | 'strict_reference' | 'extreme_lock';
 

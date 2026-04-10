@@ -225,8 +225,14 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                   <option value="kling_2_5_pro">
                     {getModelLabel('kling_2_5_pro')} (💎 {Math.ceil(MODEL_COSTS.kling_2_5_pro * (MODEL_MULTIPLIERS.kling_2_5_pro || 1))})
                   </option>
+                  <option value="kling_2_6_pro">
+                    {getModelLabel('kling_2_6_pro')} (💎 {Math.ceil(MODEL_COSTS.kling_2_6_pro * (MODEL_MULTIPLIERS.kling_2_6_pro || 1))})
+                  </option>
                   <option value="veo_3">
                     {getModelLabel('veo_3')} (💎 {Math.ceil(MODEL_COSTS.veo_3 * (MODEL_MULTIPLIERS.veo_3 || 1))})
+                  </option>
+                  <option value="veo_3_1">
+                    {getModelLabel('veo_3_1')} (💎 {Math.ceil(MODEL_COSTS.veo_3_1 * (MODEL_MULTIPLIERS.veo_3_1 || 1))})
                   </option>
                   <option value="sora_2">
                     {getModelLabel('sora_2')} (💎 {Math.ceil(MODEL_COSTS.sora_2 * (MODEL_MULTIPLIERS.sora_2 || 1))})
@@ -241,7 +247,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                       ${videoModel === 'wan_2_2_fast' ? 'bg-green-500/10 text-green-400 border-green-500/20' : ''}
                       ${videoModel === 'hailuo_02_fast' ? 'bg-sky-500/10 text-sky-400 border-sky-500/20' : ''}
                       ${videoModel === 'kling_2_5_pro' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : ''}
+                      ${videoModel === 'kling_2_6_pro' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : ''}
                       ${videoModel === 'veo_3' ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' : ''}
+                      ${videoModel === 'veo_3_1' ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' : ''}
                       ${videoModel === 'seedance_pro' ? 'bg-pink-500/10 text-pink-400 border-pink-500/20' : ''}
                       ${videoModel === 'sora_2' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : ''}
                     `}>
