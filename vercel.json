@@ -6,7 +6,7 @@
     "routes": [
         {
             "src": "/api/auth/send-otp",
-            "dest": "/api/route.ts"
+            "dest": "/api/auth/send-otp/route.ts"
         }
     ]
 }
