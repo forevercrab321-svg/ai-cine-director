@@ -276,8 +276,8 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
                     type="text"
                     value={otp}
                     onChange={(e) => setOtp(e.target.value.replace(/[^0-9]/g, ''))}
-                    placeholder="00000000"
-                    maxLength={8}
+                    placeholder="000000"
+                    maxLength={6}
                     autoFocus
                     className="w-full bg-slate-900/50 border border-indigo-500/50 rounded-2xl px-6 py-4 text-center text-2xl tracking-[0.3em] text-white focus:border-indigo-500 focus:shadow-[0_0_20px_rgba(99,102,241,0.3)] outline-none transition-all font-mono"
                     required
@@ -291,7 +291,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
               )}
               <button
                 type="submit"
-                disabled={isLoading || otp.length < 6}
+                disabled={isLoading}
                 className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full font-bold transition-all shadow-lg shadow-indigo-500/25 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
               >
                 {isLoading ? <LoaderIcon className="w-5 h-5 animate-spin" /> : (lang === 'zh' ? '确认并登录' : 'Confirm & Login')}
