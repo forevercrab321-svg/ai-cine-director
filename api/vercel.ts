@@ -2,73 +2,62 @@
  * Vercel Serverless Function Wrapper
  * This wraps the Express app for Vercel's serverless environment
  */
-import { createServer } from 'http';
+import { createServer, IncomingMessage, ServerResponse } from 'http';
 import { parse } from 'url';
 import { NextRequest, NextResponse } from 'next/server';
-import app from './index';
 
-// Cache the server to avoid recreating it on every cold start
+// Lazy load the Express app to avoid timeout during cold start
+let app: any = null;
+
+async function getExpressApp() {
+    if (!app) {
+        try {
+            // Dynamic import to avoid loading all modules until needed
+            const module = await import('./index.js');
+            app = module.default;
+        } catch (err) {
+            console.error('Failed to load Express app:', err);
+            throw err;
+        }
+    }
+    return app;
+}
+
+// Cache the HTTP server
 let server: ReturnType<typeof createServer> | null = null;
 
-function getServer() {
+function getServer(expressApp: any) {
     if (!server) {
-        server = createServer((req, res) => {
-            // @ts-ignore - Express typing mismatch with Node http
-            app(req, res);
+        server = createServer((req: IncomingMessage, res: ServerResponse) => {
+            expressApp(req, res);
         });
     }
     return server;
 }
 
-// For GET requests
-export async function GET(request: Request) {
-    return handleRequest(request);
-}
-
-// For POST requests
-export async function POST(request: Request) {
-    return handleRequest(request);
-}
-
-// For PUT requests
-export async function PUT(request: Request) {
-    return handleRequest(request);
-}
-
-// For DELETE requests
-export async function DELETE(request: Request) {
-    return handleRequest(request);
-}
-
-// For PATCH requests
-export async function PATCH(request: Request) {
-    return handleRequest(request);
-}
-
 async function handleRequest(request: Request): Promise<Response> {
-    const { pathname } = parse(request.url);
+    const { pathname } = parse(request.url || '');
 
     // Only handle /api/* routes
     if (!pathname?.startsWith('/api/')) {
         return new NextResponse('Not Found', { status: 404 });
     }
 
-    return new Promise((resolve, reject) => {
-        const server = getServer();
-        const { pathname: path, query } = parse(request.url, true);
+    try {
+        const expressApp = await getExpressApp();
+        const httpServer = getServer(expressApp);
 
-        // @ts-ignore
-        const req = {
-            method: request.method,
-            url: path,
-            headers: Object.fromEntries(request.headers.entries()),
-            body: null as Buffer | null,
-        };
+        return new Promise((resolve, reject) => {
+            const { pathname: path } = parse(request.url || '', true);
 
-        // Read body
-        request.arrayBuffer().then(buffer => {
-            (req as any).body = Buffer.from(buffer);
+            // Create Express-compatible request object
+            const req = {
+                method: request.method,
+                url: path,
+                headers: Object.fromEntries(request.headers.entries()),
+            } as any;
 
+            // Create Express-compatible response object
             const res = {
                 statusCode: 200,
                 headers: {} as Record<string, string>,
@@ -80,10 +69,10 @@ async function handleRequest(request: Request): Promise<Response> {
                     return this.headers[name.toLowerCase()];
                 },
                 write: function(chunk: any) {
-                    this.body += chunk.toString();
+                    this.body += chunk?.toString() || '';
                 },
                 end: function(chunk?: any) {
-                    if (chunk) this.body += chunk.toString();
+                    if (chunk) this.body += chunk?.toString() || '';
                     const response = new NextResponse(this.body, {
                         status: this.statusCode,
                         headers: this.headers,
@@ -94,8 +83,46 @@ async function handleRequest(request: Request): Promise<Response> {
                 removeListener: function() {},
             } as any;
 
-            // @ts-ignore
-            server.emit('request', req, res);
-        }).catch(reject);
-    });
+            // Read and process request body
+            request.arrayBuffer()
+                .then(buffer => {
+                    req.body = Buffer.from(buffer);
+                    req.rawBody = req.body;
+
+                    // Emit request to Express app
+                    httpServer.emit('request', req, res);
+                })
+                .catch(err => {
+                    console.error('Error reading request body:', err);
+                    reject(err);
+                });
+        });
+    } catch (err) {
+        console.error('Server error:', err);
+        return new NextResponse(JSON.stringify({ error: 'Internal Server Error' }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' },
+        });
+    }
+}
+
+// Export HTTP methods
+export async function GET(request: Request) {
+    return handleRequest(request);
+}
+
+export async function POST(request: Request) {
+    return handleRequest(request);
+}
+
+export async function PUT(request: Request) {
+    return handleRequest(request);
+}
+
+export async function DELETE(request: Request) {
+    return handleRequest(request);
+}
+
+export async function PATCH(request: Request) {
+    return handleRequest(request);
 }
