@@ -136,9 +136,8 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
   const handleVerifyOtp = (e: React.FormEvent) => {
     e.preventDefault();
 
-    setIsLoading(true);
-
     handleAction(async () => {
+      setIsLoading(true);
       try {
         // 使用自定义 API 验证 OTP
         const res = await fetch('/api/auth/verify-otp', {
@@ -162,6 +161,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
         console.log('[Auth] OTP verified successfully via custom API!');
         // 验证成功，登录
         onLogin(true);
+        setIsLoading(false);
       } catch (error: any) {
         console.error('[Auth] OTP verification error:', error);
         const msg = error?.status === 403 || error?.message?.includes('403')
