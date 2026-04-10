@@ -92,7 +92,7 @@ const isDeveloperEmail = (email: string): boolean => {
 };
 
 const defaultSettings: AppSettings = {
-  lang: 'zh',
+  lang: 'en',
   imageModel: 'flux',
   videoModel: 'hailuo_02_fast',
   videoStyle: 'pop_mart',

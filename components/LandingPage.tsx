@@ -238,7 +238,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
             </div>
           ) : (
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
-              <p className="text-sm text-slate-400 mb-4">输入邮箱收到的验证码:</p>
+              <p className="text-sm text-slate-400 mb-4">{lang === 'zh' ? '输入邮箱收到的验证码:' : 'Enter the verification code from your email:'}</p>
               <input
                 type="text"
                 value={otpCode}
@@ -251,7 +251,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
               <button
                 onClick={async () => {
                   if (!otpCode || otpCode.length < 6) {
-                    setLoginError('请输入8位验证码');
+                    setLoginError(lang === 'zh' ? '请输入8位验证码' : 'Please enter an 8-digit verification code');
                     return;
                   }
                   setLoginLoading(true);
@@ -275,7 +275,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
                     // 验证成功，页面会自动刷新通过 Auth state change 登录
                   } catch (e: any) {
                     console.error('[Landing] OTP verify error:', e);
-                    setLoginError(e.message || '验证码无效，请重试');
+                    setLoginError(e.message || (lang === 'zh' ? '验证码无效，请重试' : 'Invalid verification code, please try again'));
                   } finally {
                     setLoginLoading(false);
                   }
@@ -283,20 +283,20 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onOpenPricing, 
                 disabled={loginLoading || otpCode.length < 8}
                 className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-700 text-white font-bold rounded-lg"
               >
-                {loginLoading ? '验证中...' : '确认登录'}
+                {loginLoading ? (lang === 'zh' ? '验证中...' : 'Verifying...') : (lang === 'zh' ? '确认登录' : 'Confirm & Login')}
               </button>
               <button
                 onClick={handleResendCode}
                 disabled={loginLoading}
                 className="w-full py-2 text-indigo-400 text-sm mt-3"
               >
-                {loginLoading ? '发送中...' : '重新发送验证码'}
+                {loginLoading ? (lang === 'zh' ? '发送中...' : 'Sending...') : (lang === 'zh' ? '重新发送验证码' : 'Resend Code')}
               </button>
               <button
                 onClick={resetLoginForm}
                 className="w-full py-2 text-slate-500 text-sm"
               >
-                ← 使用其他邮箱
+                ← {lang === 'zh' ? '使用其他邮箱' : 'Use a different email'}
               </button>
             </div>
           )}

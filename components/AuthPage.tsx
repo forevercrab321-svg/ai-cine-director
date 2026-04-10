@@ -202,7 +202,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
             <div className="mt-6 px-3 py-1.5 bg-emerald-500/20 border border-emerald-500/50 rounded-full animate-pulse">
               <span className="text-[10px] font-bold text-emerald-400 tracking-widest uppercase flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
-                开发者模式
+                {lang === 'zh' ? '开发者模式' : 'Developer Mode'}
               </span>
             </div>
           )}
@@ -214,8 +214,8 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
         {step === 'email' && (
           <div className="w-full space-y-6 animate-in slide-in-from-bottom-4 fade-in duration-300">
             <div className="text-center mb-4">
-              <h2 className="text-xl font-bold text-white mb-2">欢迎登录</h2>
-              <p className="text-slate-500 text-sm">输入您的邮箱，我们将发送验证码</p>
+              <h2 className="text-xl font-bold text-white mb-2">{lang === 'zh' ? '欢迎登录' : 'Welcome'}</h2>
+              <p className="text-slate-500 text-sm">{lang === 'zh' ? '输入您的邮箱，我们将发送验证码' : 'Enter your email and we will send a verification code'}</p>
             </div>
 
             <form onSubmit={handleEmailSubmit} className="space-y-4">
@@ -261,14 +261,14 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
               <div className="px-4 py-2.5 bg-emerald-500/15 border border-emerald-500/50 rounded-2xl">
                 <p className="text-[11px] font-bold text-emerald-400 tracking-widest uppercase flex items-center gap-2">
                   <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
-                  开发者账户 - 完整权限
+                  {lang === 'zh' ? '开发者账户 - 完整权限' : 'Developer Account - Full Access'}
                 </p>
               </div>
             )}
             <form onSubmit={handleVerifyOtp} className="space-y-4">
               <div>
                 <p className="text-xs text-slate-500 mb-4 text-center flex items-center justify-center gap-2">
-                  验证码已发送至 <span className="text-white font-mono bg-slate-900 px-2 py-0.5 rounded border border-slate-800">{email}</span>
+                  {lang === 'zh' ? '验证码已发送至' : 'Verification code sent to'} <span className="text-white font-mono bg-slate-900 px-2 py-0.5 rounded border border-slate-800">{email}</span>
                 </p>
                 <div className="relative">
                   <input
@@ -309,14 +309,14 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
                         await sendOtpWithFallback();
                       } catch (error: any) {
                         const msg = error?.status === 429 || error?.message?.includes('429') || error?.message?.includes('Too Many')
-                          ? '发送太频繁，请稍后再试'
-                          : (error.message || '发送验证码失败');
+                          ? (lang === 'zh' ? '发送太频繁，请稍后再试' : 'Sending too frequently, please try again later')
+                          : (error.message || (lang === 'zh' ? '发送验证码失败' : 'Failed to send verification code'));
                         setValidationError(msg);
                       }
                     }}
                     className="text-[10px] text-indigo-400 hover:text-white font-bold uppercase tracking-wider transition-colors"
                   >
-                    重新发送验证码
+                    {lang === 'zh' ? '重新发送验证码' : 'Resend Code'}
                   </button>
                 )}
               </div>

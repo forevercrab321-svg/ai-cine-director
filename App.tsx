@@ -100,13 +100,13 @@ const MainLayout: React.FC = () => {
       // Force refresh balance to reflect new credits immediately
       setTimeout(async () => {
         await refreshBalance().catch(() => { });
-        setPaymentNotification({ type: 'success', msg: '✅ 支付成功！额度已添加到您的账户。' });
+        setPaymentNotification({ type: 'success', msg: settings.lang === 'zh' ? '✅ 支付成功！额度已添加到您的账户。' : '✅ Payment successful! Credits have been added to your account.' });
         setTimeout(() => setPaymentNotification(null), 6000);
       }, 1500); // Wait a bit for webhook to process
     }
     if (isCanceled) {
       window.history.replaceState({ stage: 'input' }, '', window.location.pathname + '#input');
-      setPaymentNotification({ type: 'error', msg: '❌ 支付已取消' });
+      setPaymentNotification({ type: 'error', msg: settings.lang === 'zh' ? '❌ 支付已取消' : '❌ Payment cancelled' });
       setTimeout(() => setPaymentNotification(null), 4000);
     }
   }, [refreshBalance]);
@@ -186,7 +186,7 @@ const MainLayout: React.FC = () => {
     if (!project) return;
 
     if (!profile?.id) {
-      alert("请登入以保存项目。");
+      alert(settings.lang === 'zh' ? "请登入以保存项目。" : "Please login to save your project.");
       return;
     }
 
@@ -296,7 +296,7 @@ const MainLayout: React.FC = () => {
         <div className="mb-8 flex items-center justify-between animate-in fade-in duration-700">
           <div>
             <p className="text-xs text-indigo-400 font-bold uppercase tracking-widest">{t(settings.lang, 'welcomeBack')}</p>
-            <h2 className="text-xl font-bold text-white">{profile?.name || profile?.email || '导演'} <span className="text-slate-500 font-normal">| {profile?.role || 'Creator'}</span></h2>
+            <h2 className="text-xl font-bold text-white">{profile?.name || profile?.email || (settings.lang === 'zh' ? '导演' : 'Director')} <span className="text-slate-500 font-normal">| {profile?.role || 'Creator'}</span></h2>
           </div>
           <div className="text-right">
             <p className="text-[10px] uppercase tracking-widest text-slate-500">Pipeline</p>
@@ -314,17 +314,17 @@ const MainLayout: React.FC = () => {
                         : 'bg-slate-700/50 text-slate-400'
             }`}>
               {{
-                script_ready: '📝 脚本就绪',
-                bible_ready: '📖 圣经就绪',
-                shots_ready: '🎬 镜头就绪',
-                storyboard_generating: '🖼 生成中…',
-                storyboard_review: '👁 审批中',
-                storyboard_partial_failed: '⚠️ 部分失败',
-                storyboard_approved: '✅ 分镜已批',
-                video_generating: '🎥 渲染中…',
-                video_partial_failed: '⚠️ 渲染部分失败',
-                assembly_ready: '🎞 合成就绪',
-                final_ready: '🏁 完成',
+                script_ready: settings.lang === 'zh' ? '📝 脚本就绪' : '📝 Script Ready',
+                bible_ready: settings.lang === 'zh' ? '📖 圣经就绪' : '📖 Bible Ready',
+                shots_ready: settings.lang === 'zh' ? '🎬 镜头就绪' : '🎬 Shots Ready',
+                storyboard_generating: settings.lang === 'zh' ? '🖼 生成中…' : '🖼 Generating...',
+                storyboard_review: settings.lang === 'zh' ? '👁 审批中' : '👁 Reviewing',
+                storyboard_partial_failed: settings.lang === 'zh' ? '⚠️ 部分失败' : '⚠️ Partial Failed',
+                storyboard_approved: settings.lang === 'zh' ? '✅ 分镜已批' : '✅ Approved',
+                video_generating: settings.lang === 'zh' ? '🎥 渲染中…' : '🎥 Rendering...',
+                video_partial_failed: settings.lang === 'zh' ? '⚠️ 渲染部分失败' : '⚠️ Render Partial Failed',
+                assembly_ready: settings.lang === 'zh' ? '🎞 合成就绪' : '🎞 Assembly Ready',
+                final_ready: settings.lang === 'zh' ? '🏁 完成' : '🏁 Complete',
               }[pipelineStage] ?? pipelineStage}
             </p>
           </div>
@@ -351,7 +351,7 @@ const MainLayout: React.FC = () => {
             <div className="mb-6">
               <label className="block text-sm font-semibold text-slate-300 mb-3">📽️ 场景数量 / Number of Scenes</label>
               <div className="flex items-center gap-2">
-                <span className="text-sm text-slate-400">快速选择：</span>
+                <span className="text-sm text-slate-400">{settings.lang === 'zh' ? '快速选择：' : 'Quick select:'} </span>
                 {[5, 10, 15, 20, 25, 30].map((count) => (
                   <button
                     key={count}
@@ -361,10 +361,10 @@ const MainLayout: React.FC = () => {
                       : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500'
                       }`}
                   >
-                    {count} 场景
+                    {count} {settings.lang === 'zh' ? '场景' : 'scenes'}
                   </button>
                 ))}
-                <span className="text-xs text-slate-500">(可选)</span>
+                <span className="text-xs text-slate-500">{settings.lang === 'zh' ? '(可选)' : '(optional)'}</span>
               </div>
             </div>
 
@@ -372,7 +372,7 @@ const MainLayout: React.FC = () => {
             <div className="mb-6">
               <label className="block text-sm font-semibold text-slate-300 mb-3">🎬 镜头数量 / Number of Shots</label>
               <div className="flex items-center gap-2">
-                <span className="text-sm text-slate-400">快速选择：</span>
+                <span className="text-sm text-slate-400">{settings.lang === 'zh' ? '快速选择：' : 'Quick select:'} </span>
                 {[5, 10, 15, 20, 25, 30].map((count) => (
                   <button
                     key={count}
@@ -382,10 +382,10 @@ const MainLayout: React.FC = () => {
                       : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500'
                       }`}
                   >
-                    {count} 镜头
+                    {count} {settings.lang === 'zh' ? '镜头' : 'shots'}
                   </button>
                 ))}
-                <span className="text-xs text-slate-500">(可选)</span>
+                <span className="text-xs text-slate-500">{settings.lang === 'zh' ? '(可选)' : '(optional)'}</span>
               </div>
             </div>
 
@@ -469,10 +469,10 @@ const MainLayout: React.FC = () => {
               <div className="flex gap-3">
                 <button onClick={() => { setWorkflowStage('input'); setPipelineStage('script_ready'); }} className="text-slate-400 hover:text-white px-4 py-2 text-sm">{t(settings.lang, 'backToConcept')}</button>
                 <button onClick={() => { setWorkflowStage('shots'); setPipelineStage('storyboard_generating'); }} className="px-6 py-2 bg-amber-600 hover:bg-amber-500 rounded-lg text-white font-bold shadow-lg shadow-amber-500/20">
-                  🎬 拆分镜头 &rarr;
+                  🎬 {settings.lang === 'zh' ? '拆分镜头' : 'Split Shots'} &rarr;
                 </button>
                 <button onClick={handleGoToProduction} className="px-6 py-2 bg-green-600 hover:bg-green-500 rounded-lg text-white font-bold shadow-lg shadow-green-500/20">
-                  进入制片环节 &rarr;
+                  {settings.lang === 'zh' ? '进入制片环节' : 'Enter Production'} &rarr;
                 </button>
               </div>
             </div>
