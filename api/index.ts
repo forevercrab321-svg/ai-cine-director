@@ -2907,7 +2907,7 @@ app.post('/api/gemini/analyze', requireAuth, async (req: any, res: any) => {
             }],
             {
                 systemInstruction: 'You are an expert character designer and AI vision assistant.',
-                model: GEMINI_TEXT_MODEL,
+                model: MINIMAX_TEXT_MODEL,
                 temperature: 0.1,
                 maxOutputTokens: 500,
             }
@@ -2979,7 +2979,7 @@ app.post('/api/gemini/analyze-bible', requireAuth, async (req: any, res: any) =>
             }],
             {
                 systemInstruction: 'You are an exacting cinematic analyst. Return strictly valid JSON.',
-                model: GEMINI_TEXT_MODEL,
+                model: MINIMAX_TEXT_MODEL,
                 temperature: 0.1,
             }
         );
@@ -3038,7 +3038,7 @@ app.post('/api/gemini/validate-video', requireAuth, async (req: any, res: any) =
             }],
             {
                 systemInstruction: 'You are a highly critical VFX continuity supervisor. Output strictly JSON.',
-                model: GEMINI_TEXT_MODEL,
+                model: MINIMAX_TEXT_MODEL,
                 temperature: 0.1,
             }
         );
@@ -4415,7 +4415,7 @@ async function persistPipelineState(projectId: string): Promise<void> {
     try {
         const serialized = serializePipelineState(runtime);
         const supabaseAdmin = getSupabaseAdmin();
-        await supabaseAdmin
+        await (supabaseAdmin as any)
             .from('storyboards')
             .update({ pipeline_state: serialized as any })
             .eq('id', projectId);
@@ -4434,8 +4434,10 @@ async function restorePipelineStateFromDB(projectId: string): Promise<boolean> {
             .select('pipeline_state')
             .eq('id', projectId)
             .single();
-        if (error || !data?.pipeline_state) return false;
-        const state = deserializePipelineState(data.pipeline_state as any);
+        if (error || !data) return false;
+        const pipelineState = (data as any)?.pipeline_state;
+        if (!pipelineState) return false;
+        const state = deserializePipelineState(pipelineState);
         restorePipelineState(state);
         return true;
     } catch (e: any) {
@@ -4516,86 +4518,9 @@ app.post('/api/storyboard/:projectId/shots/:shotId/validate', requireAuth, async
             imageUrl: image_url,
         });
 
-        if (image_url) {
-            try {
-                // Fetch the image server-side (avoids CORS) and encode as base64
-                let imageBase64: string;
-                let mimeType = 'image/jpeg';
-                if (image_url.startsWith('data:')) {
-                    const prefixMatch = image_url.match(/^data:(image\/[a-zA-Z+]+);base64,/);
-                    if (prefixMatch) mimeType = prefixMatch[1];
-                    imageBase64 = image_url.split(',')[1];
-                } else {
-                    const imgResp = await fetch(image_url);
-                    const contentType = imgResp.headers.get('content-type') || 'image/jpeg';
-                    mimeType = contentType.split(';')[0].trim();
-                    const arrayBuffer = await imgResp.arrayBuffer();
-                    imageBase64 = Buffer.from(arrayBuffer).toString('base64');
-                }
-
-                const shotContext = [
-                    shot?.action && `Action: ${shot.action}`,
-                    shot?.image_prompt && `Visual Description: ${shot.image_prompt}`,
-                    (shot?.composition || shot?.framing) && `Framing: ${shot.composition || shot.framing}`,
-                    shot?.lighting && `Lighting: ${shot.lighting}`,
-                    shot?.mood && `Mood: ${shot.mood}`,
-                    shot?.characters?.length && `Characters: ${Array.isArray(shot.characters) ? shot.characters.join(', ') : shot.characters}`,
-                    previous_shot?.action && `Previous shot action: ${previous_shot.action}`,
-                ].filter(Boolean).join('\n');
-
-                const visionPrompt = `You are a strict cinematic storyboard continuity supervisor scoring a generated storyboard frame.
-
-Shot Bible Requirements:
-${shotContext || 'No shot bible provided.'}
-
-Evaluate this storyboard frame image on three dimensions (each 0-100):
-1. continuity_score: Does the image maintain visual continuity (character identity, costume, scene architecture, lighting) with the shot requirements?
-2. narrative_score: Does the image clearly communicate the intended narrative action and emotional beat?
-3. visual_match_score: Does the framing, composition, lens language, and mood visually match the shot brief?
-
-Also list any specific violation_tags from: [face_drift, costume_inconsistency, background_drift, lighting_mismatch, wrong_framing, wrong_shot_size, missing_subject, action_mismatch, mood_mismatch]
-
-Output ONLY a valid JSON object with this exact shape:
-{
-  "continuity_score": <number 0-100>,
-  "narrative_score": <number 0-100>,
-  "visual_match_score": <number 0-100>,
-  "violation_tags": [<string>, ...],
-  "regen_recommendation": "<none|regenerate_same_shot_keep_bible|regenerate_same_shot_fix_face|regenerate_same_shot_fix_costume|regenerate_same_shot_fix_scene|regenerate_same_shot_change_framing>"
-}`;
-
-                const ai = getGeminiAI();
-                const visionResult: any = await ai.models.generateContent({
-                    model: GEMINI_TEXT_MODEL,
-                    contents: [{
-                        role: 'user',
-                        parts: [
-                            { inlineData: { mimeType, data: imageBase64 } },
-                            { text: visionPrompt },
-                        ],
-                    }],
-                    config: { temperature: 0.1 },
-                });
-
-                const rawText = typeof visionResult?.text === 'string'
-                    ? visionResult.text.trim()
-                    : visionResult?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
-
-                const parsed = parseAiJsonWithRepair(rawText, 'storyboard-validate');
-                if (parsed && typeof parsed.continuity_score === 'number') {
-                    report = {
-                        continuity_score: Math.min(100, Math.max(0, parsed.continuity_score)),
-                        narrative_score: Math.min(100, Math.max(0, parsed.narrative_score ?? report.narrative_score)),
-                        visual_match_score: Math.min(100, Math.max(0, parsed.visual_match_score ?? report.visual_match_score)),
-                        violation_tags: Array.isArray(parsed.violation_tags) ? parsed.violation_tags : report.violation_tags,
-                        regen_recommendation: parsed.regen_recommendation || report.regen_recommendation,
-                    };
-                }
-            } catch (visionErr: any) {
-                logger.gemini.warn('vision_scoring_fallback', { error: visionErr?.message });
-                // Fall through — keep the heuristic report
-            }
-        }
+        // Note: Vision scoring disabled - MiniMax text-only API used for scoring
+        // The heuristic-based scoreStoryboardCandidate() provides fallback scoring
+        // if (image_url) { /* Vision analysis code disabled */ }
 
         const candidateId = crypto.randomUUID();
         const runtimeShot = registerStoryboardCandidate({
