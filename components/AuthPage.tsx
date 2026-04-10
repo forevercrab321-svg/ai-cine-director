@@ -136,8 +136,22 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
   const handleVerifyOtp = (e: React.FormEvent) => {
     e.preventDefault();
 
-    handleAction(async () => {
+    // 先检查 agreed
+    if (!agreed) {
+      alert(t(lang, 'agreeTerms'));
+      return;
+    }
+
+    // 清除之前的错误
+    setValidationError('');
+
+    // 使用 setTimeout 延迟设置 loading，避免覆盖层挡住按钮点击
+    const loadingTimer = setTimeout(() => {
       setIsLoading(true);
+    }, 100);
+
+    // 直接执行验证
+    (async () => {
       try {
         // 使用自定义 API 验证 OTP
         const res = await fetch('/api/auth/verify-otp', {
@@ -160,19 +174,22 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
 
         console.log('[Auth] OTP verified successfully via custom API!');
         // 验证成功，登录
-        onLogin(true);
+        clearTimeout(loadingTimer);
         setIsLoading(false);
+        onLogin(true);
       } catch (error: any) {
         console.error('[Auth] OTP verification error:', error);
+        clearTimeout(loadingTimer);
+        setIsLoading(false); // 失败时也要重置
+
         const msg = error?.status === 403 || error?.message?.includes('403')
           ? '验证码已过期或无效，请重新发送'
           : error?.status === 429 || error?.message?.includes('429')
             ? '验证太频繁，请稍后再试'
             : (error.message || '验证码无效，请重试');
         setValidationError(msg);
-        setIsLoading(false);
       }
-    });
+    })();
   };
 
 
