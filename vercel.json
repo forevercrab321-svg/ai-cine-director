@@ -7,6 +7,10 @@
         {
             "src": "/api/auth/send-otp",
             "dest": "/api/auth/send-otp/route.ts"
+        },
+        {
+            "src": "/api/auth/verify-otp",
+            "dest": "/api/auth/verify-otp/route.ts"
         }
     ]
 }
