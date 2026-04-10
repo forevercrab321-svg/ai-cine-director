@@ -50,7 +50,7 @@ export default async function handler(req: Request) {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                from: 'AI Cine Director <noreply@ai-cine-director.com>',
+                from: 'onboarding@resend.dev',
                 to: [email],
                 subject: 'Your AI Cine Director OTP Code',
                 html: `
