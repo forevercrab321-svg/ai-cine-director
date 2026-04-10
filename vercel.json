@@ -4,6 +4,6 @@
     "outputDirectory": "dist",
     "installCommand": "npm install",
     "rewrites": [
-        { "source": "/api/(.*)", "destination": "/api/vercel.ts" }
+        { "source": "/api/(.*)", "destination": "/api/index.ts" }
     ]
 }
