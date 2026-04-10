@@ -13,7 +13,7 @@ const PORT = process.env.API_SERVER_PORT || 3002;
 app.listen(PORT, () => {
     console.log(`\n🎬 AI Cine Director Local Server`);
     console.log(`   Running on http://localhost:${PORT}`);
-    console.log(`   Gemini Key: ${process.env.GEMINI_API_KEY ? '✅' : '❌'}`);
+    console.log(`   MiniMax Key: ${process.env.VITE_MINIMAX_API_KEY || process.env.MINIMAX_API_KEY ? '✅' : '❌'}`);
     console.log(`   Replicate Token: ${process.env.REPLICATE_API_TOKEN ? '✅' : '❌'}`);
     console.log(`   Stripe Key: ${process.env.STRIPE_SECRET_KEY ? '✅' : '❌'}\n`);
 });

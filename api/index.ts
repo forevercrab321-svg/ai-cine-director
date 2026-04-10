@@ -3,7 +3,7 @@ import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import Stripe from 'stripe';
-import { GoogleGenAI, Type } from '@google/genai';
+import { Type } from '@google/genai'; // Type used for schema definitions, Gemini SDK removed
 import { logger, generateTraceId } from '../utils/logger.js';
 import { 
     createSuccessResponse, 
@@ -2114,17 +2114,21 @@ app.get('/api/replicate/status/:id', requireAuth, async (req: any, res: any) => 
     }
 });
 
-// --- Gemini Routes (must be inline for Vercel serverless) ---
+// --- AI Routes (Migrated from Gemini to MiniMax) ---
 
-const getGeminiAI = () => {
-    const apiKey = process.env.GEMINI_API_KEY?.replace(/\s+/g, '');
-    if (!apiKey) throw new Error('GEMINI_API_KEY not configured');
-    // @ts-ignore
-    return new GoogleGenAI({ apiKey });
+const MINIMAX_TEXT_MODEL = 'MiniMax-Text-01';
+
+const getMinimaxAI = () => {
+    const apiKey = process.env.VITE_MINIMAX_API_KEY || process.env.MINIMAX_API_KEY;
+    if (!apiKey) throw new Error('MINIMAX_API_KEY not configured');
+    return apiKey;
 };
 
-const GEMINI_TEXT_MODEL = 'gemini-2.0-flash';
-
+/**
+ * ★ UNIFIED AI TEXT COMPLETION - MiniMax Backend
+ * Replaces getGeminiTextCompletion with MiniMax API
+ * Supports structured JSON output via response_schema parameter
+ */
 const getGeminiTextCompletion = async (promptContent: any, options: {
     systemInstruction?: string;
     temperature?: number;
@@ -2133,33 +2137,122 @@ const getGeminiTextCompletion = async (promptContent: any, options: {
     model?: string;
     maxOutputTokens?: number;
 } = {}) => {
-    const ai = getGeminiAI();
-    const response: any = await ai.models.generateContent({
-        model: options.model || GEMINI_TEXT_MODEL,
-        contents: promptContent,
-        config: {
-            systemInstruction: options.systemInstruction,
-            temperature: options.temperature ?? 0.7,
-            responseMimeType: options.responseMimeType,
-            responseSchema: options.responseSchema,
-            maxOutputTokens: options.maxOutputTokens,
+    const apiKey = getMinimaxAI();
+    const model = options.model || MINIMAX_TEXT_MODEL;
+    const MINIMAX_TEXT_API = 'https://api.minimax.io/v1/text/chatcompletion_v2';
+
+    // Handle different prompt formats:
+    // 1. Simple string prompt
+    // 2. Array of message objects with role/parts (Gemini format)
+    // 3. Array with inlineData (vision)
+    let userContent = '';
+    let systemInstruction = options.systemInstruction || '';
+
+    if (typeof promptContent === 'string') {
+        userContent = promptContent;
+    } else if (Array.isArray(promptContent)) {
+        // Gemini format: [{ role: 'user', parts: [...] }]
+        for (const item of promptContent) {
+            if (item.role === 'user' && Array.isArray(item.parts)) {
+                for (const part of item.parts) {
+                    if (typeof part === 'string') {
+                        userContent += part + ' ';
+                    } else if (part?.text) {
+                        userContent += part.text + ' ';
+                    }
+                    // Skip inlineData for now (MiniMax vision support)
+                }
+            } else if (item.role === 'model' && Array.isArray(item.parts)) {
+                // Skip model responses
+            } else if (typeof item === 'string') {
+                userContent += item + ' ';
+            }
+        }
+    } else {
+        userContent = String(promptContent || '');
+    }
+
+    userContent = userContent.trim();
+
+    // Build messages array
+    const messages: Array<{ role: string; content: string }> = [];
+    if (systemInstruction) {
+        messages.push({ role: "system", content: systemInstruction });
+    }
+    messages.push({ role: "user", content: userContent });
+
+    const payload: any = {
+        model: model,
+        messages: messages,
+        temperature: options.temperature ?? 0.7,
+    };
+
+    // MiniMax supports JSON mode via response_format
+    if (options.responseMimeType === 'application/json' || options.responseSchema) {
+        payload.response_format = { type: "json_object" };
+        // Add schema guidance to system instruction if provided
+        if (options.responseSchema) {
+            const schemaStr = JSON.stringify(options.responseSchema, null, 2);
+            payload.messages[0].content += `\n\nIMPORTANT: Your response MUST be valid JSON matching this exact schema:\n${schemaStr}`;
+        }
+    }
+
+    if (options.maxOutputTokens) {
+        payload.max_tokens = options.maxOutputTokens;
+    }
+
+    const response = await fetch(MINIMAX_TEXT_API, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
         },
+        body: JSON.stringify(payload)
     });
 
-    const directText = typeof response?.text === 'string' ? response.text.trim() : '';
-    if (directText) return directText;
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`MiniMax API Error(${response.status}): ${errorText.slice(0, 500)}`);
+    }
 
-    const fallbackText = Array.isArray(response?.candidates)
-        ? response.candidates
-            .flatMap((candidate: any) => Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [])
-            .map((part: any) => typeof part?.text === 'string' ? part.text : '')
+    const data = await response.json();
+
+    // Check MiniMax business status
+    const statusCode = Number(data?.base_resp?.status_code ?? 0);
+    if (statusCode && statusCode !== 0) {
+        const statusMsg = data?.base_resp?.status_msg || data?.base_resp?.status_message || 'Unknown error';
+        throw new Error(`MiniMax API business error(${statusCode}): ${statusMsg}`);
+    }
+
+    // Extract text from MiniMax response
+    const content = data?.choices?.[0]?.message?.content;
+
+    if (typeof content === 'string' && content.trim()) {
+        return content.trim();
+    }
+
+    // Fallback for array content
+    if (Array.isArray(content)) {
+        const merged = content
+            .map((part: any) => typeof part === 'string' ? part : (part?.text || ''))
             .join(' ')
-            .trim()
-        : '';
+            .trim();
+        if (merged) return merged;
+    }
 
-    if (fallbackText) return fallbackText;
+    // Last resort fallbacks
+    const fallbackCandidates = [
+        data?.choices?.[0]?.text,
+        data?.reply,
+        data?.output_text,
+        data?.output?.text,
+        typeof data?.response === 'string' ? data.response : '',
+    ];
 
-    throw new Error(`Gemini returned empty response: ${JSON.stringify(response).slice(0, 500)}`);
+    const fallback = fallbackCandidates.find((v) => typeof v === 'string' && v.trim().length > 0);
+    if (fallback) return fallback.trim();
+
+    throw new Error(`MiniMax returned empty response: ${JSON.stringify(data).slice(0, 500)}`);
 };
 
 const storyBrainSchema = {
