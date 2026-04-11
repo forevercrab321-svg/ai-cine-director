@@ -13,21 +13,17 @@ interface AuthPageProps {
 }
 
 const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, hasProfile }) => {
-  // ★ TEST MODE: Check URL for ?test=1 to skip API calls
-  const urlParams = new URLSearchParams(window.location.search);
-  const isTestMode = urlParams.get('test') === '1';
-
-  const [step, setStep] = useState<'email' | 'otp' | 'profile'>(isTestMode ? 'otp' : 'email');
+  const [step, setStep] = useState<'email' | 'otp' | 'profile'>('email');
 
   // Contact State
-  const [email, setEmail] = useState(isTestMode ? 'test@example.com' : '');
+  const [email, setEmail] = useState('');
   const [validationError, setValidationError] = useState('');
   const [isDeveloper, setIsDeveloper] = useState(false);
 
   // OTP State
   const [otp, setOtp] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [countdown, setCountdown] = useState(isTestMode ? 60 : 0);
+  const [countdown, setCountdown] = useState(0);
 
   // Profile State
   const [agreed, setAgreed] = useState(false);
