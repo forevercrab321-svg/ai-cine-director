@@ -13,17 +13,21 @@ interface AuthPageProps {
 }
 
 const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, hasProfile }) => {
-  const [step, setStep] = useState<'email' | 'otp' | 'profile'>('email');
+  // ★ TEST MODE: Check URL for ?test=1 to skip API calls
+  const urlParams = new URLSearchParams(window.location.search);
+  const isTestMode = urlParams.get('test') === '1';
+
+  const [step, setStep] = useState<'email' | 'otp' | 'profile'>(isTestMode ? 'otp' : 'email');
 
   // Contact State
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(isTestMode ? 'test@example.com' : '');
   const [validationError, setValidationError] = useState('');
   const [isDeveloper, setIsDeveloper] = useState(false);
 
   // OTP State
   const [otp, setOtp] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [countdown, setCountdown] = useState(0);
+  const [countdown, setCountdown] = useState(isTestMode ? 60 : 0);
 
   // Profile State
   const [agreed, setAgreed] = useState(false);
@@ -40,7 +44,9 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
   }, [countdown]);
 
   const handleAction = (callback: () => void) => {
-    if (!agreed) {
+    // 只在 OTP 和 Profile 步骤检查 agreed
+    // Email 步骤不需要 agreement
+    if (step !== 'email' && !agreed) {
       alert(t(lang, 'agreeTerms'));
       return;
     }
@@ -305,6 +311,23 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
                   <span className="w-1 h-1 bg-red-400 rounded-full inline-block" /> {validationError}
                 </p>
               )}
+              {/* Agreement Checkbox */}
+              <div className="flex items-start gap-3 px-2">
+                <button
+                  type="button"
+                  onClick={() => setAgreed(!agreed)}
+                  className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 transition-all duration-300 mt-0.5
+                        ${agreed
+                      ? 'bg-white border-white shadow-[0_0_15px_rgba(255,255,255,0.4)]'
+                      : 'border-slate-700 bg-transparent hover:border-slate-500'}
+                      `}
+                >
+                  {agreed && <svg className="w-3 h-3 text-black" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>}
+                </button>
+                <p className={`text-[10px] leading-relaxed transition-colors duration-300 cursor-pointer select-none ${agreed ? 'text-slate-400' : 'text-slate-600'}`} onClick={() => setAgreed(!agreed)}>
+                  {t(lang, 'agreeTerms')}
+                </p>
+              </div>
               <button
                 type="submit"
                 disabled={isLoading}
