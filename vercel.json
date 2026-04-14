@@ -1,13 +1,13 @@
 {
     "framework": "vite",
-    "buildCommand": "vite build",
+    "buildCommand": "vite build && node scripts/bundle-api.mjs",
     "outputDirectory": "dist",
     "installCommand": "npm install",
     "rewrites": [
-        { "source": "/api/:path*", "destination": "/api/index.ts" }
+        { "source": "/api/:path*", "destination": "/api/bundle.cjs" }
     ],
     "functions": {
-        "api/index.ts": {
+        "api/bundle.cjs": {
             "maxDuration": 300
         }
     }
