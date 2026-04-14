@@ -70,6 +70,155 @@ const VIDEO_MODEL_MAP: Record<string, string> = {
 };
 
 // ═══════════════════════════════════════════════════════════════
+// FinalFilmPlayer — handles both single merged video and playlist
+// ═══════════════════════════════════════════════════════════════
+
+const FinalFilmPlayer: React.FC<{
+  singleUrl: string | null;
+  playlistUrls: string[];
+  lang: string;
+  onReset: () => void;
+}> = ({ singleUrl, playlistUrls, lang, onReset }) => {
+  const { t: _t } = { t };
+  const [playlistIdx, setPlaylistIdx] = React.useState(0);
+  const [isDownloadingAll, setIsDownloadingAll] = React.useState(false);
+  const videoRef = React.useRef<HTMLVideoElement>(null);
+
+  // Decide which URLs to use
+  const urls = singleUrl ? [singleUrl] : playlistUrls;
+  const isPlaylist = !singleUrl && playlistUrls.length > 1;
+  const currentUrl = urls[playlistIdx] || '';
+
+  const handleEnded = () => {
+    if (playlistIdx < urls.length - 1) {
+      setPlaylistIdx(i => i + 1);
+    }
+  };
+
+  // When playlist index changes, force reload
+  React.useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.load();
+      videoRef.current.play().catch(() => {});
+    }
+  }, [playlistIdx]);
+
+  const downloadAll = async () => {
+    setIsDownloadingAll(true);
+    for (let i = 0; i < urls.length; i++) {
+      const url = urls[i];
+      try {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `scene-${i + 1}.mp4`;
+        a.target = '_blank';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        // Small delay between downloads so browser doesn't block them
+        await new Promise(r => setTimeout(r, 600));
+      } catch (_) {}
+    }
+    setIsDownloadingAll(false);
+  };
+
+  return (
+    <div className="bg-white/3 border border-white/5 rounded-2xl p-6 space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-bold text-white/80">🎬 {t(lang as any, 'finalFilm')}</h2>
+        {isPlaylist && (
+          <span className="text-xs text-white/40 font-mono">
+            {playlistIdx + 1} / {urls.length}
+          </span>
+        )}
+      </div>
+
+      {/* Video player */}
+      <div className="aspect-video rounded-xl overflow-hidden bg-black border border-white/10 relative">
+        <video
+          ref={videoRef}
+          src={currentUrl}
+          controls
+          autoPlay
+          className="w-full h-full"
+          onEnded={handleEnded}
+        />
+        {/* Playlist nav overlay (bottom bar) */}
+        {isPlaylist && urls.length > 1 && (
+          <div className="absolute bottom-0 left-0 right-0 flex gap-1 p-2 bg-gradient-to-t from-black/70 to-transparent">
+            {urls.map((_, i) => (
+              <button
+                key={i}
+                onClick={() => setPlaylistIdx(i)}
+                className={`h-1 flex-1 rounded-full transition-all ${i === playlistIdx ? 'bg-white' : 'bg-white/30 hover:bg-white/60'}`}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Playlist thumbnails (if multiple) */}
+      {isPlaylist && (
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {urls.map((url, i) => (
+            <button
+              key={i}
+              onClick={() => setPlaylistIdx(i)}
+              className={`flex-shrink-0 w-16 h-10 rounded-lg border-2 transition-all flex items-center justify-center text-xs font-bold ${
+                i === playlistIdx
+                  ? 'border-white/70 bg-white/20 text-white'
+                  : 'border-white/10 bg-white/5 text-white/40 hover:border-white/40'
+              }`}
+            >
+              S{i + 1}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Action buttons */}
+      <div className="flex gap-3">
+        {/* Single video: direct download. Playlist: download all */}
+        {!isPlaylist ? (
+          <a
+            href={currentUrl}
+            download={`film.mp4`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex-1 py-3 bg-gradient-to-r from-green-600 to-emerald-600 rounded-xl text-center text-white font-bold hover:from-green-500 hover:to-emerald-500 transition-all"
+          >
+            ⬇️ {t(lang as any, 'downloadVideo')}
+          </a>
+        ) : (
+          <button
+            onClick={downloadAll}
+            disabled={isDownloadingAll}
+            className="flex-1 py-3 bg-gradient-to-r from-green-600 to-emerald-600 rounded-xl text-center text-white font-bold hover:from-green-500 hover:to-emerald-500 transition-all disabled:opacity-50"
+          >
+            {isDownloadingAll
+              ? `⏳ Downloading... (${urls.length} clips)`
+              : `⬇️ Download All ${urls.length} Clips`}
+          </button>
+        )}
+        <button
+          onClick={onReset}
+          className="flex-1 py-3 bg-white/5 border border-white/10 rounded-xl text-white/60 font-bold hover:bg-white/10 transition-all"
+        >
+          {t(lang as any, 'doAgain')}
+        </button>
+      </div>
+
+      {isPlaylist && (
+        <p className="text-xs text-white/30 text-center">
+          {urls.length} clips auto-play in sequence · click scene bar to jump · Download All saves each clip separately
+        </p>
+      )}
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════
 // Component
 // ═══════════════════════════════════════════════════════════════
 
@@ -780,43 +929,21 @@ const OneClickDirector: React.FC<Props> = ({ onBack }) => {
               </div>
             )}
 
-            {/* ═══ FINAL VIDEO ═══ */}
-            {finalVideoUrl && (
-              <div className="bg-white/3 border border-white/5 rounded-2xl p-6">
-                <h2 className="text-lg font-bold text-white/80 mb-4">{t(settings.lang, 'finalFilm')}</h2>
-                <div className="aspect-video rounded-xl overflow-hidden bg-black border border-white/10">
-                  <video
-                    src={finalVideoUrl}
-                    controls
-                    className="w-full h-full"
-                    autoPlay
-                  />
-                </div>
-                <div className="flex gap-3 mt-4">
-                  <a
-                    href={finalVideoUrl}
-                    download
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex-1 py-3 bg-gradient-to-r from-green-600 to-emerald-600 rounded-xl text-center text-white font-bold hover:from-green-500 hover:to-emerald-500 transition-all"
-                  >
-                    {t(settings.lang, 'downloadVideo')}
-                  </a>
-                  <button
-                    onClick={() => {
-                      setCurrentStep('idle');
-                      setSteps(STEP_DEFS.map(d => ({ ...d, status: 'pending' as const })));
-                      setAssets([]);
-                      setFinalVideoUrl(null);
-                      setFinalVideoUrls([]);
-                      setProject(null);
-                    }}
-                    className="flex-1 py-3 bg-white/5 border border-white/10 rounded-xl text-white/60 font-bold hover:bg-white/10 transition-all"
-                  >
-                    {t(settings.lang, 'doAgain')}
-                  </button>
-                </div>
-              </div>
+            {/* ═══ FINAL VIDEO — single or playlist ═══ */}
+            {(finalVideoUrl || finalVideoUrls.length > 0) && (
+              <FinalFilmPlayer
+                singleUrl={finalVideoUrl}
+                playlistUrls={finalVideoUrls}
+                lang={settings.lang}
+                onReset={() => {
+                  setCurrentStep('idle');
+                  setSteps(STEP_DEFS.map(d => ({ ...d, status: 'pending' as const })));
+                  setAssets([]);
+                  setFinalVideoUrl(null);
+                  setFinalVideoUrls([]);
+                  setProject(null);
+                }}
+              />
             )}
 
             {/* Error display */}
