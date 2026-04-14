@@ -68,7 +68,8 @@ const ShotCard: React.FC<{
     onSetGlobalAnchor?: (url: string) => void;
     sceneDescription?: string; // ★ Full context for video prompts
     storyEntities?: StoryEntity[];
-}> = ({ shot, shotIndex, videoUrl, isExpanded, onToggle, onEdit, onLockToggle, images, onImagesChange, characterAnchor, visualStyle, projectId, referenceImageDataUrl, onSetGlobalAnchor, sceneDescription, storyEntities }) => {
+    lang: Language;
+}> = ({ shot, shotIndex, videoUrl, isExpanded, onToggle, onEdit, onLockToggle, images, onImagesChange, characterAnchor, visualStyle, projectId, referenceImageDataUrl, onSetGlobalAnchor, sceneDescription, storyEntities, lang }) => {
     const camClass = cameraBadgeColor[shot.camera] || 'bg-slate-500/20 text-slate-300 border-slate-500/30';
     const moveEmoji = movementBadge[shot.movement] || '🎬';
 
@@ -95,7 +96,7 @@ const ShotCard: React.FC<{
                         <div><span className="text-slate-500 uppercase tracking-wider text-[10px] font-bold">Lens</span><p className="text-slate-300">{shot.lens}</p></div>
                     </div>
 
-                    {/* ★ 终极拦截器：第一镜生图，后续镜头强制锁死 */}
+                    {/* Image prompt + generation panel */}
                     {shotIndex === 0 ? (
                         <>
                             <div className="text-xs mt-3">
@@ -108,19 +109,59 @@ const ShotCard: React.FC<{
                                     shot={shot} images={images} onImagesChange={onImagesChange}
                                     characterAnchor={characterAnchor} visualStyle={visualStyle} projectId={projectId}
                                     storyEntities={storyEntities}
-                                    referenceImageDataUrl={referenceImageDataUrl} // ★ 传递给 Grid！
-                                    onSetGlobalAnchor={onSetGlobalAnchor} // ★ 传递回调
+                                    referenceImageDataUrl={referenceImageDataUrl}
+                                    onSetGlobalAnchor={onSetGlobalAnchor}
                                     sceneDescription={sceneDescription}
                                 />
                             </div>
                         </>
                     ) : (
-                        <div className="mt-4 p-4 bg-indigo-900/20 border border-indigo-500/30 rounded-lg flex items-start gap-3">
-                            <span className="text-indigo-400 text-xl">🔗</span>
-                            <div>
-                                <p className="text-xs text-indigo-300 font-bold tracking-widest uppercase mb-1">物理延续镜头：强制死锁尾帧</p>
-                                <p className="text-[10px] text-indigo-400/80 leading-relaxed">系统将在后台静默提取上一段视频最后0.1秒的画面作为此镜头的绝对起点。<span className="text-rose-400 font-bold">已彻底禁止重新生成图片。</span></p>
+                        <div className="mt-3 space-y-2">
+                            <div className="p-3 bg-indigo-900/20 border border-indigo-500/30 rounded-lg flex items-start gap-3">
+                                <span className="text-indigo-400 text-xl">🔗</span>
+                                <div>
+                                    <p className="text-xs text-indigo-300 font-bold tracking-widest uppercase mb-1">{t(lang, 'dominoContinuation')}</p>
+                                    <p className="text-[10px] text-indigo-400/80 leading-relaxed">{t(lang, 'dominoDesc')}</p>
+                                </div>
                             </div>
+                            {shot.image_prompt && (
+                                <div className="text-xs">
+                                    <span className="text-slate-600 uppercase tracking-wider text-[10px] font-bold">{t(lang, 'backupImagePrompt')}</span>
+                                    <p className="text-slate-500 font-mono text-[10px] bg-slate-950/60 rounded p-2 mt-1 max-h-16 overflow-y-auto">{shot.image_prompt}</p>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Video prompt */}
+                    {shot.video_prompt && (
+                        <div className="text-xs mt-2">
+                            <span className="text-slate-500 uppercase tracking-wider text-[10px] font-bold">{t(lang, 'videoPromptLabel')}</span>
+                            <p className="text-slate-400 font-mono text-[11px] bg-slate-950 rounded p-2 mt-1 max-h-16 overflow-y-auto">{shot.video_prompt}</p>
+                        </div>
+                    )}
+
+                    {/* Dialogue */}
+                    {(shot.dialogue_text || shot.dialogue_speaker) && (
+                        <div className="mt-2 pt-2 border-t border-slate-800/50">
+                            <span className="text-amber-500/70 uppercase tracking-wider text-[10px] font-bold">💬 {t(lang, 'dialogueLabel')}</span>
+                            {shot.dialogue_speaker && (
+                                <span className="ml-2 text-[10px] text-amber-400 font-bold">{shot.dialogue_speaker}</span>
+                            )}
+                            {shot.dialogue_text && (
+                                <p className="text-slate-300 text-xs mt-1 italic">"{shot.dialogue_text}"</p>
+                            )}
+                            {(shot as any).dialogue_subtext && (
+                                <p className="text-slate-500 text-[10px] mt-0.5">{t(lang, 'subtextLabel')}: {(shot as any).dialogue_subtext}</p>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Emotional beat */}
+                    {shot.emotional_beat && (
+                        <div className="text-xs mt-1">
+                            <span className="text-rose-500/60 uppercase tracking-wider text-[10px] font-bold">🎭 {t(lang, 'emotionalBeatLabel')}</span>
+                            <span className="ml-2 text-slate-400 text-[11px]">{shot.emotional_beat}</span>
                         </div>
                     )}
 
@@ -156,8 +197,8 @@ const SceneSection: React.FC<{
     onUpdateScene: (updates: Partial<Scene>) => void; // ★ 新增：场次数据更新回调
     videoModel: VideoModel; // ★ Pass model from settings
     onSetGlobalAnchor?: (url: string) => void; // ★ Master Anchor callback
-
-}> = ({ scene, sceneIndex, shots, isGenerating, onGenerateShots, onUpdateShot, onRewriteShot, project, imagesByShot, onImagesChange, effectiveProjectId, referenceImageDataUrl, onUpdateScene, videoModel, onSetGlobalAnchor }) => {
+    lang: Language;
+}> = ({ scene, sceneIndex, shots, isGenerating, onGenerateShots, onUpdateShot, onRewriteShot, project, imagesByShot, onImagesChange, effectiveProjectId, referenceImageDataUrl, onUpdateScene, videoModel, onSetGlobalAnchor, lang }) => {
     const [expandedShots, setExpandedShots] = useState<Set<string>>(new Set());
     const [editingShot, setEditingShot] = useState<Shot | null>(null);
 
@@ -398,8 +439,9 @@ const SceneSection: React.FC<{
                             images={imagesByShot[shot.shot_id] || []} onImagesChange={(imgs) => onImagesChange(shot.shot_id, imgs)}
                             characterAnchor={project.character_anchor} visualStyle={project.visual_style} projectId={effectiveProjectId}
                             storyEntities={project.story_entities || []}
-                            referenceImageDataUrl={referenceImageDataUrl} // ★ 传递照片给子组件
+                            referenceImageDataUrl={referenceImageDataUrl}
                             sceneDescription={scene.visual_description}
+                            lang={lang}
                         />
                     ))}
                 </div>
@@ -1025,6 +1067,7 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                             referenceImageDataUrl={referenceImageDataUrl}
                             onUpdateScene={(updates) => handleUpdateScene(scene.scene_number, updates)}
                             videoModel={settings.videoModel}
+                            lang={settings.lang}
                         />
                     );
                 })}

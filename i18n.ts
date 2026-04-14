@@ -278,6 +278,29 @@ export const translations = {
     pciSecure: "Encrypted & Secure PCI Payment",
     backToStudio: "Back to Studio",
     notNow: "Not Now",
+
+    // ShotCard — dialogue + video prompt + domino labels
+    dominoContinuation: "Domino Continuation: Tail-Frame Lock",
+    dominoDesc: "The last 0.1s of the previous video clip will be silently extracted as the absolute start frame for this shot.",
+    backupImagePrompt: "Backup Image Prompt",
+    videoPromptLabel: "Video Prompt",
+    dialogueLabel: "Dialogue",
+    subtextLabel: "Subtext",
+    emotionalBeatLabel: "Emotional Beat",
+
+    // Director Brain Panel
+    directorBrain: "Director Brain",
+    logline: "Logline",
+    worldSetting: "World Setting",
+    styleBible: "Style Bible",
+    characterBible: "Character Bible",
+
+    // Shot Timeline
+    shotTimeline: "Shot Timeline",
+    shots: "shots",
+
+    // Verification Panel
+    verificationPanel: "Pipeline Verification",
   },
   zh: {
     appTitle: "AI 漫剧导演",
@@ -540,6 +563,29 @@ export const translations = {
     pciSecure: "由 Stripe 提供加密安全支付",
     backToStudio: "返回工作室",
     notNow: "先不了",
+
+    // ShotCard — dialogue + video prompt + domino labels
+    dominoContinuation: "物理延续镜头：强制死锁尾帧",
+    dominoDesc: "系统将在后台静默提取上一段视频最后0.1秒的画面作为此镜头的绝对起点。",
+    backupImagePrompt: "备用图像提示词",
+    videoPromptLabel: "视频提示词",
+    dialogueLabel: "台词",
+    subtextLabel: "潜台词",
+    emotionalBeatLabel: "情感节拍",
+
+    // Director Brain Panel
+    directorBrain: "导演大脑",
+    logline: "一句话梗概",
+    worldSetting: "世界观设定",
+    styleBible: "风格圣经",
+    characterBible: "角色圣经",
+
+    // Shot Timeline
+    shotTimeline: "镜头时间轴",
+    shots: "个镜头",
+
+    // Verification Panel
+    verificationPanel: "流水线验证",
   }
 };
 

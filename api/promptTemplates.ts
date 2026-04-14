@@ -190,29 +190,54 @@ export function generateShotListPrompt(inputs: {
         visualInstructions.push(`Pacing: ${inputs.directorControls.pacing}`);
     if (inputs.directorControls?.shotDensity !== undefined)
         visualInstructions.push(`Shot Density: ${inputs.directorControls.shotDensity}/10`);
+    if (inputs.directorControls?.subtextLevel !== undefined)
+        visualInstructions.push(`Subtext Level: ${inputs.directorControls.subtextLevel}% (${inputs.directorControls.subtextLevel > 70 ? 'characters rarely say what they mean' : inputs.directorControls.subtextLevel < 30 ? 'direct dialogue' : 'moderate subtext'})`);
+    if (inputs.directorControls?.dialogueDensity !== undefined)
+        visualInstructions.push(`Dialogue Density: ${inputs.directorControls.dialogueDensity}% (${inputs.directorControls.dialogueDensity < 30 ? 'mostly visual/silent' : inputs.directorControls.dialogueDensity > 70 ? 'dialogue-heavy' : 'balanced'})`);
 
     const directorBlock = visualInstructions.length
         ? `\n🎛️ **DIRECTOR CONTROLS**:\n${visualInstructions.map(l => `  • ${l}`).join('\n')}\n`
         : '';
 
+    // Build character reference block so AI uses correct IDs
+    const charRef = inputs.characterBible.length > 0
+        ? `\n📋 **CHARACTER REFERENCE** (use exact character_id values):\n${inputs.characterBible.map(c => `  - ${c.name} → "${c.character_id}"`).join('\n')}\n`
+        : '';
+
+    // Style bible quick-ref
+    const styleRef = inputs.styleBible
+        ? `\n🎨 **STYLE BIBLE**: Lens: ${inputs.styleBible.lens_language || 'N/A'} | Lighting: ${inputs.styleBible.lighting || 'N/A'} | Palette: ${inputs.styleBible.color_palette || 'N/A'}\n`
+        : '';
+
+    const dialogueDensity = inputs.directorControls?.dialogueDensity ?? 40;
+    const dialogueInstruction = dialogueDensity < 20
+        ? 'Most shots should have NO dialogue. Only add lines when absolutely essential.'
+        : dialogueDensity > 70
+        ? 'Include spoken dialogue in most shots. Characters should verbalize their goals and conflicts.'
+        : 'Add dialogue selectively — only when the scene\'s emotional beat demands it. Many shots should be silent action.';
+
     return `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🎬 AI CINE DIRECTOR: SCRIPT-TO-SHOT PLANNER
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-You are a master storyboard artist and director of photography.
-Your job is to break down a single Scene into a precise Shot List.
+You are a master storyboard artist, director of photography, AND screenwriter.
+Your job is to break down a single Scene into a precise Shot List with dialogue and emotional beats.
 
 📍 **SCENE**: ${inputs.scene.scene_number} - ${inputs.scene.synopsis}
 📍 **LOCATION**: ${inputs.scene.location}
 📍 **TIME**: ${inputs.scene.time_of_day}
+📍 **EMOTIONAL GOAL**: ${inputs.scene.emotional_goal || 'N/A'}
 📍 **DRAMATIC FUNCTION**: ${inputs.scene.dramatic_function || 'scene'}
 📍 **TENSION LEVEL**: ${inputs.scene.tension_level || 5}/10
-${directorBlock}
+${charRef}${styleRef}${directorBlock}
 RULES:
 - A shot is a single continuous camera take.
-- Define exactly what happens in each shot. Break the scene's synopsis into 2 to 6 shots.
+- Break the scene's synopsis into 2 to 6 shots. Each shot is distinct — different angle, action, or reveal.
 - Each shot must have a specific camera angle, movement, and composition.
-- Continuity is KING: specify exact characters in the shot.
+- Continuity is KING: specify exact character_id values from the CHARACTER REFERENCE above.
 - Match the tension level: high tension → tighter shots, shorter duration; low tension → wider, longer.
+- DIALOGUE: ${dialogueInstruction}
+- EMOTIONAL BEAT: State the internal psychological state of the POV character in that specific shot.
+- TRANSITION: Specify the edit transition OUT of this shot.
 
 JSON SCHEMA:
 {
@@ -220,13 +245,20 @@ JSON SCHEMA:
     {
       "shot_id": "uuid format",
       "shot_number": 1,
-      "characters": ["character_id array"],
-      "action": "What happens in the shot (Focus on ONE core physical action)",
+      "characters": ["character_id array — use exact IDs from CHARACTER REFERENCE"],
+      "action": "What happens in the shot (ONE core physical action, present tense, vivid verb)",
       "camera_angle": "wide|medium|close|ecu|over-shoulder|pov",
-      "camera_movement": "static|push-in|pull-out|pan-left|pan-right|tilt-up|tilt-down|dolly|tracking",
-      "composition": "string (e.g., rule of thirds, leading lines)",
-      "lighting": "string (e.g., key light from window, silhouette)",
-      "duration_sec": 4
+      "camera_movement": "static|push-in|pull-out|pan-left|pan-right|tilt-up|tilt-down|dolly|tracking|handheld",
+      "composition": "string (e.g., rule of thirds with subject at left — negative space right)",
+      "lighting": "string (e.g., harsh key light from left window casting long shadows)",
+      "duration_sec": 4,
+      "emotional_beat": "Internal state of the main character in this exact moment (e.g., 'controlled panic beneath a steady face')",
+      "dialogue": {
+        "speaker": "Character name, or null if no dialogue",
+        "line": "Exact spoken words, or null if silent",
+        "subtext": "What the speaker really means or fears (always fill this even if line is null)"
+      },
+      "transition": "cut|dissolve|fade|match_cut|smash_cut|wipe"
     }
   ]
 }`;
@@ -263,12 +295,47 @@ export function buildImagePrompt(inputs: {
 
 export function buildVideoPrompt(inputs: {
     shot: any;
+    scene?: any;
+    styleBible?: any;
     directorControls?: DirectorControlsInput;
 }): string {
-    // Video prompt must be EXTREMELY restricted to avoid the AI hallucinating extra events.
-    // Rule: one action, one camera movement.
-    const base = `Camera ${inputs.shot.camera_movement}. ${inputs.shot.action}. Maintain exact visual consistency with the first frame. Do not change the subject's identity, clothing, or the environment.`;
-    return base;
+    // Video prompts: ONE action, ONE camera movement, locked continuity.
+    // Keep them tightly scoped — the AI hallucinates heavily with long video prompts.
+    const parts: string[] = [];
+
+    // 1. Camera movement — primary instruction
+    const cameraMove = inputs.shot.camera_movement || 'static';
+    parts.push(`Camera ${cameraMove}`);
+
+    // 2. The core physical action in the shot
+    if (inputs.shot.action) {
+        parts.push(inputs.shot.action);
+    }
+
+    // 3. Lighting note from style bible (helps model match the look)
+    const lighting = inputs.shot.lighting || inputs.styleBible?.lighting;
+    if (lighting) {
+        parts.push(`Lighting: ${lighting}`);
+    }
+
+    // 4. Emotional register from shot's emotional_beat (if available)
+    if (inputs.shot.emotional_beat) {
+        parts.push(`Mood: ${inputs.shot.emotional_beat}`);
+    }
+
+    // 5. Pacing hint from director controls
+    if (inputs.directorControls?.pacing) {
+        parts.push(`Pacing: ${inputs.directorControls.pacing}`);
+    } else if (inputs.scene?.tension_level) {
+        const tension = Number(inputs.scene.tension_level);
+        if (tension >= 8) parts.push('Pacing: rapid, urgent');
+        else if (tension <= 3) parts.push('Pacing: slow, deliberate');
+    }
+
+    // 6. Hard continuity lock — always last
+    parts.push('Maintain exact visual consistency with the first frame. Do not change subject identity, clothing, hair, or environment geometry.');
+
+    return parts.join('. ') + '.';
 }
 
 export function generateContinuityValidationPrompt(): string {

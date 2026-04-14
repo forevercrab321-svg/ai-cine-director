@@ -17,6 +17,9 @@ import DirectorControlsPanel from './components/DirectorControlsPanel';
 import ProjectDashboard from './components/ProjectDashboard';
 import ExportButton from './components/ExportButton';
 import { LoaderIcon } from './components/IconComponents';
+import DirectorBrainPanel from './components/DirectorBrainPanel';
+import ShotTimeline from './components/ShotTimeline';
+import VerificationPanel from './components/VerificationPanel';
 import { t } from './i18n';
 
 const MainLayout: React.FC = () => {
@@ -585,6 +588,11 @@ const MainLayout: React.FC = () => {
               </div>
             </div>
 
+            {/* Director Brain Panel — logline, world_setting, character_bible, style_bible */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+              <DirectorBrainPanel project={project} lang={settings.lang} />
+            </div>
+
             {/* Cast Photo Generator Plugin */}
             <CastPhotoGenerator
               project={project}
@@ -665,14 +673,27 @@ const MainLayout: React.FC = () => {
         )}
 
         {workflowStage === 'shots' && project && (
-          <ShotListView
-            project={project}
-            referenceImageDataUrl={referenceImageDataUrl}
-            shotCount={shotCount}
-            onBack={() => { setWorkflowStage('scripting'); setPipelineStage('shots_ready'); }}
-            onUpdateScene={handleSceneSync}
-            onSetGlobalAnchor={handleSetGlobalAnchor}
-          />
+          <div className="space-y-6">
+            {/* Shot Timeline — visual overview of all scenes + shots */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+              <ShotTimeline project={project} lang={settings.lang} />
+            </div>
+
+            {/* Verification Panel — pipeline health check */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+              <VerificationPanel project={project} lang={settings.lang} />
+            </div>
+
+            {/* Shot List — main production view */}
+            <ShotListView
+              project={project}
+              referenceImageDataUrl={referenceImageDataUrl}
+              shotCount={shotCount}
+              onBack={() => { setWorkflowStage('scripting'); setPipelineStage('shots_ready'); }}
+              onUpdateScene={handleSceneSync}
+              onSetGlobalAnchor={handleSetGlobalAnchor}
+            />
+          </div>
         )}
 
         {workflowStage === 'production' && project && (

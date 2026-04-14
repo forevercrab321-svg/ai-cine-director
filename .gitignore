@@ -25,4 +25,3 @@ dist-ssr
 .vercel
 .env*.local
 .env.vercel
-api/bundle.cjs

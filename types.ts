@@ -95,6 +95,15 @@ export interface Shot {
   // Shot-level images (in-memory, not persisted in Shot row)
   images?: ShotImage[];
   primary_image_id?: string;
+
+  // Dialogue & emotional beat (populated by Gemini shot planner)
+  dialogue_text?: string;
+  dialogue_speaker?: string;
+  dialogue_subtext?: string;
+  emotional_beat?: string;
+
+  // Pipeline control flags
+  is_first_shot_in_scene?: boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -413,6 +422,7 @@ export interface EpisodeArc {
 export interface Scene {
   id?: string; // Database ID
   scene_number: number;
+  duration_sec?: number;         // Shot duration in seconds (from Gemini or tension fallback)
   scene_title?: string;          // Short title for this scene
   episode_number?: number;       // Which episode this scene belongs to
   act_position?: BeatPosition;   // Where in the dramatic arc this scene sits

@@ -2277,6 +2277,22 @@ const shotListSchema = {
                     lighting: { type: Type.STRING },
                     // @ts-ignore
                     duration_sec: { type: Type.INTEGER },
+                    // @ts-ignore
+                    emotional_beat: { type: Type.STRING },
+                    // @ts-ignore
+                    transition: { type: Type.STRING },
+                    dialogue: {
+                        // @ts-ignore
+                        type: Type.OBJECT,
+                        properties: {
+                            // @ts-ignore
+                            speaker: { type: Type.STRING },
+                            // @ts-ignore
+                            line: { type: Type.STRING },
+                            // @ts-ignore
+                            subtext: { type: Type.STRING },
+                        },
+                    },
                 },
                 required: ['shot_id', 'shot_number', 'action', 'camera_movement'],
             },
@@ -2430,7 +2446,7 @@ app.post('/api/gemini/generate', requireAuth, async (req: any, res: any) => {
         // ==========================================
         // NEW PIPELINE: STAGE 1 - STORY BRAIN
         // ==========================================
-        const { generateStoryBrainPrompt, generateShotListPrompt } = await import('./promptTemplates.js');
+        const { generateStoryBrainPrompt, generateShotListPrompt, buildVideoPrompt, buildImagePrompt } = await import('./promptTemplates.js');
 
         const storyBrainPrompt = generateStoryBrainPrompt({
             storyIdea: safeStoryIdea,
@@ -2637,21 +2653,34 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
                 const isFirstShotInScene = (j === 0);
                 const visualDesc = `${characterPrefix}${setting}, ${timeStr}. ${shot.action}. Camera: ${shot.camera_angle}, ${shot.composition}.`;
 
-                // Generate a rich image prompt combining everything
-                const imagePrompt = [
-                    project.character_anchor ? project.character_anchor + '.' : '',
-                    characterPrefix,
-                    `Action: ${shot.action}`,
-                    `Setting: ${setting}, ${timeStr}, ${shot.lighting}`,
-                    `Camera: ${shot.camera_angle} shot, ${shot.composition}, ${parsedBrain.style_bible?.lens_language || ''}, ${parsedBrain.style_bible?.color_palette || ''}`,
-                    `Style: Cinematic photography, highly detailed`
-                ].filter(Boolean).join(' | ');
+                // Generate a rich image prompt for EVERY shot (not just first-in-scene)
+                // Use buildImagePrompt from promptTemplates for full richness
+                const imagePrompt = buildImagePrompt({
+                    shot,
+                    scene: scn,
+                    characterBible: parsedBrain.character_bible || [],
+                    styleBible: parsedBrain.style_bible || {},
+                    directorControls: safeDirectorControls,
+                });
+
+                // Prepend character anchor to first shot of each scene for continuity
+                const finalImagePrompt = (isFirstShotInScene && project.character_anchor)
+                    ? `${project.character_anchor}. ${imagePrompt}`
+                    : imagePrompt;
+
+                // Build a rich video prompt using buildVideoPrompt
+                const videoPrompt = buildVideoPrompt({
+                    shot,
+                    scene: scn,
+                    styleBible: parsedBrain.style_bible || {},
+                    directorControls: safeDirectorControls,
+                });
 
                 // Build character consistency metadata for first-shot-of-scene
                 const anchorKeywords: string[] = project.character_anchor
                     ? project.character_anchor.toLowerCase().split(/[,\s]+/).filter((w: string) => w.length > 3)
                     : [];
-                const promptLower = imagePrompt.toLowerCase();
+                const promptLower = finalImagePrompt.toLowerCase();
                 const anchorKeywordsPresent = anchorKeywords.filter((kw: string) => promptLower.includes(kw)).length;
                 const consistencyMeta = (isFirstShotInScene && project.character_anchor)
                     ? {
@@ -2691,6 +2720,14 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
                     pacing_note: `shot_count:${shots.length}`,
                 });
 
+                // duration_sec: prefer Gemini's value; fallback: inverse tension (high tension → shorter shot)
+                const tensionFallback = typeof scn.tension_level === 'number'
+                    ? Math.max(2, Math.round(8 - (scn.tension_level / 10) * 5))  // tension 10→3s, tension 1→7s
+                    : 4;
+                const shotDuration = (typeof shot.duration_sec === 'number' && shot.duration_sec > 0)
+                    ? shot.duration_sec
+                    : tensionFallback;
+
                 convertedScenes.push({
                     scene_number: sequenceOrder, // Frontend expects a flat ordinal
                     scene_setting: setting,
@@ -2701,8 +2738,9 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
                     shot_id: shot.shot_id || crypto.randomUUID(),
                     scene_id: scn.scene_id,
                     sequence_order: sequenceOrder,
+                    duration_sec: shotDuration,          // ★ real Gemini value or tension-aware fallback
+                    _duration_is_fallback: typeof shot.duration_sec !== 'number', // debug flag
                     narrative_purpose: sanitizePromptInput(scn.emotional_goal || shot.action || '', 220),
-                    emotional_beat: sanitizePromptInput(scn.emotional_goal || '', 180),
                     // Director beat arc fields — from AI scene data
                     scene_title: sanitizePromptInput(scn.location || `Scene ${i + 1}`, 120),
                     dramatic_function: sanitizePromptInput(scn.dramatic_function || '', 80),
@@ -2713,7 +2751,7 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
                     lens_hint: sanitizePromptInput(parsedBrain.style_bible?.lens_language || '', 120),
                     subject_focus: charNames[0] || 'main subject',
                     transition_in: sequenceOrder === 1 ? 'fade_in' : 'cut',
-                    transition_out: 'cut',
+                    transition_out: shot.transition || (sequenceOrder === 1 ? 'fade' : 'cut'),
                     continuity_from_previous: sequenceOrder === 1 ? 'N/A' : 'inherit previous shot appearance and screen direction',
                     continuity_to_next: 'preserve scene memory',
                     validation_rules: {
@@ -2722,11 +2760,19 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
                         min_visual_match_score: 75,
                     },
 
-                    // First shot of scene gets the full prompt, rest get an empty prompt to force video frame chaining
-                    image_prompt: isFirstShotInScene ? imagePrompt : "",
+                    // Every shot gets a full image prompt for standalone generation
+                    image_prompt: finalImagePrompt,
+                    // Flag so the UI can still apply domino chaining for non-first shots
+                    is_first_shot_in_scene: isFirstShotInScene,
 
-                    video_motion_prompt: shot.camera_movement,
-                    video_prompt: shot.camera_movement, // Video should just execute the camera move based on image
+                    video_motion_prompt: videoPrompt,
+                    video_prompt: videoPrompt,
+
+                    // Dialogue + emotional beat fields from Gemini shot planner
+                    dialogue_speaker: shot.dialogue?.speaker || null,
+                    dialogue_text: shot.dialogue?.line || null,
+                    dialogue_subtext: shot.dialogue?.subtext || null,
+                    emotional_beat: sanitizePromptInput(shot.emotional_beat || scn.emotional_goal || '', 200),
 
                     // Store the rich structured data for later API usage
                     _bible_context: {
