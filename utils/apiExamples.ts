@@ -4,8 +4,8 @@
  */
 
 import { Request, Response } from 'express';
-import { logger } from './logger';
-import { createSuccessResponse, createErrorResponse, createError } from './apiError';
+import { logger } from './logger.js';
+import { createSuccessResponse, createErrorResponse, createError } from './apiError.js';
 
 /**
  * 示例 1: 简单的数据验证路由

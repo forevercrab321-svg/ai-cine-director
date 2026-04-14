@@ -10,7 +10,7 @@
  */
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { isDeveloper, logDeveloperAccess } from './isDeveloper';
+import { isDeveloper, logDeveloperAccess } from './isDeveloper.js';
 
 // ═══════════════════════════════════════════════════════════════
 // Types

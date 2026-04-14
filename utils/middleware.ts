@@ -3,8 +3,8 @@
  */
 
 import { Request, Response, NextFunction } from 'express';
-import { logger, generateTraceId, ApiMetrics } from './logger';
-import { createSuccessResponse, createErrorResponse, ApiError } from './apiError';
+import { logger, generateTraceId, ApiMetrics } from './logger.js';
+import { createSuccessResponse, createErrorResponse, ApiError } from './apiError.js';
 
 /**
  * 扩展Express Request类型以支持traceId

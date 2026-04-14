@@ -7,7 +7,7 @@
  */
 
 import { AnchorPackage, GenerationMode } from '../../types';
-import { classifyShotIntent, getRoutingRules } from './entityRouter';
+import { classifyShotIntent, getRoutingRules } from './entityRouter.js';
 
 export type VideoPromptInput = {
   scene_text: string;
