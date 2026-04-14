@@ -2147,27 +2147,34 @@ const getGeminiTextCompletion = async (promptContent: any, options: {
     responseSchema?: any;
     model?: string;
     maxOutputTokens?: number;
-} = {}) => {
-    // Migration: Route to MiniMax by default
-    const system = options.systemInstruction || "You are a helpful AI assistant.";
-    
-    // Convert Gemini prompt parts to MiniMax string
-    let promptText = "";
-    if (typeof promptContent === 'string') {
-        promptText = promptContent;
-    } else if (Array.isArray(promptContent)) {
-        promptText = promptContent.map(p => typeof p === 'string' ? p : (p.text || '')).join('\n');
+} = {}): Promise<string> => {
+    const ai = getGeminiAI();
+    const modelName = options.model || GEMINI_TEXT_MODEL;
+
+    const generationConfig: any = {};
+    if (options.temperature !== undefined) generationConfig.temperature = options.temperature;
+    if (options.maxOutputTokens !== undefined) generationConfig.maxOutputTokens = options.maxOutputTokens;
+    if (options.responseMimeType) generationConfig.responseMimeType = options.responseMimeType;
+    if (options.responseSchema) generationConfig.responseSchema = options.responseSchema;
+
+    const requestConfig: any = { generationConfig };
+    if (options.systemInstruction) {
+        requestConfig.systemInstruction = options.systemInstruction;
     }
 
-    // Force JSON if schema provided
-    const useJson = !!options.responseSchema || options.responseMimeType === 'application/json';
-    
-    const response = await getMinimaxChatCompletion(system, promptText, {
-        temperature: options.temperature,
-        responseFormat: useJson ? { type: "json_object" } : undefined
+    // @ts-ignore
+    const model = ai.models;
+    // @ts-ignore
+    const result = await ai.models.generateContent({
+        model: modelName,
+        contents: typeof promptContent === 'string'
+            ? [{ role: 'user', parts: [{ text: promptContent }] }]
+            : promptContent,
+        ...requestConfig,
     });
 
-    return extractMinimaxText(response);
+    // @ts-ignore
+    return result?.candidates?.[0]?.content?.parts?.[0]?.text ?? result?.text ?? '';
 };
 
 const storyBrainSchema = {
