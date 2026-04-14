@@ -1,9 +1,9 @@
 /**
  * Gemini Service - 前端代理层
  * 所有请求通过后端 API Server 转发，不包含任何 API Key
- * 支持 Mock 模式（后端不可用时）
+ * Mock 模式仅在设置中明确启用时激活，不会静默回退
  */
-import { StoryboardProject, Language, GenerationMode } from '../types';
+import { StoryboardProject, Language, GenerationMode, DirectorControls } from '../types';
 import { supabase } from '../lib/supabaseClient';
 
 const API_BASE = '/api/gemini';
@@ -77,6 +77,18 @@ const generateMockStoryboard = (
  * 生成故事板 - 通过后端代理调用 Gemini API
  * 后端不可用时使用 Mock 模式
  */
+/**
+ * Check if mock mode is explicitly enabled in user settings
+ */
+function isExplicitMockMode(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const saved = localStorage.getItem('appSettings');
+    if (!saved) return false;
+    return JSON.parse(saved)?.useMockMode === true;
+  } catch { return false; }
+}
+
 export const generateStoryboard = async (
   storyIdea: string,
   visualStyle: string,
@@ -85,43 +97,52 @@ export const generateStoryboard = async (
   identityAnchor?: string,
   sceneCount?: number,
   forceHasCast?: boolean,
-  projectType?: string
+  projectType?: string,
+  directorControls?: DirectorControls
 ): Promise<StoryboardProject> => {
-  try {
-    const { data: { session } } = await supabase.auth.getSession();
-    const token = session?.access_token;
-
-    const response = await fetch(`${API_BASE}/generate`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': token ? `Bearer ${token}` : ''
-      },
-      body: JSON.stringify({
-        storyIdea,
-        visualStyle,
-        language,
-        mode,
-        identityAnchor,
-        sceneCount: sceneCount || 5,
-        forceHasCast,
-        projectType
-      }),
-    });
-
-    if (!response.ok) {
-      // Fallback to mock mode if backend unavailable
-      console.warn('[Gemini] Backend unavailable, using mock mode');
-      return generateMockStoryboard(storyIdea, visualStyle, language, mode, sceneCount || 5, identityAnchor);
-    }
-
-    return await response.json();
-  } catch (error) {
-    console.error('Gemini Director Error:', error);
-    // Fallback to mock mode
-    console.log('[Gemini] Using mock mode as fallback');
+  // ★ EXPLICIT MOCK MODE — only if user opts in via settings
+  if (isExplicitMockMode()) {
+    console.warn('[Gemini] ⚠️ Mock mode EXPLICITLY enabled in settings. Returning mock data.');
     return generateMockStoryboard(storyIdea, visualStyle, language, mode, sceneCount || 5, identityAnchor);
   }
+
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+
+  if (!token) {
+    throw new Error('请先登录以生成故事板 (Login required to generate storyboard)');
+  }
+
+  const response = await fetch(`${API_BASE}/generate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    },
+    body: JSON.stringify({
+      storyIdea,
+      visualStyle,
+      language,
+      mode,
+      identityAnchor,
+      sceneCount: sceneCount || 5,
+      forceHasCast,
+      projectType,
+      directorControls,
+    }),
+  });
+
+  if (!response.ok) {
+    let errorMessage = `故事板生成失败 (Storyboard generation failed: ${response.status})`;
+    try {
+      const errData = await response.json();
+      errorMessage = errData?.error || errData?.message || errorMessage;
+    } catch { /* keep default message */ }
+    console.error('[Gemini] ❌ Backend error:', errorMessage);
+    throw new Error(errorMessage);
+  }
+
+  return await response.json();
 };
 
 /**

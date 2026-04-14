@@ -3,14 +3,12 @@
     "buildCommand": "vite build",
     "outputDirectory": "dist",
     "installCommand": "npm install",
-    "routes": [
-        {
-            "src": "/api/auth/send-otp",
-            "dest": "/api/auth/send-otp/route.ts"
-        },
-        {
-            "src": "/api/auth/verify-otp",
-            "dest": "/api/auth/verify-otp/route.ts"
+    "rewrites": [
+        { "source": "/api/:path*", "destination": "/api/index.ts" }
+    ],
+    "functions": {
+        "api/index.ts": {
+            "maxDuration": 300
         }
-    ]
+    }
 }

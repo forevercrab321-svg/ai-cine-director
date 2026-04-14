@@ -135,7 +135,7 @@ export async function exampleCreditDeductionRoute(
         }, undefined, req.traceId));
 
     } catch (error: any) {
-        const err = createError.creditDeductionFailed(amount);
+        const err = createError.internalError("Credit deduction failed");
         logger.payment.error('deduction_error', error.message, {
             userId,
             amount,
@@ -155,7 +155,7 @@ export async function exampleCachedRoute(
     getFromDB: (id: string) => Promise<any>,
     cache: Map<string, { data: any; expiry: number }>
 ) {
-    const { id } = req.params;
+    const { id: idParam } = req.params; const id = Array.isArray(idParam) ? idParam[0] : idParam;
 
     if (!id) {
         const err = createError.missingField('id');

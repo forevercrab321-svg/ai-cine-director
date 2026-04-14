@@ -1,4 +1,16 @@
-
+/**
+ * storyboardService.ts
+ * Source of truth: Supabase (auth-gated, multi-device)
+ * localStorage: settings + directorControls only (handled in App.tsx)
+ *
+ * DB column mapping:
+ *   storyboards.title            ↔  StoryboardProject.project_title
+ *   storyboards.director_controls ↔ StoryboardProject.director_controls (JSONB)
+ *   storyboards.story_entities   ↔  StoryboardProject.story_entities (JSONB)
+ *   storyboards.logline          ↔  StoryboardProject.logline
+ *   storyboards.world_setting    ↔  StoryboardProject.world_setting
+ *   storyboards.updated_at       ↔  used by dashboard for sort/display
+ */
 import { supabase } from '../lib/supabaseClient';
 import { StoryboardProject, Scene } from '../types';
 
@@ -6,192 +18,243 @@ const formatError = (error: any): string => {
     if (!error) return 'Unknown error';
     if (typeof error === 'string') return error;
     if (error instanceof Error) return error.message;
-    try {
-        return JSON.stringify(error);
-    } catch {
-        return String(error);
-    }
+    try { return JSON.stringify(error); } catch { return String(error); }
 };
 
+// ─── Map DB row → StoryboardProject ──────────────────────────────────────────
+function dbRowToProject(row: any, scenes: Scene[] = []): StoryboardProject {
+    return {
+        id:               row.id,
+        project_title:    row.title || row.project_title || 'Untitled Project',
+        visual_style:     row.visual_style || '',
+        character_anchor: row.character_anchor || '',
+        story_entities:   row.story_entities   ?? undefined,
+        director_controls: row.director_controls ?? undefined,
+        logline:          row.logline          ?? undefined,
+        world_setting:    row.world_setting    ?? undefined,
+        pipeline_state:   row.pipeline_state   ?? undefined,
+        identity_strength: row.identity_strength ?? undefined,
+        style_bible:      row.style_bible      ?? undefined,
+        scenes,
+    } as StoryboardProject;
+}
+
+// ─── Map Scene → DB payload ───────────────────────────────────────────────────
+function sceneToDbPayload(scene: Scene, storyboardId: string): any {
+    const payload: any = {
+        storyboard_id:       storyboardId,
+        scene_number:        scene.scene_number || 1,
+        visual_description:  scene.visual_description || '',
+        audio_description:   scene.audio_description  || '',
+        shot_type:           scene.shot_type          || '',
+        image_prompt:        scene.image_prompt        || '',
+        image_url:           scene.image_url           || null,
+        video_url:           scene.video_url           || null,
+        video_motion_prompt: scene.video_motion_prompt || (scene as any).video_prompt || null,
+        scene_title:         (scene as any).scene_title        || null,
+        dramatic_function:   (scene as any).dramatic_function  || null,
+        tension_level:       (scene as any).tension_level      ?? null,
+        emotional_beat:      (scene as any).emotional_beat     || null,
+        dialogue_text:       scene.dialogue_text               || null,
+        dialogue_speaker:    scene.dialogue_speaker            || null,
+    };
+    if (scene.id && scene.id.includes('-')) {
+        payload.id = scene.id;
+    }
+    return payload;
+}
+
+// ─── Map DB scene row → Scene ─────────────────────────────────────────────────
+function dbRowToScene(row: any): Scene {
+    return {
+        id:                  row.id,
+        scene_number:        row.scene_number,
+        visual_description:  row.visual_description || '',
+        audio_description:   row.audio_description  || '',
+        shot_type:           row.shot_type          || '',
+        image_prompt:        row.image_prompt        || '',
+        image_url:           row.image_url           || undefined,
+        video_url:           row.video_url           || undefined,
+        video_motion_prompt: row.video_motion_prompt || undefined,
+        scene_title:         row.scene_title         || undefined,
+        dramatic_function:   row.dramatic_function   || undefined,
+        tension_level:       row.tension_level       ?? undefined,
+        emotional_beat:      row.emotional_beat      || undefined,
+        dialogue_text:       row.dialogue_text        || undefined,
+        dialogue_speaker:    row.dialogue_speaker     || undefined,
+    } as Scene;
+}
+
+// ─── saveStoryboard ───────────────────────────────────────────────────────────
 export const saveStoryboard = async (
     userId: string,
     project: StoryboardProject
 ): Promise<StoryboardProject | null> => {
     try {
         let storyboardId = project.id;
-        let projectData: any = null;
+        let projectRow: any = null;
 
-        if (storyboardId) {
-            // Update existing project
-            const { data, error } = await supabase
-                .from('storyboards')
-                .update({
-                    title: project.project_title,
-                    visual_style: project.visual_style,
-                    character_anchor: project.character_anchor
-                })
-                .eq('id', storyboardId)
-                .select() // Returning updated row
-                .maybeSingle();
-
-            if (error) throw error;
-            projectData = data;
-
-            // Stale/non-existent storyboard id (common source of 406 with .single())
-            // Fallback to creating a new storyboard record for current user.
-            if (!projectData) {
-                storyboardId = undefined;
-            }
-        } else {
-            // Create new project
-                // Include the project.id (Gemini-generated UUID) so the Supabase row
-                // gets the SAME primary key as the pipeline runtime — required for
-                // persistPipelineState() to update the correct row.
-                const insertPayload: any = {
-                    user_id: userId,
-                    title: project.project_title,
-                    visual_style: project.visual_style,
-                    character_anchor: project.character_anchor,
-                };
-                if (project.id) insertPayload.id = project.id;
-                const { data, error } = await supabase
-                    .from('storyboards')
-                    .insert(insertPayload)
-                    .select()
-                    .single();
-
-            if (error) throw error;
-            projectData = data;
-            storyboardId = data.id;
-        }
-
-        // If update path found no row, create a new storyboard entry.
-        if (!projectData || !storyboardId) {
-                const fallbackPayload: any = {
-                    user_id: userId,
-                    title: project.project_title,
-                    visual_style: project.visual_style,
-                    character_anchor: project.character_anchor,
-                };
-                if (project.id) fallbackPayload.id = project.id;
-                const { data, error } = await supabase
-                    .from('storyboards')
-                    .insert(fallbackPayload)
-                    .select()
-                    .single();
-
-            if (error) throw error;
-            projectData = data;
-            storyboardId = data.id;
-        }
-
-        if (!storyboardId) throw new Error("Failed to get storyboard ID");
-
-        // 2. Insert or Update Scenes
-        // Supabase upsert works best when we provide the PK for existing rows
-        // For new rows, we MUST omit the 'id' field entirely to let the DB generate it.
-        const scenesPayload = project.scenes.map(scene => {
-            const payload: any = {
-                storyboard_id: storyboardId,
-                scene_number: scene.scene_number || 1,
-                visual_description: scene.visual_description || '',
-                audio_description: scene.audio_description || '',
-                shot_type: scene.shot_type || '',
-                image_prompt: scene.image_prompt || '',
-                image_url: scene.image_url || null,
-                video_url: scene.video_url || null,
-                video_motion_prompt: scene.video_motion_prompt || scene.video_prompt || null
-            };
-
-            // PostgREST strict schema: all objects in array must have same keys.
-            // If it's a new scene, we still need to provide 'id' but as undefined/omitted. 
-            // Wait, JSON.stringify removes undefined, so the key vanishes.
-            // If we omit it for new, we must omit it for ALL new. But if it's a mix of new and old,
-            // we MUST separate them or provide undefined. The safest way is to just let Supabase JS handle it, 
-            // but we must ensure we don't selectively add keys to some objects.
-            if (scene.id && scene.id.includes('-')) {
-                payload.id = scene.id;
-            }
-            return payload;
-        });
-
-        // Supabase bulk upsert requires uniform keys for all objects. If some have 'id' and some don't, it fails.
-        // It's safer to split into updates (with id) and inserts (without id)
-        const scenesToUpdate = scenesPayload.filter(s => s.id);
-        const scenesToInsert = scenesPayload.filter(s => !s.id);
-
-        let scenesData: any[] = [];
-
-        if (scenesToUpdate.length > 0) {
-            const { data, error } = await supabase
-                .from('scenes')
-                .upsert(scenesToUpdate, { onConflict: 'id' })
-                .select();
-            if (error) throw error;
-            if (data) scenesData = scenesData.concat(data);
-        }
-
-        if (scenesToInsert.length > 0) {
-            const { data, error } = await supabase
-                .from('scenes')
-                .insert(scenesToInsert)
-                .select();
-            if (error) throw error;
-            if (data) scenesData = scenesData.concat(data);
-        }
-
-        // Sort scenes by scene_number
-        const sortedScenes = (scenesData as Scene[]).sort((a, b) => a.scene_number - b.scene_number);
-
-        return {
-            ...project,
-            id: storyboardId,
-            scenes: sortedScenes
+        // Full payload including new columns (requires migration applied)
+        const storyboardPayloadFull: any = {
+            title:             project.project_title || 'Untitled Project',
+            visual_style:      project.visual_style  || '',
+            character_anchor:  project.character_anchor || '',
+            logline:           project.logline           ?? null,
+            world_setting:     project.world_setting     ?? null,
+            story_entities:    project.story_entities    ?? null,
+            director_controls: project.director_controls ?? null,
+        };
+        // Minimal payload for pre-migration DBs (only original columns)
+        const storyboardPayloadBase: any = {
+            title:            storyboardPayloadFull.title,
+            visual_style:     storyboardPayloadFull.visual_style,
+            character_anchor: storyboardPayloadFull.character_anchor,
         };
 
+        const isColumnMissing = (e: any) =>
+            e?.code === '42703' || e?.message?.includes('column') && e?.message?.includes('does not exist');
+
+        const tryUpsert = async (payload: any, isInsert: boolean, id?: string) => {
+            if (isInsert) {
+                const insertPayload: any = { user_id: userId, ...payload };
+                if (id) insertPayload.id = id;
+                const { data, error } = await supabase.from('storyboards').insert(insertPayload).select().single();
+                return { data, error };
+            } else {
+                const { data, error } = await supabase.from('storyboards').update(payload).eq('id', id!).select().maybeSingle();
+                return { data, error };
+            }
+        };
+
+        const runWithFallback = async (isInsert: boolean, id?: string) => {
+            let { data, error } = await tryUpsert(storyboardPayloadFull, isInsert, id);
+            if (error && isColumnMissing(error)) {
+                console.warn('[storyboardService] New columns missing — migration not applied. Saving with base columns only.');
+                ({ data, error } = await tryUpsert(storyboardPayloadBase, isInsert, id));
+            }
+            if (error) throw error;
+            return data;
+        };
+
+        if (storyboardId) {
+            projectRow = await runWithFallback(false, storyboardId);
+            if (!projectRow) storyboardId = undefined;
+        }
+
+        if (!projectRow || !storyboardId) {
+            projectRow = await runWithFallback(true, project.id);
+            storyboardId = projectRow.id;
+        }
+
+        if (!storyboardId) throw new Error('Failed to obtain storyboard ID');
+
+        const scenesPayload = (project.scenes || []).map(s => sceneToDbPayload(s, storyboardId!));
+        const toUpdate = scenesPayload.filter(s => s.id);
+        const toInsert = scenesPayload.filter(s => !s.id);
+
+        let savedScenes: any[] = [];
+
+        // Columns added by migration — strip them if column-missing error
+        const newSceneColumns = ['scene_title','dramatic_function','tension_level','emotional_beat','dialogue_text','dialogue_speaker'];
+        const stripNewSceneColumns = (rows: any[]) => rows.map(r => {
+            const clean = { ...r };
+            newSceneColumns.forEach(k => delete clean[k]);
+            return clean;
+        });
+
+        if (toUpdate.length > 0) {
+            let { data, error } = await supabase.from('scenes').upsert(toUpdate, { onConflict: 'id' }).select();
+            if (error && isColumnMissing(error)) {
+                console.warn('[storyboardService] Scene new columns missing — saving base columns only.');
+                ({ data, error } = await supabase.from('scenes').upsert(stripNewSceneColumns(toUpdate), { onConflict: 'id' }).select());
+            }
+            if (error) throw error;
+            if (data) savedScenes = savedScenes.concat(data);
+        }
+
+        if (toInsert.length > 0) {
+            let { data, error } = await supabase.from('scenes').insert(toInsert).select();
+            if (error && isColumnMissing(error)) {
+                console.warn('[storyboardService] Scene new columns missing — saving base columns only.');
+                ({ data, error } = await supabase.from('scenes').insert(stripNewSceneColumns(toInsert)).select());
+            }
+            if (error) throw error;
+            if (data) savedScenes = savedScenes.concat(data);
+        }
+
+        const sortedScenes = savedScenes
+            .map(dbRowToScene)
+            .sort((a, b) => a.scene_number - b.scene_number);
+
+        return dbRowToProject(projectRow, sortedScenes);
+
     } catch (error) {
-        console.error('Error saving storyboard:', formatError(error), error);
+        console.error('[storyboardService] saveStoryboard error:', formatError(error));
         return null;
     }
 };
 
-export const updateSceneMedia = async (sceneId: string, mediaType: 'image' | 'video', url: string) => {
+// ─── updateSceneMedia ─────────────────────────────────────────────────────────
+export const updateSceneMedia = async (
+    sceneId: string,
+    mediaType: 'image' | 'video',
+    url: string
+): Promise<boolean> => {
     if (!sceneId) return false;
     const update = mediaType === 'image' ? { image_url: url } : { video_url: url };
-    const { error } = await supabase
-        .from('scenes')
-        .update(update)
-        .eq('id', sceneId);
-
+    const { error } = await supabase.from('scenes').update(update).eq('id', sceneId);
     if (error) {
-        console.error(`Error updating scene ${mediaType}:`, error);
+        console.error('[storyboardService] updateSceneMedia error:', error);
         return false;
     }
     return true;
 };
 
+// ─── fetchUserStoryboards ─────────────────────────────────────────────────────
 export const fetchUserStoryboards = async (userId: string) => {
-    const { data, error } = await supabase
+    // Try ordering by updated_at first (requires migration applied).
+    // Fall back to created_at if updated_at column doesn't exist yet.
+    let { data, error } = await supabase
         .from('storyboards')
-        .select('*')
+        .select('id, title, logline, created_at, updated_at, visual_style')
         .eq('user_id', userId)
-        .order('created_at', { ascending: false });
+        .order('updated_at', { ascending: false, nullsFirst: false });
 
-    if (error) throw error;
-    return data;
+    if (error) {
+        // updated_at column missing (migration not applied) — fall back gracefully
+        if (error.message?.includes('updated_at') || error.code === '42703') {
+            const fallback = await supabase
+                .from('storyboards')
+                .select('id, title, logline, created_at, visual_style')
+                .eq('user_id', userId)
+                .order('created_at', { ascending: false });
+            if (fallback.error) throw fallback.error;
+            data = (fallback.data || []).map((r: any) => ({ ...r, updated_at: r.created_at }));
+        } else {
+            throw error;
+        }
+    }
+
+    return (data || []).map((row: any) => ({
+        ...row,
+        project_title: row.title || 'Untitled Project',
+    }));
 };
 
-export const fetchStoryboardDetails = async (storyboardId: string) => {
-    const { data: project, error: projectError } = await supabase
+// ─── fetchStoryboardDetails ───────────────────────────────────────────────────
+export const fetchStoryboardDetails = async (
+    storyboardId: string
+): Promise<StoryboardProject | null> => {
+    const { data: projectRow, error: projectError } = await supabase
         .from('storyboards')
         .select('*')
         .eq('id', storyboardId)
         .maybeSingle();
 
     if (projectError) throw projectError;
-    if (!project) return null;
+    if (!projectRow) return null;
 
-    const { data: scenes, error: scenesError } = await supabase
+    const { data: scenesData, error: scenesError } = await supabase
         .from('scenes')
         .select('*')
         .eq('storyboard_id', storyboardId)
@@ -199,8 +262,17 @@ export const fetchStoryboardDetails = async (storyboardId: string) => {
 
     if (scenesError) throw scenesError;
 
-    return {
-        ...project,
-        scenes: scenes as Scene[]
-    };
+    const scenes = (scenesData || []).map(dbRowToScene);
+    return dbRowToProject(projectRow, scenes);
+};
+
+// ─── deleteStoryboard ─────────────────────────────────────────────────────────
+export const deleteStoryboard = async (storyboardId: string): Promise<boolean> => {
+    // Scenes are cascade-deleted by FK constraint
+    const { error } = await supabase.from('storyboards').delete().eq('id', storyboardId);
+    if (error) {
+        console.error('[storyboardService] deleteStoryboard error:', error);
+        return false;
+    }
+    return true;
 };

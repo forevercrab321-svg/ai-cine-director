@@ -309,10 +309,114 @@ export interface ShotRewriteRequest {
 // Legacy types (kept for backward compatibility)
 // ═══════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════
+// Director Control System — Full creative direction model
+// These controls feed directly into the AI generation pipeline.
+// ═══════════════════════════════════════════════════════════════
+
+export type NarrativeDistance = 'intimate' | 'observational' | 'epic' | 'detached';
+export type PacingStyle = 'slow_burn' | 'steady' | 'propulsive' | 'frenetic';
+export type ToneMode = 'dark' | 'neutral' | 'hopeful' | 'comedic' | 'tragic' | 'satirical';
+export type OpeningHookStyle = 'in_medias_res' | 'establishing' | 'mystery' | 'action' | 'character_intro';
+export type EndingStyle = 'resolved' | 'open_ended' | 'cliffhanger' | 'bittersweet' | 'twist';
+export type VisualPhilosophy = 'naturalistic' | 'expressionistic' | 'minimalist' | 'maximalist' | 'documentary';
+export type CameraMotivation = 'character_follows' | 'environment_reveals' | 'tension_builds' | 'god_view';
+export type LightingMotivation = 'natural' | 'dramatic_key' | 'flat_even' | 'practical_only' | 'neon_practical';
+export type SoundMotivation = 'diegetic_focus' | 'score_driven' | 'silence_as_tool' | 'ambient_texture';
+
+export interface DirectorControls {
+  // Narrative architecture
+  tone: ToneMode;
+  pacing: PacingStyle;
+  narrativeDistance: NarrativeDistance;
+  openingHook: OpeningHookStyle;
+  endingStyle: EndingStyle;
+
+  // Dramatic structure
+  emotionalEscalation: number;   // 0–100: how aggressively emotion builds
+  reversalAtMidpoint: boolean;   // Insert a midpoint reversal/turn
+  subplotThreads: number;        // 0–3 simultaneous subplot threads
+
+  // Visual system
+  visualPhilosophy: VisualPhilosophy;
+  cameraMotivation: CameraMotivation;
+  lightingMotivation: LightingMotivation;
+  soundMotivation: SoundMotivation;
+  shotDensity: number;           // 1–10: shots per scene (1=wide sparse, 10=frenetic cutting)
+  realism: RealismMode;          // from existing type
+
+  // Genre emphasis (multi-select, 0–100 weight per genre)
+  genreWeights: Record<string, number>;  // e.g. { thriller: 80, romance: 40 }
+
+  // Continuity & rules
+  continuityRules: string;       // Free text: "Characters must always be on the left side"
+  bannedElements: string;        // Free text: "No CGI backgrounds, no jump cuts"
+  motifSystem: string;           // Free text: "Red flowers signal danger; rain = loss"
+  avoidPhrases: string;          // Free text: dialogue/prompt words to never generate
+
+  // Dialogue system
+  subtextLevel: number;          // 0–100: how subtext-loaded dialogue should be
+  dialogueDensity: number;       // 0–100: 0=pure visual, 100=dialogue-heavy
+
+  // Shot-level preferences
+  preferredLens: string;         // e.g. "35mm anamorphic"
+  preferredBlockingStyle: string; // e.g. "characters in constant motion"
+
+  // Generation meta
+  generationTemperature: number; // 0.1–1.0: AI creativity level
+}
+
+export const DEFAULT_DIRECTOR_CONTROLS: DirectorControls = {
+  tone: 'neutral',
+  pacing: 'steady',
+  narrativeDistance: 'observational',
+  openingHook: 'establishing',
+  endingStyle: 'resolved',
+  emotionalEscalation: 60,
+  reversalAtMidpoint: true,
+  subplotThreads: 1,
+  visualPhilosophy: 'naturalistic',
+  cameraMotivation: 'character_follows',
+  lightingMotivation: 'natural',
+  soundMotivation: 'score_driven',
+  shotDensity: 5,
+  realism: 'cinematic',
+  genreWeights: { drama: 70, thriller: 30 },
+  continuityRules: '',
+  bannedElements: '',
+  motifSystem: '',
+  avoidPhrases: '',
+  subtextLevel: 50,
+  dialogueDensity: 40,
+  preferredLens: '35mm anamorphic',
+  preferredBlockingStyle: '',
+  generationTemperature: 0.7,
+};
+
+// ═══════════════════════════════════════════════════════════════
+// Episode structure — multi-episode arc planning
+// ═══════════════════════════════════════════════════════════════
+
+export type BeatPosition = 'opening' | 'inciting_incident' | 'rising_action' | 'midpoint' | 'crisis' | 'climax' | 'resolution';
+
+export interface EpisodeArc {
+  episode_number: number;
+  episode_title: string;
+  logline: string;
+  theme: string;
+  opening_hook: string;
+  midpoint_turn: string;
+  climax_description: string;
+  cliffhanger?: string;
+}
+
 export interface Scene {
   id?: string; // Database ID
   scene_number: number;
-  scene_setting?: string; // Unique location/time for this scene (e.g., "A neon-lit alley — midnight")
+  scene_title?: string;          // Short title for this scene
+  episode_number?: number;       // Which episode this scene belongs to
+  act_position?: BeatPosition;   // Where in the dramatic arc this scene sits
+  scene_setting?: string;
   characters?: string[];
   visual_description: string;
   audio_description: string;
@@ -321,12 +425,17 @@ export interface Scene {
   voice_characteristics?: string;
   shot_type: string;
 
-  scene_reference_image_url?: string; // ★ 新增：场次基准锚点图 (URL)
-  scene_reference_image_base64?: string; // ★ 新增：场次人物定妆图 Base64（最高优先级）
+  // Beat arc system
+  dramatic_function?: string;    // What role this scene plays in the story
+  emotional_beat?: string;       // Core emotion to convey
+  tension_level?: number;        // 0–100
+
+  scene_reference_image_url?: string;
+  scene_reference_image_base64?: string;
 
   image_prompt?: string;
   video_motion_prompt?: string;
-  video_prompt?: string; // ★ Gemini API may return this; used as fallback for video_motion_prompt
+  video_prompt?: string;
   image_url?: string;
   video_url?: string;
   audio_url?: string;
@@ -340,12 +449,24 @@ export interface StoryboardProject {
   story_entities?: StoryEntity[];
   identity_strength?: number;
 
+  // Director system
+  director_controls?: DirectorControls;
+  logline?: string;
+  world_setting?: string;
+  style_bible?: any;
+
+  // Episode structure
+  episode_count?: number;
+  episode_arcs?: EpisodeArc[];
+
   // ★ Zero-Character Project Support
   project_type?: ProjectType;
   has_cast?: boolean;
 
   scenes: Scene[];
-  style_bible?: any;
+
+  // Pipeline state (from backend)
+  pipeline_state?: any;
 }
 
 export interface GenerateRequest {
@@ -728,8 +849,9 @@ export interface BusinessPlan {
   nameZh: string;
   priceMonthly: number;
   creditsMonthly: number;
-  pricePerCredit: number;  // 单价
-  features: string[];
+  pricePerCredit: number;
+  features: string[];       // Chinese
+  featuresEn: string[];     // English
   target: 'starter' | 'pro' | 'business' | 'enterprise';
   popular?: boolean;
 }
@@ -750,6 +872,14 @@ export const BUSINESS_PLANS: BusinessPlan[] = [
       '720p 输出',
       '自动剪辑拼接'
     ],
+    featuresEn: [
+      '3,000 credits/mo',
+      'Basic video models',
+      'Standard queue',
+      'Email support',
+      '720p output',
+      'Auto stitching'
+    ],
     target: 'starter'
   },
   {
@@ -769,6 +899,17 @@ export const BUSINESS_PLANS: BusinessPlan[] = [
       '首帧尾帧链接',
       '自动剪辑拼接',
       '团队协作(3人)'
+    ],
+    featuresEn: [
+      '15,000 credits/mo',
+      'All video models',
+      'Priority queue',
+      'Priority support',
+      '1080p output',
+      'Voice synthesis',
+      'First/last frame linking',
+      'Auto stitching',
+      'Team collaboration (3)'
     ],
     target: 'pro',
     popular: true
@@ -792,6 +933,18 @@ export const BUSINESS_PLANS: BusinessPlan[] = [
       '定制化服务',
       '专属客户经理'
     ],
+    featuresEn: [
+      '50,000 credits/mo',
+      'All models + Veo 3',
+      'VIP priority queue',
+      '24/7 dedicated support',
+      '4K output',
+      'API access',
+      'Custom watermark',
+      'Team collaboration (10)',
+      'Custom services',
+      'Dedicated account manager'
+    ],
     target: 'business'
   },
   {
@@ -813,6 +966,18 @@ export const BUSINESS_PLANS: BusinessPlan[] = [
       '定制模型训练',
       '专属服务器'
     ],
+    featuresEn: [
+      '300,000 credits/mo',
+      'All models unlimited',
+      'Ultra-fast dedicated queue',
+      'Dedicated tech manager',
+      '4K output',
+      'Full API access',
+      'White-label branding',
+      'Unlimited team seats',
+      'Custom model training',
+      'Dedicated server'
+    ],
     target: 'enterprise'
   }
 ];
@@ -828,6 +993,7 @@ export interface APIPlan {
   apiCallsMonthly: number;
   overageRate: number;
   features: string[];
+  featuresEn?: string[];
 }
 
 export const API_PLANS: APIPlan[] = [
@@ -874,6 +1040,14 @@ export const API_PLANS: APIPlan[] = [
       'SLA 99.9%',
       '定制化开发',
       '专属客户经理'
+    ],
+    featuresEn: [
+      '200,000 API calls/mo',
+      'Dedicated API server',
+      '24/7 tech support',
+      'SLA 99.9%',
+      'Custom development',
+      'Dedicated account manager'
     ]
   }
 ];
@@ -892,7 +1066,8 @@ export const ADDON_SERVICES = {
     name: 'Dedicated Support',
     nameZh: '专属客服',
     price: 500,
-    description: '24/7 专属技术支持'
+    description: '24/7 专属技术支持',
+    descriptionEn: '24/7 Dedicated technical support'
   },
   priority_queue: {
     name: 'Priority Queue',

@@ -96,7 +96,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
 
     const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
     if (!isEmail) {
-      setValidationError(t(lang, 'invalidContact') + " (请输入有效邮箱)");
+      setValidationError(t(lang, 'invalidContact'));
       return;
     }
 
@@ -117,18 +117,23 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
           return;
         }
 
-        console.log('[AUTH] Starting OTP send...');
-        await sendOtpWithFallback();
-        console.log('[AUTH] OTP sent successfully, switching to OTP step');
-
-        setStep('otp');
-        setCountdown(60);
-      } catch (error: any) {
-        console.error('[AUTH] Email submit error:', error);
-        const msg = error?.status === 429 || error?.message?.includes('429') || error?.message?.includes('Too Many')
-          ? '发送太频繁，请稍后再试'
-          : error?.message || '发送验证码失败，请检查邮箱格式';
-        setValidationError(msg);
+        const res = await sendOtpWithFallback();
+        if (res.success) {
+          setStep('otp');
+          setCountdown(60);
+        }
+      } catch (err: any) {
+        console.error('[AUTH] Submit handling error:', err);
+        const errCode = err.code || '';
+        if (errCode === 'AUTH_CONFIG_MISSING') {
+          setValidationError(t(lang, 'authConfigMissing'));
+        } else if (errCode === 'EMAIL_SEND_FAILED') {
+          setValidationError(t(lang, 'emailSendFailed'));
+        } else if (err.message?.includes('429') || err.message?.includes('Too Many')) {
+          setValidationError(lang === 'zh' ? '发送太频繁，请稍后再试' : 'Too many requests, please try again later');
+        } else {
+          setValidationError(err.message || t(lang, 'errorServerError'));
+        }
       } finally {
         setIsLoading(false);
       }
@@ -185,10 +190,10 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
         setIsLoading(false); // 失败时也要重置
 
         const msg = error?.status === 403 || error?.message?.includes('403')
-          ? '验证码已过期或无效，请重新发送'
+          ? (lang === 'zh' ? '验证码已过期或无效，请重新发送' : 'Code expired or invalid, please resend')
           : error?.status === 429 || error?.message?.includes('429')
-            ? '验证太频繁，请稍后再试'
-            : (error.message || '验证码无效，请重试');
+            ? (lang === 'zh' ? '验证太频繁，请稍后再试' : 'Too many attempts, please try again later')
+            : (error.message || t(lang, 'otpInvalid'));
         setValidationError(msg);
       }
     })();
@@ -234,7 +239,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
           <div className="w-full space-y-6 animate-in slide-in-from-bottom-4 fade-in duration-300">
             <div className="text-center mb-4">
               <h2 className="text-xl font-bold text-white mb-2">{lang === 'zh' ? '欢迎登录' : 'Welcome'}</h2>
-              <p className="text-slate-500 text-sm">{lang === 'zh' ? '输入您的邮箱，我们将发送验证码' : 'Enter your email and we will send a verification code'}</p>
+              <p className="text-slate-500 text-sm">{lang === 'zh' ? '输入您的邮箱，我们将发送验证码' : 'Enter your email to receive a verification code'}</p>
             </div>
 
             <form onSubmit={handleEmailSubmit} className="space-y-4">
@@ -280,14 +285,14 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
               <div className="px-4 py-2.5 bg-emerald-500/15 border border-emerald-500/50 rounded-2xl">
                 <p className="text-[11px] font-bold text-emerald-400 tracking-widest uppercase flex items-center gap-2">
                   <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
-                  {lang === 'zh' ? '开发者账户 - 完整权限' : 'Developer Account - Full Access'}
+                  {lang === 'zh' ? '开发者账户 - 完整权限' : 'Developer Account — Full Access'}
                 </p>
               </div>
             )}
             <form onSubmit={handleVerifyOtp} className="space-y-4">
               <div>
                 <p className="text-xs text-slate-500 mb-4 text-center flex items-center justify-center gap-2">
-                  {lang === 'zh' ? '验证码已发送至' : 'Verification code sent to'} <span className="text-white font-mono bg-slate-900 px-2 py-0.5 rounded border border-slate-800">{email}</span>
+                  {lang === 'zh' ? '验证码已发送至' : 'Code sent to'} <span className="text-white font-mono bg-slate-900 px-2 py-0.5 rounded border border-slate-800">{email}</span>
                 </p>
                 <div className="relative">
                   <input
@@ -335,7 +340,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
               {/* Resend Timer */}
               <div className="text-center">
                 {countdown > 0 ? (
-                  <span className="text-[10px] text-slate-600 font-mono">重新发送 00:{countdown.toString().padStart(2, '0')}</span>
+                  <span className="text-[10px] text-slate-600 font-mono">{lang === 'zh' ? '重新发送' : 'Resend in'} 00:{countdown.toString().padStart(2, '0')}</span>
                 ) : (
                   <button
                     type="button"
@@ -345,8 +350,8 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
                         await sendOtpWithFallback();
                       } catch (error: any) {
                         const msg = error?.status === 429 || error?.message?.includes('429') || error?.message?.includes('Too Many')
-                          ? (lang === 'zh' ? '发送太频繁，请稍后再试' : 'Sending too frequently, please try again later')
-                          : (error.message || (lang === 'zh' ? '发送验证码失败' : 'Failed to send verification code'));
+                          ? (lang === 'zh' ? '发送太频繁，请稍后再试' : 'Too many requests, please wait')
+                          : (error.message || (lang === 'zh' ? '发送验证码失败' : 'Failed to send code'));
                         setValidationError(msg);
                       }
                     }}
@@ -359,7 +364,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
             </form>
 
             <button onClick={() => { setStep('email'); setOtp(''); }} className="w-full text-slate-500 hover:text-white text-[10px] font-bold uppercase tracking-[0.2em] transition-colors">
-              &larr; 返回
+              &larr; {lang === 'zh' ? '返回' : 'Back'}
             </button>
           </div>
         )}

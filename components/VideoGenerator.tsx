@@ -695,7 +695,7 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
             )}
 
             <button
-              onClick={isRenderingChain || isFinalizingVideo ? undefined : handleRenderChain}
+              onClick={isRenderingChain || isFinalizingVideo ? undefined : () => handleRenderChain()}
               disabled={isRenderingChain || isFinalizingVideo}
               className={`flex-1 md:flex-none px-6 py-3 rounded-lg text-white font-bold transition-all shadow-lg flex items-center justify-center gap-2 text-sm
                 ${isRenderingChain || isFinalizingVideo

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { AppProvider, useAppContext } from './context/AppContext';
 import { generateStoryboard, analyzeImageForAnchor } from './services/geminiService';
 import { saveStoryboard } from './services/storyboardService';
-import { StoryboardProject, PipelineStage } from './types';
+import { StoryboardProject, PipelineStage, DirectorControls, DEFAULT_DIRECTOR_CONTROLS } from './types';
 import Header from './components/Header';
 import SettingsModal from './components/SettingsModal';
 import PricingModal from './components/PricingModal';
@@ -12,6 +12,10 @@ import ShotListView from './components/ShotListView';
 import AuthPage from './components/AuthPage';
 import ReferenceImageUploader from './components/ReferenceImageUploader';
 import CastPhotoGenerator from './components/CastPhotoGenerator';
+import OneClickDirector from './components/OneClickDirector';
+import DirectorControlsPanel from './components/DirectorControlsPanel';
+import ProjectDashboard from './components/ProjectDashboard';
+import ExportButton from './components/ExportButton';
 import { LoaderIcon } from './components/IconComponents';
 import { t } from './i18n';
 
@@ -35,7 +39,7 @@ const MainLayout: React.FC = () => {
     refreshBalance
   } = useAppContext();
 
-  const [workflowStage, setWorkflowStageRaw] = useState<'input' | 'scripting' | 'shots' | 'production'>('input');
+  const [workflowStage, setWorkflowStageRaw] = useState<'dashboard' | 'input' | 'scripting' | 'shots' | 'production' | 'oneclick'>('dashboard');
   const [pipelineStage, setPipelineStage] = useState<PipelineStage>('script_ready');
   const workflowStageRef = useRef(workflowStage);
   const [storyIdea, setStoryIdea] = useState('A cyberpunk cat delivering pizza in Neo-Tokyo');
@@ -50,12 +54,18 @@ const MainLayout: React.FC = () => {
   const [forceHasCast, setForceHasCast] = useState<boolean | undefined>(undefined);
   const [projectType, setProjectType] = useState<string>('');
   const [showAdvancedProjectSettings, setShowAdvancedProjectSettings] = useState<boolean>(false);
+  const [directorControls, setDirectorControls] = useState<DirectorControls>(() => {
+    try {
+      const saved = localStorage.getItem('directorControls');
+      return saved ? { ...DEFAULT_DIRECTOR_CONTROLS, ...JSON.parse(saved) } : DEFAULT_DIRECTOR_CONTROLS;
+    } catch { return DEFAULT_DIRECTOR_CONTROLS; }
+  });
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [paymentNotification, setPaymentNotification] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
 
   // ★ Browser history management — pressing back navigates within workflow
-  const setWorkflowStage = (stage: 'input' | 'scripting' | 'shots' | 'production') => {
+  const setWorkflowStage = (stage: 'dashboard' | 'input' | 'scripting' | 'shots' | 'production' | 'oneclick') => {
     setWorkflowStageRaw(stage);
     workflowStageRef.current = stage;
     window.history.pushState({ stage }, '', `#${stage}`);
@@ -63,11 +73,11 @@ const MainLayout: React.FC = () => {
 
   useEffect(() => {
     // Set initial history state
-    window.history.replaceState({ stage: 'input' }, '', `#input`);
+    window.history.replaceState({ stage: 'dashboard' }, '', `#dashboard`);
 
     const handlePopState = (e: PopStateEvent) => {
       const stage = e.state?.stage;
-      if (stage && ['input', 'scripting', 'shots', 'production'].includes(stage)) {
+      if (stage && ['dashboard', 'input', 'scripting', 'shots', 'production'].includes(stage)) {
         setWorkflowStageRaw(stage);
         workflowStageRef.current = stage;
       } else {
@@ -100,16 +110,21 @@ const MainLayout: React.FC = () => {
       // Force refresh balance to reflect new credits immediately
       setTimeout(async () => {
         await refreshBalance().catch(() => { });
-        setPaymentNotification({ type: 'success', msg: settings.lang === 'zh' ? '✅ 支付成功！额度已添加到您的账户。' : '✅ Payment successful! Credits have been added to your account.' });
+        setPaymentNotification({ type: 'success', msg: '✅ Payment successful! Credits added to your account.' });
         setTimeout(() => setPaymentNotification(null), 6000);
       }, 1500); // Wait a bit for webhook to process
     }
     if (isCanceled) {
       window.history.replaceState({ stage: 'input' }, '', window.location.pathname + '#input');
-      setPaymentNotification({ type: 'error', msg: settings.lang === 'zh' ? '❌ 支付已取消' : '❌ Payment cancelled' });
+      setPaymentNotification({ type: 'error', msg: '❌ Payment cancelled' });
       setTimeout(() => setPaymentNotification(null), 4000);
     }
   }, [refreshBalance]);
+
+  const handleDirectorControlsChange = (updated: DirectorControls) => {
+    setDirectorControls(updated);
+    try { localStorage.setItem('directorControls', JSON.stringify(updated)); } catch { /* quota */ }
+  };
 
   const handleGenerateScript = async () => {
     if (!storyIdea.trim()) return;
@@ -127,22 +142,28 @@ const MainLayout: React.FC = () => {
 
     try {
       console.log(`[App] Generating with extractedAnchor: "${extractedAnchor?.substring(0, 80) || 'EMPTY'}..." (length: ${extractedAnchor?.length || 0})`);
-      const data = await generateStoryboard(storyIdea, settings.videoStyle, settings.lang, settings.generationMode, extractedAnchor, sceneCount, forceHasCast, projectType);
+      const data = await generateStoryboard(storyIdea, settings.videoStyle, settings.lang, settings.generationMode, extractedAnchor, sceneCount, forceHasCast, projectType, directorControls);
       setProject(data);
       setPipelineStage((data as any)?.pipeline_state?.current_stage || 'shots_ready');
 
       // ★ Auto-populate anchor from story entities if still empty
       if (!extractedAnchor && data.story_entities?.length > 0) {
-        // Try to find the main locked character
         const mainCharacter = data.story_entities.find(e => e.type === 'character' && e.is_locked);
         if (mainCharacter?.description) {
-          console.log(`[App] Auto-populated anchor from story_entities: "${mainCharacter.name}"`);
           setExtractedAnchor(mainCharacter.description);
         }
       } else if (!extractedAnchor && data.character_anchor) {
-        // Fallback to character_anchor from Gemini
-        console.log(`[App] Auto-populated anchor from character_anchor`);
         setExtractedAnchor(data.character_anchor);
+      }
+
+      // ★ Auto-save to Supabase immediately so the project appears in the dashboard
+      // and survives a page refresh. Non-blocking — failure doesn't prevent scripting.
+      if (profile?.id) {
+        saveStoryboard(profile.id, data).then(saved => {
+          if (saved && saved.id && saved.id !== data.id) {
+            setProject(saved); // sync id if DB assigned a new one
+          }
+        }).catch(e => console.warn('[App] Auto-save failed:', e.message));
       }
 
       setWorkflowStage('scripting');
@@ -186,7 +207,7 @@ const MainLayout: React.FC = () => {
     if (!project) return;
 
     if (!profile?.id) {
-      alert(settings.lang === 'zh' ? "请登入以保存项目。" : "Please login to save your project.");
+      alert(t(settings.lang, 'loginRequired'));
       return;
     }
 
@@ -223,10 +244,7 @@ const MainLayout: React.FC = () => {
         />
         <LandingPage
           lang={settings.lang}
-          onGetStarted={() => {
-            // Scroll to login section or show login modal
-            window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-          }}
+          onGetStarted={() => { /* handled inside LandingPage via setShowLogin */ }}
           onOpenPricing={openPricingModal}
         />
       </>
@@ -293,10 +311,49 @@ const MainLayout: React.FC = () => {
           onLogout={logout}
         />
 
+        {/* ★ Stage Navigation Pills */}
+        {workflowStage !== 'oneclick' && (
+          <div className="mb-6 flex items-center gap-1 overflow-x-auto pb-1">
+            {(['dashboard', 'input', 'scripting', 'shots', 'production'] as const).map((stage, idx) => {
+              const labels: Record<string, string> = {
+                dashboard: settings.lang === 'zh' ? '我的项目' : 'Projects',
+                input: settings.lang === 'zh' ? '创意输入' : 'Concept',
+                scripting: settings.lang === 'zh' ? '剧本' : 'Script',
+                shots: settings.lang === 'zh' ? '分镜' : 'Shots',
+                production: settings.lang === 'zh' ? '制作' : 'Production',
+              };
+              const icons: Record<string, string> = { dashboard: '📂', input: '✍️', scripting: '📝', shots: '🎞️', production: '🎬' };
+              const isActive = workflowStage === stage;
+              const isReachable = stage === 'dashboard' || stage === 'input' ||
+                (stage === 'scripting' && !!project) ||
+                (stage === 'shots' && !!project) ||
+                (stage === 'production' && !!project);
+
+              return (
+                <button
+                  key={stage}
+                  onClick={() => isReachable && setWorkflowStage(stage)}
+                  disabled={!isReachable}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${
+                    isActive
+                      ? 'bg-indigo-600 text-white'
+                      : isReachable
+                        ? 'text-slate-400 hover:text-white hover:bg-slate-800'
+                        : 'text-slate-700 cursor-not-allowed'
+                  }`}
+                >
+                  <span>{icons[stage]}</span>
+                  {labels[stage]}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         <div className="mb-8 flex items-center justify-between animate-in fade-in duration-700">
           <div>
             <p className="text-xs text-indigo-400 font-bold uppercase tracking-widest">{t(settings.lang, 'welcomeBack')}</p>
-            <h2 className="text-xl font-bold text-white">{profile?.name || profile?.email || (settings.lang === 'zh' ? '导演' : 'Director')} <span className="text-slate-500 font-normal">| {profile?.role || 'Creator'}</span></h2>
+            <h2 className="text-xl font-bold text-white">{profile?.name || profile?.email || 'Director'} <span className="text-slate-500 font-normal">| {profile?.role || 'Creator'}</span></h2>
           </div>
           <div className="text-right">
             <p className="text-[10px] uppercase tracking-widest text-slate-500">Pipeline</p>
@@ -314,24 +371,65 @@ const MainLayout: React.FC = () => {
                         : 'bg-slate-700/50 text-slate-400'
             }`}>
               {{
-                script_ready: settings.lang === 'zh' ? '📝 脚本就绪' : '📝 Script Ready',
-                bible_ready: settings.lang === 'zh' ? '📖 圣经就绪' : '📖 Bible Ready',
-                shots_ready: settings.lang === 'zh' ? '🎬 镜头就绪' : '🎬 Shots Ready',
-                storyboard_generating: settings.lang === 'zh' ? '🖼 生成中…' : '🖼 Generating...',
-                storyboard_review: settings.lang === 'zh' ? '👁 审批中' : '👁 Reviewing',
-                storyboard_partial_failed: settings.lang === 'zh' ? '⚠️ 部分失败' : '⚠️ Partial Failed',
-                storyboard_approved: settings.lang === 'zh' ? '✅ 分镜已批' : '✅ Approved',
-                video_generating: settings.lang === 'zh' ? '🎥 渲染中…' : '🎥 Rendering...',
-                video_partial_failed: settings.lang === 'zh' ? '⚠️ 渲染部分失败' : '⚠️ Render Partial Failed',
-                assembly_ready: settings.lang === 'zh' ? '🎞 合成就绪' : '🎞 Assembly Ready',
-                final_ready: settings.lang === 'zh' ? '🏁 完成' : '🏁 Complete',
+                script_ready: t(settings.lang, 'stageScriptReady'),
+                bible_ready: t(settings.lang, 'stageBibleReady'),
+                shots_ready: t(settings.lang, 'stageShotsReady'),
+                storyboard_generating: t(settings.lang, 'stageGenerating'),
+                storyboard_review: t(settings.lang, 'stageReview'),
+                storyboard_partial_failed: t(settings.lang, 'stagePartialFailed'),
+                storyboard_approved: t(settings.lang, 'stageApproved'),
+                video_generating: t(settings.lang, 'stageRendering'),
+                video_partial_failed: t(settings.lang, 'stageRenderPartialFailed'),
+                assembly_ready: t(settings.lang, 'stageAssemblyReady'),
+                final_ready: t(settings.lang, 'stageFinalReady'),
               }[pipelineStage] ?? pipelineStage}
             </p>
           </div>
         </div>
 
+        {/* ★ PROJECT DASHBOARD */}
+        {workflowStage === 'dashboard' && profile?.id && (
+          <div className="animate-in fade-in duration-300">
+            <ProjectDashboard
+              userId={profile.id}
+              lang={settings.lang}
+              onNewProject={() => setWorkflowStage('input')}
+              onResumeProject={(loadedProject) => {
+                setProject(loadedProject);
+                setPipelineStage((loadedProject as any)?.pipeline_state?.current_stage || 'shots_ready');
+                // Restore director controls from the saved project if available
+                if (loadedProject.director_controls) {
+                  setDirectorControls({ ...loadedProject.director_controls });
+                }
+                setWorkflowStage('scripting');
+              }}
+            />
+          </div>
+        )}
+
+        {/* ★ ONE-CLICK DIRECTOR MODE */}
+        {workflowStage === 'oneclick' && (
+          <div className="fixed inset-0 z-40">
+            <OneClickDirector onBack={() => setWorkflowStage('input')} />
+          </div>
+        )}
+
         {workflowStage === 'input' && (
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-xl animate-in fade-in zoom-in-95 duration-300">
+            {/* ★ One-Click Director Banner */}
+            <button
+              onClick={() => setWorkflowStage('oneclick')}
+              className="w-full mb-6 p-4 bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-red-500/10 border border-amber-500/20 rounded-xl hover:from-amber-500/20 hover:via-orange-500/20 hover:to-red-500/20 transition-all group"
+            >
+              <div className="flex items-center justify-between">
+                <div className="text-left">
+                  <div className="text-sm font-bold text-amber-300 group-hover:text-amber-200 transition-colors">{t(settings.lang, 'oneClickBannerTitle')}</div>
+                  <div className="text-xs text-white/40 mt-0.5">{t(settings.lang, 'oneClickBannerDesc')}</div>
+                </div>
+                <span className="text-amber-400/60 group-hover:text-amber-300 text-lg transition-colors">→</span>
+              </div>
+            </button>
+
             <div className="mb-6 flex justify-between items-center">
               <label className="text-sm font-semibold text-slate-300">{t(settings.lang, 'storyConcept')}</label>
               <div className="flex bg-slate-950 p-1 rounded-lg border border-slate-700">
@@ -344,14 +442,14 @@ const MainLayout: React.FC = () => {
               value={storyIdea}
               onChange={e => setStoryIdea(e.target.value)}
               className="w-full bg-slate-950 border border-slate-700 rounded-lg p-4 h-32 text-white mb-6 focus:ring-2 focus:ring-indigo-500 outline-none"
-              placeholder={t(settings.lang, 'storyPlaceholder') || "例如：一只赛博朋克猫在的未来城市送披萨..."}
+              placeholder={t(settings.lang, 'storyPlaceholder')}
             />
 
             {/* 场景数量选择 */}
             <div className="mb-6">
-              <label className="block text-sm font-semibold text-slate-300 mb-3">📽️ 场景数量 / Number of Scenes</label>
+              <label className="block text-sm font-semibold text-slate-300 mb-3">{t(settings.lang, 'sceneCountLabel2')}</label>
               <div className="flex items-center gap-2">
-                <span className="text-sm text-slate-400">{settings.lang === 'zh' ? '快速选择：' : 'Quick select:'} </span>
+                <span className="text-sm text-slate-400">{t(settings.lang, 'sceneCountQuickSelect')}</span>
                 {[5, 10, 15, 20, 25, 30].map((count) => (
                   <button
                     key={count}
@@ -361,18 +459,18 @@ const MainLayout: React.FC = () => {
                       : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500'
                       }`}
                   >
-                    {count} {settings.lang === 'zh' ? '场景' : 'scenes'}
+                    {count}
                   </button>
                 ))}
-                <span className="text-xs text-slate-500">{settings.lang === 'zh' ? '(可选)' : '(optional)'}</span>
+                <span className="text-xs text-slate-500">(optional)</span>
               </div>
             </div>
 
             {/* ★ 镜头数量快速选择 */}
             <div className="mb-6">
-              <label className="block text-sm font-semibold text-slate-300 mb-3">🎬 镜头数量 / Number of Shots</label>
+              <label className="block text-sm font-semibold text-slate-300 mb-3">🎬 {settings.lang === 'zh' ? '镜头数量' : 'Number of Shots'}</label>
               <div className="flex items-center gap-2">
-                <span className="text-sm text-slate-400">{settings.lang === 'zh' ? '快速选择：' : 'Quick select:'} </span>
+                <span className="text-sm text-slate-400">{t(settings.lang, 'sceneCountQuickSelect')}</span>
                 {[5, 10, 15, 20, 25, 30].map((count) => (
                   <button
                     key={count}
@@ -382,10 +480,10 @@ const MainLayout: React.FC = () => {
                       : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500'
                       }`}
                   >
-                    {count} {settings.lang === 'zh' ? '镜头' : 'shots'}
+                    {count}
                   </button>
                 ))}
-                <span className="text-xs text-slate-500">{settings.lang === 'zh' ? '(可选)' : '(optional)'}</span>
+                <span className="text-xs text-slate-500">(optional)</span>
               </div>
             </div>
 
@@ -409,45 +507,54 @@ const MainLayout: React.FC = () => {
                 type="button"
               >
                 <span>{showAdvancedProjectSettings ? '▼' : '▶'}</span>
-                <span>⚙️ 高级项目设定 (Project Settings)</span>
+                <span>⚙️ {settings.lang === 'zh' ? '高级项目设定' : 'Advanced Project Settings'}</span>
               </button>
 
               {showAdvancedProjectSettings && (
                 <div className="mt-4 p-4 bg-slate-950 border border-slate-800 rounded-xl space-y-4">
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">项目类型 Project Type</label>
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">{settings.lang === 'zh' ? '项目类型' : 'Project Type'}</label>
                     <select
                       value={projectType}
                       onChange={e => setProjectType(e.target.value)}
                       className="w-full bg-slate-900 border border-slate-800 rounded-lg p-3 text-sm focus:border-indigo-500 outline-none"
                     >
-                      <option value="">🔮 智能判定 (Auto Detect)</option>
-                      <option value="character_driven">👤 人物剧情主导 (Character Driven)</option>
-                      <option value="environment_driven">🌄 纯环境主导 (Environment Driven)</option>
-                      <option value="destruction_driven">💥 灾难/破坏主导 (Destruction Driven)</option>
-                      <option value="architecture_driven">🏙️ 建筑展示主导 (Architecture Driven)</option>
-                      <option value="object_driven">🚗 物品/车辆展示 (Object Driven)</option>
+                      <option value="">🔮 Auto Detect</option>
+                      <option value="character_driven">👤 Character Driven</option>
+                      <option value="environment_driven">🌄 Environment Driven</option>
+                      <option value="destruction_driven">💥 Destruction Driven</option>
+                      <option value="architecture_driven">🏙️ Architecture Driven</option>
+                      <option value="object_driven">🚗 Object Driven</option>
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">强制拥有主角 Force Character Presense</label>
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">{settings.lang === 'zh' ? '强制拥有主角' : 'Force Character Presence'}</label>
                     <div className="flex gap-4">
                       <label className="flex items-center gap-2 text-sm cursor-pointer">
                         <input type="radio" checked={forceHasCast === undefined} onChange={() => setForceHasCast(undefined)} className="accent-indigo-500 w-4 h-4 cursor-pointer" />
-                        <span className="text-slate-300">智能 (Auto)</span>
+                        <span className="text-slate-300">Auto</span>
                       </label>
                       <label className="flex items-center gap-2 text-sm cursor-pointer">
                         <input type="radio" checked={forceHasCast === true} onChange={() => setForceHasCast(true)} className="accent-indigo-500 w-4 h-4 cursor-pointer" />
-                        <span className="text-slate-300">包含主角 (Yes)</span>
+                        <span className="text-slate-300">Yes</span>
                       </label>
                       <label className="flex items-center gap-2 text-sm cursor-pointer">
                         <input type="radio" checked={forceHasCast === false} onChange={() => setForceHasCast(false)} className="accent-indigo-500 w-4 h-4 cursor-pointer" />
-                        <span className="text-slate-300">无主角 (No Cast)</span>
+                        <span className="text-slate-300">No Cast</span>
                       </label>
                     </div>
                   </div>
                 </div>
               )}
+            </div>
+
+            {/* ★ Director Controls Panel */}
+            <div className="mb-6">
+              <DirectorControlsPanel
+                controls={directorControls}
+                onChange={handleDirectorControlsChange}
+                lang={settings.lang}
+              />
             </div>
 
             <button
@@ -466,13 +573,14 @@ const MainLayout: React.FC = () => {
           <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-2xl font-bold text-white">{t(settings.lang, 'writersRoom')}</h2>
-              <div className="flex gap-3">
+              <div className="flex gap-3 items-center">
+                <ExportButton project={project} lang={settings.lang} />
                 <button onClick={() => { setWorkflowStage('input'); setPipelineStage('script_ready'); }} className="text-slate-400 hover:text-white px-4 py-2 text-sm">{t(settings.lang, 'backToConcept')}</button>
                 <button onClick={() => { setWorkflowStage('shots'); setPipelineStage('storyboard_generating'); }} className="px-6 py-2 bg-amber-600 hover:bg-amber-500 rounded-lg text-white font-bold shadow-lg shadow-amber-500/20">
-                  🎬 {settings.lang === 'zh' ? '拆分镜头' : 'Split Shots'} &rarr;
+                  {t(settings.lang, 'splitShots')}
                 </button>
                 <button onClick={handleGoToProduction} className="px-6 py-2 bg-green-600 hover:bg-green-500 rounded-lg text-white font-bold shadow-lg shadow-green-500/20">
-                  {settings.lang === 'zh' ? '进入制片环节' : 'Enter Production'} &rarr;
+                  {t(settings.lang, 'enterProduction')}
                 </button>
               </div>
             </div>
@@ -488,12 +596,12 @@ const MainLayout: React.FC = () => {
             {/* ★ 修复：手动设定/修改锚点的区域，防止因被自动折叠而“丢失功能” */}
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-6">
               <div className="flex justify-between items-center mb-2">
-                <span className="font-bold text-slate-400 uppercase tracking-widest text-xs">主角及全局设定 Global Cast Anchor</span>
+                <span className="font-bold text-slate-400 uppercase tracking-widest text-xs">{t(settings.lang, 'globalCastAnchor')}</span>
               </div>
               <textarea
                 value={project.character_anchor || ''}
                 onChange={(e) => setProject({ ...project, character_anchor: e.target.value })}
-                placeholder="在此手动调整全片角色一致性锚点。如果是环境/灾难片，请留空 (Leave Empty for No Cast)."
+                placeholder={t(settings.lang, 'castAnchorPlaceholder')}
                 className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm h-16 focus:border-indigo-500 outline-none transition-colors"
               />
             </div>
@@ -525,7 +633,7 @@ const MainLayout: React.FC = () => {
                         value={scene.audio_description}
                         onChange={(e) => handleScriptUpdate(i, 'audio_description', e.target.value)}
                         className="w-full bg-slate-950 border border-slate-800 rounded p-3 text-sm focus:border-indigo-500 outline-none"
-                        placeholder="背景音乐/环境音效描述"
+                        placeholder={t(settings.lang, 'audioPlaceholder')}
                       />
                       {/* 智能对话系统 */}
                       <div className="grid grid-cols-2 gap-2">
@@ -533,20 +641,20 @@ const MainLayout: React.FC = () => {
                           value={scene.dialogue_speaker || ''}
                           onChange={(e) => handleScriptUpdate(i, 'dialogue_speaker', e.target.value)}
                           className="bg-slate-900 border border-slate-800 rounded p-2 text-xs focus:border-indigo-500 outline-none"
-                          placeholder="说话者"
+                          placeholder={t(settings.lang, 'dialogueSpeaker')}
                         />
                         <input
                           value={scene.dialogue_text || ''}
                           onChange={(e) => handleScriptUpdate(i, 'dialogue_text', e.target.value)}
                           className="bg-slate-900 border border-slate-800 rounded p-2 text-xs focus:border-indigo-500 outline-none"
-                          placeholder="对话文本"
+                          placeholder={t(settings.lang, 'dialogueText')}
                         />
                       </div>
                       <input
                         value={scene.voice_characteristics || ''}
                         onChange={(e) => handleScriptUpdate(i, 'voice_characteristics', e.target.value)}
                         className="w-full bg-slate-900 border border-slate-800 rounded p-2 text-xs focus:border-indigo-500 outline-none"
-                        placeholder="声音特征 (AI自动匹配)"
+                        placeholder={t(settings.lang, 'voiceCharacteristics')}
                       />
                     </div>
                   </div>
