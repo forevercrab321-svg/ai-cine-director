@@ -13,10 +13,22 @@ export interface VoiceGenerationRequest {
   similarity_boost?: number;
 }
 
+// Sentence-level timing block (from ElevenLabs /with-timestamps alignment)
+export interface TimingBlock {
+  text: string;
+  start_sec: number;
+  end_sec: number;
+}
+
 // Voice generation response
 export interface VoiceGenerationResponse {
   audio_url: string;
   success: boolean;
+  duration_sec?: number;
+  timing_blocks?: TimingBlock[];
+  /** "elevenlabs_alignment" = real provider timing; "estimated" = never returned by real endpoint */
+  timing_source?: 'elevenlabs_alignment' | 'estimated';
+  voice_id_used?: string;
 }
 
 // Scene voice generation
@@ -25,9 +37,12 @@ export interface SceneVoiceRequest {
     scene_number: number;
     dialogue?: string;
     description?: string;
+    speaker?: string | null; // ★ speaker name for per-character voice mapping
   }>;
   voice_id?: string;
   background_music?: boolean;
+  /** Per-character voice preset map: { "CharName": "voice_preset_key" } */
+  character_voices?: Record<string, string>;
 }
 
 // Video stitch request

@@ -194,11 +194,14 @@ const SceneSection: React.FC<{
     onUpdateShot: (shotId: string, updates: Partial<Shot>) => void; onRewriteShot: (shot: Shot, fields: string[], instruction: string) => void;
     project: StoryboardProject; imagesByShot: Record<string, ShotImage[]>; onImagesChange: (shotId: string, images: ShotImage[]) => void; effectiveProjectId: string;
     referenceImageDataUrl?: string;
-    onUpdateScene: (updates: Partial<Scene>) => void; // ★ 新增：场次数据更新回调
-    videoModel: VideoModel; // ★ Pass model from settings
-    onSetGlobalAnchor?: (url: string) => void; // ★ Master Anchor callback
+    onUpdateScene: (updates: Partial<Scene>) => void;
+    videoModel: VideoModel;
+    onSetGlobalAnchor?: (url: string) => void;
     lang: Language;
-}> = ({ scene, sceneIndex, shots, isGenerating, onGenerateShots, onUpdateShot, onRewriteShot, project, imagesByShot, onImagesChange, effectiveProjectId, referenceImageDataUrl, onUpdateScene, videoModel, onSetGlobalAnchor, lang }) => {
+    // ★ Voice / timing props (populated after ElevenLabs generation)
+    voiceUrl?: string;
+    voiceTiming?: { duration_sec: number; timing_blocks: Array<{ text: string; start_sec: number; end_sec: number }>; timing_source: string; voice_id_used: string };
+}> = ({ scene, sceneIndex, shots, isGenerating, onGenerateShots, onUpdateShot, onRewriteShot, project, imagesByShot, onImagesChange, effectiveProjectId, referenceImageDataUrl, onUpdateScene, videoModel, onSetGlobalAnchor, lang, voiceUrl, voiceTiming }) => {
     const [expandedShots, setExpandedShots] = useState<Set<string>>(new Set());
     const [editingShot, setEditingShot] = useState<Shot | null>(null);
 
@@ -427,6 +430,37 @@ const SceneSection: React.FC<{
                 </div>
             </div>
 
+            {/* ★ Voice audio player + real timing blocks (only after ElevenLabs generation) */}
+            {voiceUrl && (
+                <div className="mx-3 mb-3 p-3 bg-indigo-950/40 border border-indigo-500/20 rounded-xl space-y-2">
+                    <div className="flex items-center gap-2">
+                        <span className="text-indigo-400 text-[10px] uppercase font-bold tracking-widest">🎙️ AI 配音</span>
+                        {voiceTiming && (
+                            <span className="text-[9px] text-emerald-400 bg-emerald-900/30 px-1.5 rounded font-mono">
+                                {voiceTiming.duration_sec}s · {voiceTiming.timing_source}
+                            </span>
+                        )}
+                        {voiceTiming && (
+                            <span className="text-[9px] text-slate-500">voice: {voiceTiming.voice_id_used}</span>
+                        )}
+                    </div>
+                    <audio controls src={voiceUrl} className="w-full h-8 accent-indigo-500" />
+                    {/* ★ Sentence-level timing blocks — real ElevenLabs alignment, not mock */}
+                    {voiceTiming?.timing_blocks && voiceTiming.timing_blocks.length > 0 && (
+                        <div className="space-y-1 mt-1">
+                            {voiceTiming.timing_blocks.map((block, i) => (
+                                <div key={i} className="flex items-start gap-2 text-[10px]">
+                                    <span className="text-indigo-500/70 font-mono shrink-0 w-20 text-right">
+                                        {block.start_sec.toFixed(2)}s–{block.end_sec.toFixed(2)}s
+                                    </span>
+                                    <span className="text-slate-300 leading-snug">{block.text}</span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+
             {shots.length > 0 && (
                 <div className="p-3 space-y-2">
                     {shots.map((shot, index) => (
@@ -480,6 +514,13 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
     // ★ AI 配音状态
     const [isGeneratingVoice, setIsGeneratingVoice] = useState(false);
     const [sceneVoices, setSceneVoices] = useState<Record<number, string>>({});
+    // timing_source = "elevenlabs_alignment" means real provider timing (never mock)
+    const [sceneTiming, setSceneTiming] = useState<Record<number, {
+        duration_sec: number;
+        timing_blocks: Array<{ text: string; start_sec: number; end_sec: number }>;
+        timing_source: string;
+        voice_id_used: string;
+    }>>({});
 
     // ★ 场次级颚外数据（scene_reference_image_base64 等）狠态存储
     const [sceneDataMap, setSceneDataMap] = useState<Record<number, Partial<Scene>>>({});
@@ -619,7 +660,7 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
         }
     };
 
-    // ★ AI 配音生成处理器
+    // ★ AI 配音生成处理器 (real ElevenLabs timing — no mock fallback)
     const handleGenerateVoices = async () => {
         if (!project.scenes || project.scenes.length === 0) {
             alert('没有场景可以生成配音');
@@ -628,30 +669,66 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
 
         setIsGeneratingVoice(true);
         try {
+            // ── Build character → voice-preset map from character_bible ──────
+            // Each character gets a voice based on their name/gender heuristic.
+            // User can override by passing a custom map.  Default: Chinese female.
+            const charBible: any[] = (project as any).character_bible ?? [];
+            const character_voices: Record<string, string> = {};
+            for (const char of charBible) {
+                if (!char.name) continue;
+                // Simple heuristic: check if hair/face hints suggest gender, else default
+                const nameLower = (char.name as string).toLowerCase();
+                const isFemale = /she|her|woman|female|girl|lady/.test(nameLower)
+                    || /she|her|woman|female|girl|lady/.test((char.face_traits ?? '').toLowerCase());
+                character_voices[char.name] = isFemale ? 'zh_female_shuang' : 'zh_male_yong';
+            }
+            console.log('[ShotListView] character_voices map:', character_voices);
+
+            // ── Build scene list with speaker info ───────────────────────────
             const scenesWithDialogue = project.scenes.map(scene => ({
                 scene_number: scene.scene_number,
                 dialogue: scene.dialogue_text || '',
                 description: scene.visual_description || '',
+                speaker: scene.dialogue_speaker || null, // ★ pass speaker for per-char voice
             }));
 
-            console.log('[ShotListView] Generating voices for scenes:', scenesWithDialogue);
+            console.log('[ShotListView] Generating voices for', scenesWithDialogue.length, 'scenes...');
 
             const result = await generateVoicesForScenes({
                 scenes: scenesWithDialogue,
-                voice_id: 'zh_female_shuang', // Default Chinese female voice
-            });
+                voice_id: 'zh_female_shuang', // default if no character match
+                character_voices,             // per-character voice overrides
+            } as any);
 
             if (result.results) {
                 const newVoices: Record<number, string> = {};
+                const newTiming: typeof sceneTiming = {};
+
                 for (const r of result.results) {
                     if (r.success && r.audio_url) {
                         newVoices[r.scene_number] = r.audio_url;
+                        if (r.timing_source === 'elevenlabs_alignment') {
+                            newTiming[r.scene_number] = {
+                                duration_sec: r.duration_sec,
+                                timing_blocks: r.timing_blocks ?? [],
+                                timing_source: r.timing_source,
+                                voice_id_used: r.voice_id_used ?? '',
+                            };
+                        }
                     }
                 }
                 setSceneVoices(prev => ({ ...prev, ...newVoices }));
+                setSceneTiming(prev => ({ ...prev, ...newTiming }));
 
                 const successCount = result.results.filter((r: any) => r.success).length;
-                alert(`✅ 配音生成完成！成功生成 ${successCount} 个场景的配音`);
+                const timingCount = Object.keys(newTiming).length;
+                console.log(`[ShotListView] ✅ Voice done: ${successCount} audio files, ${timingCount} with real alignment timing`);
+                alert(
+                    `✅ 配音生成完成！\n` +
+                    `• ${successCount} 个场景成功生成音频\n` +
+                    `• ${timingCount} 个场景带真实 ElevenLabs 时间轴对齐\n` +
+                    `• timing_source: elevenlabs_alignment（非估算）`
+                );
             }
         } catch (e: any) {
             console.error('[ShotListView] Voice generation failed:', e);
@@ -1068,6 +1145,8 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                             onUpdateScene={(updates) => handleUpdateScene(scene.scene_number, updates)}
                             videoModel={settings.videoModel}
                             lang={settings.lang}
+                            voiceUrl={sceneVoices[scene.scene_number]}
+                            voiceTiming={sceneTiming[scene.scene_number]}
                         />
                     );
                 })}

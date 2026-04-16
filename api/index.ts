@@ -49,6 +49,16 @@ import {
     buildShotImagePrompt,
     buildShotGenerationPayload,
 } from '../lib/shotPromptCompiler.js';
+import {
+    buildDirectorBrainLayer,
+    build12PanelStoryboard,
+    buildShotGraph,
+    buildCharacterIdentityLaw,
+    buildEditPlan,
+    buildVerificationReport,
+    buildSequenceContext,
+    validateContinuityAgainstPrevNext,
+} from '../lib/directorOS.js';
 
 
 // ═══════════════════════════════════════════════════════════════
@@ -2566,6 +2576,12 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
                 current_stage: 'shots_ready',
                 stage_history: ['script_ready', 'bible_ready', 'shots_ready'],
             },
+            director_brain: null,
+            storyboard_12panel: [],
+            shot_graph: [],
+            character_identity_law: null,
+            edit_timeline_plan: null,
+            verifier_report: null,
             scenes: []
         };
 
@@ -2574,6 +2590,28 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
         // ==========================================
         const rawScenes = Array.isArray(parsedBrain.scenes) ? parsedBrain.scenes : [];
         logger.gemini.info('story_brain_done', { scenes: rawScenes.length, targetScenes }, traceId);
+
+        // Director OS layer: build formal directorial planning outputs before shot execution.
+        const directorBrain = buildDirectorBrainLayer({
+            scenes: rawScenes,
+            style_bible: parsedBrain.style_bible || {},
+            character_bible: parsedBrain.character_bible || [],
+            director_controls: safeDirectorControls || {},
+            logline: parsedBrain.logline || '',
+        });
+        const storyboard12 = build12PanelStoryboard({
+            scenes: rawScenes,
+            directorBrain,
+        });
+        const characterIdentityLaw = buildCharacterIdentityLaw({
+            character_bible: parsedBrain.character_bible || [],
+            character_anchor: project.character_anchor,
+            story_entities,
+        });
+
+        project.director_brain = directorBrain;
+        project.storyboard_12panel = storyboard12;
+        project.character_identity_law = characterIdentityLaw;
 
         const convertedScenes: any[] = [];
         let globalShotIndex = 1;
@@ -2696,6 +2734,7 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
                     scene: scn,
                     styleBible: parsedBrain.style_bible || {},
                     directorControls: safeDirectorControls,
+                    temporalGuidance: (shot as any).temporal_guidance,
                 });
 
                 // Build character consistency metadata for every shot
@@ -2811,6 +2850,154 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
         }
 
         project.scenes = convertedScenes;
+
+        // ==========================================
+        // DIRECTOR OS — Per-layer tracked execution
+        // Each layer is independent. Failures are recorded, not thrown.
+        // CRITICAL layers (character_identity, temporal_guidance, verifier)
+        // emit loud warnings and are exposed on the response.
+        // ==========================================
+        const osLayers: Record<string, { pass: boolean; error?: string }> = {
+            director_brain:     { pass: false },
+            storyboard_12panel: { pass: false },
+            character_identity: { pass: false },
+            shot_graph:         { pass: false },
+            temporal_guidance:  { pass: false },
+            edit_plan:          { pass: false },
+            verifier:           { pass: false },
+        };
+
+        // Layer 1 — Director Brain
+        try {
+            const directorBrain = buildDirectorBrainLayer({
+                scenes: rawScenes,
+                style_bible: parsedBrain.style_bible,
+                character_bible: parsedBrain.character_bible,
+                director_controls: safeDirectorControls,
+                logline: parsedBrain.logline,
+            });
+            project.director_brain = directorBrain;
+            osLayers.director_brain = { pass: true };
+        } catch (e: any) {
+            osLayers.director_brain = { pass: false, error: e.message };
+            logger.gemini.warn('director_os_layer_fail', { layer: 'director_brain', error: e.message }, traceId);
+        }
+
+        // Layer 2 — 12-Panel Storyboard
+        let ospanels: any[] = [];
+        try {
+            ospanels = build12PanelStoryboard({
+                scenes: rawScenes,
+                shots: convertedScenes,
+                directorBrain: project.director_brain,
+            });
+            project.storyboard_12panel = ospanels;
+            osLayers.storyboard_12panel = { pass: true };
+        } catch (e: any) {
+            osLayers.storyboard_12panel = { pass: false, error: e.message };
+            logger.gemini.warn('director_os_layer_fail', { layer: 'storyboard_12panel', error: e.message }, traceId);
+        }
+
+        // Layer 3 — Character Identity Law (CRITICAL)
+        try {
+            const identityLaw = buildCharacterIdentityLaw({
+                character_bible: parsedBrain.character_bible,
+                character_anchor: safeIdentityAnchor,
+                story_entities,
+            });
+            project.character_identity_law = identityLaw;
+            osLayers.character_identity = { pass: true };
+        } catch (e: any) {
+            osLayers.character_identity = { pass: false, error: e.message };
+            logger.gemini.warn('director_os_CRITICAL_layer_fail', { layer: 'character_identity', error: e.message }, traceId);
+        }
+
+        // Layer 4 — Shot Graph + temporal guidance injection (CRITICAL)
+        let osShotGraph: any[] = [];
+        try {
+            osShotGraph = buildShotGraph({ shots: convertedScenes, panels: ospanels });
+            project.shot_graph = osShotGraph;
+            let linkedCount = 0;
+            osShotGraph.forEach((node) => {
+                const scene = project.scenes.find((s: any) => s.shot_id === node.shot_id);
+                if (scene) {
+                    scene.panel_id           = node.panel_id;
+                    scene.panel_index        = node.panel_index;
+                    scene.prev_shot_id       = node.prev_shot_id;
+                    scene.next_shot_id       = node.next_shot_id;
+                    scene.entering_state     = node.entering_state;
+                    scene.exiting_state      = node.exiting_state;
+                    scene.continuity_in      = node.continuity_in;
+                    scene.continuity_out     = node.continuity_out;
+                    scene.motion_bridge      = node.motion_bridge;
+                    scene.expression_bridge  = node.expression_bridge;
+                    scene.environment_bridge = node.environment_bridge;
+                    scene.object_bridge      = node.object_bridge;
+                    scene.temporal_guidance  = node.temporal_guidance;
+                    if (node.temporal_guidance) linkedCount += 1;
+                }
+            });
+            osLayers.shot_graph = { pass: true };
+            if (linkedCount > 0) {
+                osLayers.temporal_guidance = { pass: true };
+            } else {
+                osLayers.temporal_guidance = { pass: false, error: 'zero shots received temporal_guidance — check buildShotGraph output' };
+                logger.gemini.warn('director_os_CRITICAL_layer_fail', { layer: 'temporal_guidance', linkedCount }, traceId);
+            }
+        } catch (e: any) {
+            osLayers.shot_graph        = { pass: false, error: e.message };
+            osLayers.temporal_guidance = { pass: false, error: e.message };
+            logger.gemini.warn('director_os_CRITICAL_layer_fail', { layer: 'shot_graph', error: e.message }, traceId);
+        }
+
+        // Layer 5 — Edit Plan
+        try {
+            const editPlan = buildEditPlan({ project_id, shots: convertedScenes });
+            project.edit_timeline_plan = editPlan;
+            osLayers.edit_plan = { pass: true };
+        } catch (e: any) {
+            osLayers.edit_plan = { pass: false, error: e.message };
+            logger.gemini.warn('director_os_layer_fail', { layer: 'edit_plan', error: e.message }, traceId);
+        }
+
+        // Layer 6 — Verifier (CRITICAL — must detect identity/continuity/audio-video errors)
+        try {
+            const verifier = buildVerificationReport({
+                project,
+                shots: convertedScenes,
+                shotGraph: osShotGraph,
+                timelinePlan: project.edit_timeline_plan,
+            });
+            project.verifier_report = verifier;
+            osLayers.verifier = { pass: true };
+            if (!verifier.pass) {
+                logger.gemini.warn('director_os_verifier_fail', {
+                    score: verifier.overall_score,
+                    failures: verifier.failures,
+                    repair_count: verifier.repair_entries?.length ?? 0,
+                }, traceId);
+            }
+        } catch (e: any) {
+            osLayers.verifier = { pass: false, error: e.message };
+            logger.gemini.warn('director_os_CRITICAL_layer_fail', { layer: 'verifier', error: e.message }, traceId);
+        }
+
+        // Expose layer status + degraded-mode flags on the response object
+        const degradedLayers = Object.entries(osLayers)
+            .filter(([, v]) => !v.pass)
+            .map(([k]) => k);
+        const criticalFailed = ['character_identity', 'temporal_guidance', 'verifier']
+            .filter(k => !osLayers[k]?.pass);
+        (project as any).director_os_layers          = osLayers;
+        (project as any).director_os_degraded        = degradedLayers.length > 0;
+        (project as any).director_os_critical_failures = criticalFailed;
+
+        logger.gemini.info('director_os_summary', {
+            layers: osLayers,
+            degraded: (project as any).director_os_degraded,
+            critical_failures: criticalFailed,
+        }, traceId);
+
         logger.gemini.info('generate_complete', {
             project_id,
             convertedScenes: convertedScenes.length,
@@ -4115,6 +4302,7 @@ app.post('/api/shot-images/:shotId/generate', async (req: any, res: any) => {
                 previousPrompt: previous_prompt,
                 characterAnchor: suppressCharacterLock ? '' : character_anchor,
                 styleLabel: style || 'none',
+                shotGraphNode: shot_payload,
             });
 
             if (compiledShot.variance_report.requires_substantive_change && !compiledShot.variance_report.pass) {
@@ -4952,6 +5140,7 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
                 previousPrompt,
                 characterAnchor: character_anchor,
                 styleLabel: style,
+                shotGraphNode: shot,
             });
 
             if (compiledShot.variance_report.requires_substantive_change && !compiledShot.variance_report.pass) {
@@ -5268,6 +5457,7 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
                 previousPrompt,
                 characterAnchor: character_anchor,
                 styleLabel: style,
+                shotGraphNode: shot,
             });
 
             if (compiledShot.variance_report.requires_substantive_change && !compiledShot.variance_report.pass) {
@@ -5902,7 +6092,117 @@ const ELEVENLABS_VOICES: Record<string, string> = {
     'en_male_james': 'ZQe5DxY0m0R2l8kfVJkJ',
 };
 
-// POST /api/audio/elevenlabs - Generate voice using ElevenLabs
+// ── Timing helper ────────────────────────────────────────────────
+// Converts ElevenLabs character-level alignment into sentence-level
+// timing blocks.  Returns [] if alignment is missing (fallback gracefully).
+interface TimingBlock { text: string; start_sec: number; end_sec: number; }
+
+function alignmentToTimingBlocks(
+    text: string,
+    alignment: {
+        characters: string[];
+        character_start_times_seconds: number[];
+        character_end_times_seconds: number[];
+    } | null | undefined
+): TimingBlock[] {
+    if (!alignment?.characters?.length) return [];
+
+    // Split on sentence-ending punctuation, keeping the delimiter
+    const sentences = text.match(/[^.!?！。？]+[.!?！。？]*/g) ?? [text];
+    const blocks: TimingBlock[] = [];
+    let charCursor = 0;
+
+    for (const sentence of sentences) {
+        const trimmed = sentence.trim();
+        if (!trimmed) { charCursor += sentence.length; continue; }
+
+        // Find where this sentence's chars start/end in the alignment array
+        const startIdx = Math.min(charCursor, alignment.characters.length - 1);
+        const endIdx = Math.min(charCursor + sentence.length - 1, alignment.characters.length - 1);
+
+        const startSec = alignment.character_start_times_seconds[startIdx] ?? 0;
+        const endSec = alignment.character_end_times_seconds[endIdx] ?? startSec + 0.06 * trimmed.length;
+
+        blocks.push({ text: trimmed, start_sec: Number(startSec.toFixed(3)), end_sec: Number(endSec.toFixed(3)) });
+        charCursor += sentence.length;
+    }
+
+    return blocks;
+}
+
+// ── ElevenLabs /with-timestamps wrapper ─────────────────────────
+// Returns { audioBuffer, alignment, durationSec, timingBlocks }
+async function elevenLabsTTSWithTiming(params: {
+    text: string;
+    voiceId: string;
+    apiKey: string;
+    modelId?: string;
+    stability?: number;
+    similarityBoost?: number;
+    speed?: number;
+    emotion?: string; // mapped to style_exaggeration
+}): Promise<{
+    audioBuffer: Buffer;
+    alignment: any;
+    durationSec: number;
+    timingBlocks: TimingBlock[];
+    timingSource: 'elevenlabs_alignment';
+    voiceIdUsed: string;
+}> {
+    const { text, voiceId, apiKey, modelId = 'eleven_multilingual_v2',
+        stability = 0.5, similarityBoost = 0.75, speed = 1.0, emotion } = params;
+
+    // Map emotion → style_exaggeration (0–1)
+    const styleMap: Record<string, number> = {
+        happy: 0.7, sad: 0.4, angry: 0.9, excited: 0.85, calm: 0.2, neutral: 0.5
+    };
+    const style = emotion ? (styleMap[emotion] ?? 0.5) : 0.5;
+
+    const response = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/with-timestamps`,
+        {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'xi-api-key': apiKey,
+            },
+            body: JSON.stringify({
+                text,
+                model_id: modelId,
+                voice_settings: { stability, similarity_boost: similarityBoost, style, speed, use_speaker_boost: true },
+            }),
+        }
+    );
+
+    if (!response.ok) {
+        const errText = await response.text();
+        console.error('[ElevenLabs/timestamps] Error:', response.status, errText);
+        throw new Error(`ElevenLabs API ${response.status}: ${errText.substring(0, 200)}`);
+    }
+
+    const json = await response.json() as {
+        audio_base64: string;
+        alignment: {
+            characters: string[];
+            character_start_times_seconds: number[];
+            character_end_times_seconds: number[];
+        };
+    };
+
+    const audioBuffer = Buffer.from(json.audio_base64, 'base64');
+    const alignment = json.alignment;
+
+    // Real duration = last character's end time
+    const chars = alignment?.character_end_times_seconds;
+    const durationSec = chars?.length ? Number(chars[chars.length - 1].toFixed(3)) : Math.max(1, text.split(/\s+/).length / 2.5);
+
+    const timingBlocks = alignmentToTimingBlocks(text, alignment);
+
+    return { audioBuffer, alignment, durationSec, timingBlocks, timingSource: 'elevenlabs_alignment', voiceIdUsed: voiceId };
+}
+
+// POST /api/audio/elevenlabs - Generate voice using ElevenLabs (with real alignment timing)
 app.post('/api/audio/elevenlabs', requireAuth, async (req: any, res: any) => {
     try {
         const authHeader = req.headers.authorization;
@@ -5918,7 +6218,7 @@ app.post('/api/audio/elevenlabs', requireAuth, async (req: any, res: any) => {
 
         const elevenlabsKey = process.env.ELEVENLABS_API_KEY;
         if (!elevenlabsKey) {
-            return res.status(500).json({ error: 'ElevenLabs API not configured' });
+            return res.status(500).json({ error: 'ElevenLabs API key not configured — add ELEVENLABS_API_KEY to Vercel env vars' });
         }
 
         // Use default voice if not specified
@@ -5926,45 +6226,21 @@ app.post('/api/audio/elevenlabs', requireAuth, async (req: any, res: any) => {
             ? ELEVENLABS_VOICES[voice_id]
             : ELEVENLABS_VOICES['en_female_rachel'];
 
-        console.log('[ElevenLabs] Generating voice for text:', text.substring(0, 50) + '...');
-        console.log('[ElevenLabs] Using voice:', selectedVoice);
+        console.log('[ElevenLabs] Generating voice (with-timestamps) for:', text.substring(0, 60) + '...');
+        console.log('[ElevenLabs] Voice preset:', voice_id, '→ EL ID:', selectedVoice);
 
-        // Call ElevenLabs TTS API
-        const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${selectedVoice}`, {
-            method: 'POST',
-            headers: {
-                'Accept': 'audio/mpeg',
-                'Content-Type': 'application/json',
-                'xi-api-key': elevenlabsKey,
-            },
-            body: JSON.stringify({
-                text: text,
-                model_id: 'eleven_multilingual_v2',
-                voice_settings: {
-                    stability: stability,
-                    similarity_boost: similarity_boost,
-                    speed: speed,
-                    pitch: 0,
-                },
-            }),
+        // ★ Use /with-timestamps to get real character-level alignment
+        const { audioBuffer, durationSec, timingBlocks, timingSource, voiceIdUsed } = await elevenLabsTTSWithTiming({
+            text, voiceId: selectedVoice, apiKey: elevenlabsKey,
+            stability, similarityBoost: similarity_boost, speed,
         });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error('[ElevenLabs] API Error:', response.status, errorText);
-            return res.status(response.status).json({ error: `ElevenLabs API error: ${response.status}` });
-        }
-
-        // Convert audio to buffer and upload to Supabase Storage
-        const audioBuffer = await response.arrayBuffer();
-        const buffer = Buffer.from(audioBuffer);
 
         const supabaseAdmin = getSupabaseAdmin();
         const fileName = `voice_${Date.now()}_${Math.random().toString(36).substring(7)}.mp3`;
 
         const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
             .from('videos')
-            .upload(`audio/${fileName}`, buffer, {
+            .upload(`audio/${fileName}`, audioBuffer, {
                 contentType: 'audio/mpeg',
                 upsert: false,
             });
@@ -5979,11 +6255,15 @@ app.post('/api/audio/elevenlabs', requireAuth, async (req: any, res: any) => {
             .from('videos')
             .getPublicUrl(`audio/${fileName}`);
 
-        console.log('[ElevenLabs] Voice generated successfully:', publicUrl);
+        console.log('[ElevenLabs] ✅ Voice generated:', publicUrl, '| duration:', durationSec, 's | blocks:', timingBlocks.length);
 
         res.json({
             audio_url: publicUrl,
             success: true,
+            duration_sec: durationSec,
+            timing_blocks: timingBlocks,
+            timing_source: timingSource,
+            voice_id_used: voiceIdUsed,
         });
     } catch (err: any) {
         console.error('[ElevenLabs] Exception:', err);
@@ -6029,7 +6309,7 @@ app.get('/api/audio/elevenlabs/voices', async (req: any, res: any) => {
     }
 });
 
-// POST /api/audio/generate-all - Generate voice for all scenes
+// POST /api/audio/generate-all - Generate voice for all scenes (real timing from ElevenLabs alignment)
 app.post('/api/audio/generate-all', requireAuth, async (req: any, res: any) => {
     try {
         const authHeader = req.headers.authorization;
@@ -6037,7 +6317,8 @@ app.post('/api/audio/generate-all', requireAuth, async (req: any, res: any) => {
             return res.status(401).json({ error: 'Missing Authorization header' });
         }
 
-        const { scenes, voice_id, background_music } = req.body;
+        // ★ character_voices: { "CharacterName": "voice_preset_key" } for per-char voice mapping
+        const { scenes, voice_id, background_music, character_voices } = req.body;
 
         if (!scenes || !Array.isArray(scenes)) {
             return res.status(400).json({ error: 'Missing scenes array' });
@@ -6045,10 +6326,10 @@ app.post('/api/audio/generate-all', requireAuth, async (req: any, res: any) => {
 
         const elevenlabsKey = process.env.ELEVENLABS_API_KEY;
         if (!elevenlabsKey) {
-            return res.status(500).json({ error: 'ElevenLabs API not configured' });
+            return res.status(500).json({ error: 'ElevenLabs API key not configured — add ELEVENLABS_API_KEY to Vercel env vars' });
         }
 
-        const selectedVoice = voice_id && ELEVENLABS_VOICES[voice_id]
+        const defaultVoice = voice_id && ELEVENLABS_VOICES[voice_id]
             ? ELEVENLABS_VOICES[voice_id]
             : ELEVENLABS_VOICES['en_female_rachel'];
 
@@ -6057,7 +6338,7 @@ app.post('/api/audio/generate-all', requireAuth, async (req: any, res: any) => {
 
         // Generate voice for each scene
         for (const scene of scenes) {
-            const { scene_number, dialogue, description } = scene;
+            const { scene_number, dialogue, description, speaker } = scene;
             const textToSpeak = dialogue || description || '';
 
             if (!textToSpeak.trim()) {
@@ -6065,37 +6346,24 @@ app.post('/api/audio/generate-all', requireAuth, async (req: any, res: any) => {
                 continue;
             }
 
+            // ★ Per-character voice lookup: check character_voices map by speaker name
+            let selectedVoice = defaultVoice;
+            if (speaker && character_voices?.[speaker]) {
+                const presetKey = character_voices[speaker];
+                selectedVoice = ELEVENLABS_VOICES[presetKey] ?? defaultVoice;
+                console.log(`[ElevenLabs] Scene ${scene_number}: char "${speaker}" → voice preset "${presetKey}" → EL ID "${selectedVoice}"`);
+            }
+
             try {
-                const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${selectedVoice}`, {
-                    method: 'POST',
-                    headers: {
-                        'Accept': 'audio/mpeg',
-                        'Content-Type': 'application/json',
-                        'xi-api-key': elevenlabsKey,
-                    },
-                    body: JSON.stringify({
-                        text: textToSpeak,
-                        model_id: 'eleven_multilingual_v2',
-                        voice_settings: {
-                            stability: 0.5,
-                            similarity_boost: 0.75,
-                            speed: 1.0,
-                        },
-                    }),
-                });
-
-                if (!response.ok) {
-                    throw new Error(`ElevenLabs API error: ${response.status}`);
-                }
-
-                const audioBuffer = await response.arrayBuffer();
-                const buffer = Buffer.from(audioBuffer);
+                // ★ Use /with-timestamps for real alignment timing
+                const { audioBuffer, durationSec, timingBlocks, timingSource, voiceIdUsed }
+                    = await elevenLabsTTSWithTiming({ text: textToSpeak, voiceId: selectedVoice, apiKey: elevenlabsKey });
 
                 const fileName = `voice_scene${scene_number}_${Date.now()}.mp3`;
 
                 const { error: uploadError } = await supabaseAdmin.storage
                     .from('videos')
-                    .upload(`audio/${fileName}`, buffer, {
+                    .upload(`audio/${fileName}`, audioBuffer, {
                         contentType: 'audio/mpeg',
                         upsert: false,
                     });
@@ -6108,19 +6376,41 @@ app.post('/api/audio/generate-all', requireAuth, async (req: any, res: any) => {
                     .from('videos')
                     .getPublicUrl(`audio/${fileName}`);
 
+                console.log(`[ElevenLabs] ✅ Scene ${scene_number}: ${publicUrl} | ${durationSec}s | ${timingBlocks.length} blocks`);
+
                 results.push({
                     scene_number,
                     audio_url: publicUrl,
                     success: true,
+                    duration_sec: durationSec,
+                    timing_blocks: timingBlocks,
+                    timing_source: timingSource,
+                    voice_id_used: voiceIdUsed,
+                    speaker: speaker || null,
                 });
             } catch (err: any) {
-                console.error(`[ElevenLabs] Scene ${scene_number} error:`, err);
+                console.error(`[ElevenLabs] Scene ${scene_number} error:`, err.message);
                 results.push({ scene_number, success: false, error: err.message });
             }
         }
 
+        // Build timeline JSON: shot_id → { audio_url, duration_sec, timing_blocks }
+        const timelineJson = results
+            .filter(r => r.success)
+            .reduce((acc: any, r: any) => {
+                acc[`scene_${r.scene_number}`] = {
+                    audio_url: r.audio_url,
+                    duration_sec: r.duration_sec,
+                    timing_blocks: r.timing_blocks,
+                    timing_source: r.timing_source,
+                    speaker: r.speaker,
+                };
+                return acc;
+            }, {});
+
         res.json({
             results,
+            timeline_json: timelineJson,
             success: results.filter(r => r.success).length > 0,
         });
     } catch (err: any) {
@@ -6278,59 +6568,43 @@ app.post('/api/audio/generate-dialogue', requireAuth, async (req: any, res: any)
         }
 
         const ELEVEN_LABS_API_KEY = process.env.ELEVENLABS_API_KEY || process.env.ELEVEN_LABS_API_KEY;
-        const ELEVEN_LABS_VOICE_ID = process.env.ELEVEN_LABS_VOICE_ID || 'pNInz6obpgDQGcFmaJgB';
+        // voice param can be a preset key (e.g. "zh_female_shuang") or a raw EL voice ID
+        const voicePresetKey = voice || 'en_female_rachel';
+        const ELEVEN_LABS_VOICE_ID = ELEVENLABS_VOICES[voicePresetKey]
+            ?? process.env.ELEVEN_LABS_VOICE_ID
+            ?? 'pNInz6obpgDQGcFmaJgB'; // fallback: Adam
 
         if (!ELEVEN_LABS_API_KEY) {
-            return res.status(500).json({ error: 'ElevenLabs API key not configured (set ELEVENLABS_API_KEY)' });
+            return res.status(500).json({ error: 'ElevenLabs API key not configured — add ELEVENLABS_API_KEY to Vercel env vars' });
         }
 
-        // Map emotion to Eleven Labs settings
+        // Map emotion to ElevenLabs stability / similarity settings
         const stabilityMap: Record<string, number> = {
             'happy': 0.5, 'sad': 0.4, 'angry': 0.3, 'neutral': 0.7, 'excited': 0.6, 'calm': 0.8
         };
-        const emotionMap: Record<string, number> = {
+        const similarityMap: Record<string, number> = {
             'happy': 0.8, 'sad': 0.3, 'angry': 0.9, 'neutral': 0.5, 'excited': 0.9, 'calm': 0.4
         };
+        const stability = stabilityMap[emotion] ?? 0.7;
+        const similarityBoost = similarityMap[emotion] ?? 0.5;
 
-        const stability = stabilityMap[emotion] || 0.7;
-        const similarityBoost = emotionMap[emotion] || 0.5;
+        console.log(`[ElevenLabs/dialogue] voice="${voicePresetKey}"→"${ELEVEN_LABS_VOICE_ID}" emotion="${emotion}" text="${text.substring(0, 60)}..."`);
 
-        // Call Eleven Labs API
-        const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${ELEVEN_LABS_VOICE_ID}`, {
-            method: 'POST',
-            headers: {
-                'Accept': 'audio/mpeg',
-                'Content-Type': 'application/json',
-                'xi-api-key': ELEVEN_LABS_API_KEY
-            },
-            body: JSON.stringify({
-                text: text,
-                model_id: 'eleven_monolingual_v1',
-                voice_settings: {
-                    stability: stability,
-                    similarity_boost: similarityBoost,
-                    style: 0.5,
-                    use_speaker_boost: true
-                }
-            })
-        });
+        // ★ Use /with-timestamps for real sentence-level timing (not word-count estimate)
+        const { audioBuffer, durationSec, timingBlocks, timingSource, voiceIdUsed }
+            = await elevenLabsTTSWithTiming({
+                text, voiceId: ELEVEN_LABS_VOICE_ID, apiKey: ELEVEN_LABS_API_KEY,
+                modelId: 'eleven_multilingual_v2',
+                stability, similarityBoost, emotion,
+            });
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error('[ElevenLabs] API Error:', errorText);
-            return res.status(500).json({ error: `Eleven Labs API error: ${response.status}` });
-        }
-
-        // Upload to Supabase Storage
+        // Upload to Supabase Storage — use 'videos' bucket (consistent with other voice endpoints)
         const supabaseAdmin = getSupabaseAdmin();
-        // ★ Fix: node-fetch v3 removed .buffer(). Use arrayBuffer() + Buffer.from() instead.
-        const audioBuffer = await response.arrayBuffer();
-        const audioNodeBuffer = Buffer.from(audioBuffer);
         const fileName = `dialogue_${Date.now()}.mp3`;
 
         const { data, error } = await supabaseAdmin.storage
-            .from('audio')
-            .upload(fileName, audioNodeBuffer, {
+            .from('videos')
+            .upload(`audio/${fileName}`, audioBuffer, {
                 contentType: 'audio/mpeg',
                 upsert: true
             });
@@ -6341,17 +6615,20 @@ app.post('/api/audio/generate-dialogue', requireAuth, async (req: any, res: any)
         }
 
         const { data: urlData } = supabaseAdmin.storage
-            .from('audio')
-            .getPublicUrl(fileName);
+            .from('videos')
+            .getPublicUrl(`audio/${fileName}`);
 
-        // Estimate duration
-        const wordCount = text.split(/\s+/).length;
-        const duration = Math.max(1, wordCount / 2.5);
+        console.log(`[ElevenLabs/dialogue] ✅ ${urlData.publicUrl} | ${durationSec}s | ${timingBlocks.length} blocks | timing_source: ${timingSource}`);
 
         res.json({
             ok: true,
             url: urlData.publicUrl,
-            duration: duration
+            audio_url: urlData.publicUrl, // alias for consistency
+            duration: durationSec,         // real duration from alignment
+            duration_sec: durationSec,
+            timing_blocks: timingBlocks,   // sentence-level [{text, start_sec, end_sec}]
+            timing_source: timingSource,   // "elevenlabs_alignment" — never a mock estimate
+            voice_id_used: voiceIdUsed,
         });
 
     } catch (err: any) {
