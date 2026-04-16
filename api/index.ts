@@ -6077,19 +6077,20 @@ app.post('/api/billing/api-subscribe', async (req: any, res: any) => {
 // ElevenLabs Voice Generation API
 // ═══════════════════════════════════════════════════════════════
 
-// ElevenLabs voice presets (popular voices from ElevenLabs)
+// ElevenLabs voice presets — using ONLY confirmed standard library IDs
+// eleven_multilingual_v2 handles Chinese text with any of these voices
 const ELEVENLABS_VOICES: Record<string, string> = {
-    // Chinese voices
-    'zh_female_shuang': 'cgSg06JYOELk1w0YDjjJ',
-    'zh_male_yong': 'pNInz6obpgDQGcFmaJgB',
-    // English voices
-    'en_female_rachel': '21m00Tcm4TlvDq8ikWAM',
-    'en_male_josh': 'TxGEqnHWrfWFTfGW9XjX',
-    'en_female_sarah': 'EXAVITQ4lndZxqmuB3iK',
-    'en_male_arnold': 'VR6AewLTigWG4xSOukaG',
-    // Other popular voices
-    'en_female_emma': 'LcfcDJ0VP2Gu28MmWJZD',
-    'en_male_james': 'ZQe5DxY0m0R2l8kfVJkJ',
+    // Chinese aliases → use multilingual-capable standard voices
+    'zh_female_shuang': '21m00Tcm4TlvDq8ikWAM',   // Rachel — confirmed valid, handles ZH
+    'zh_male_yong':     'pNInz6obpgDQGcFmaJgB',    // Adam   — confirmed valid, handles ZH
+    // English voices — confirmed standard ElevenLabs library IDs
+    'en_female_rachel': '21m00Tcm4TlvDq8ikWAM',   // Rachel
+    'en_male_adam':     'pNInz6obpgDQGcFmaJgB',    // Adam
+    'en_male_josh':     'TxGEqnHWrfWFTfGW9XjX',   // Josh
+    'en_female_sarah':  'EXAVITQu4vr4xnSDxMaL',   // Sarah (corrected ID)
+    'en_male_arnold':   'VR6AewLTigWG4xSOukaG',   // Arnold
+    'en_female_emma':   'LcfcDJ0VP2Gu28MmWJZD',   // Elli
+    'en_male_james':    'onwK4e9ZLuTAKqWW03F9',   // Daniel
 };
 
 // ── Timing helper ────────────────────────────────────────────────
@@ -6158,6 +6159,18 @@ async function elevenLabsTTSWithTiming(params: {
     };
     const style = emotion ? (styleMap[emotion] ?? 0.5) : 0.5;
 
+    // ★ voice_settings only accepts: stability, similarity_boost, style, use_speaker_boost
+    //    Do NOT pass speed or pitch here — ElevenLabs returns 422 for unknown fields
+    const voiceSettings: Record<string, any> = {
+        stability,
+        similarity_boost: similarityBoost,
+        use_speaker_boost: true,
+    };
+    // style (0–1) is only supported by v2 models; safe to include for eleven_multilingual_v2
+    if (modelId.includes('v2') || modelId.includes('multilingual')) {
+        voiceSettings.style = style;
+    }
+
     const response = await fetch(
         `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/with-timestamps`,
         {
@@ -6170,7 +6183,7 @@ async function elevenLabsTTSWithTiming(params: {
             body: JSON.stringify({
                 text,
                 model_id: modelId,
-                voice_settings: { stability, similarity_boost: similarityBoost, style, speed, use_speaker_boost: true },
+                voice_settings: voiceSettings,
             }),
         }
     );
