@@ -45,6 +45,10 @@ import {
     deserializePipelineState,
     restorePipelineState,
 } from '../lib/storyPipeline.js';
+import {
+    buildShotImagePrompt,
+    buildShotGenerationPayload,
+} from '../lib/shotPromptCompiler.js';
 
 
 // ═══════════════════════════════════════════════════════════════
@@ -670,6 +674,16 @@ const enforceRateLimit = (req: any, res: any, options: {
     current.count += 1;
     requestRateLimitStore.set(bucketKey, current);
     return true;
+};
+
+const computeDeterministicShotSeed = (projectSeed: number, shotId: string, shotNumber: number): number => {
+    const base = `${projectSeed}:${shotId || ''}:${shotNumber || 0}`;
+    let hash = 0;
+    for (let i = 0; i < base.length; i += 1) {
+        hash = (hash * 31 + base.charCodeAt(i)) >>> 0;
+    }
+    const normalized = Math.abs(hash % 900000) + 100000;
+    return normalized;
 };
 
 // ★ Replicate Request Queue (prevent 429 rate limit errors)
@@ -2670,8 +2684,9 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
                     directorControls: safeDirectorControls,
                 });
 
-                // Prepend character anchor to first shot of each scene for continuity
-                const finalImagePrompt = (isFirstShotInScene && project.character_anchor)
+                // Prepend character anchor to EVERY shot for identity consistency,
+                // while shot-specific sections still drive per-shot variance.
+                const finalImagePrompt = project.character_anchor
                     ? `${project.character_anchor}. ${imagePrompt}`
                     : imagePrompt;
 
@@ -2683,13 +2698,13 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
                     directorControls: safeDirectorControls,
                 });
 
-                // Build character consistency metadata for first-shot-of-scene
+                // Build character consistency metadata for every shot
                 const anchorKeywords: string[] = project.character_anchor
                     ? project.character_anchor.toLowerCase().split(/[,\s]+/).filter((w: string) => w.length > 3)
                     : [];
                 const promptLower = finalImagePrompt.toLowerCase();
                 const anchorKeywordsPresent = anchorKeywords.filter((kw: string) => promptLower.includes(kw)).length;
-                const consistencyMeta = (isFirstShotInScene && project.character_anchor)
+                const consistencyMeta = project.character_anchor
                     ? {
                         has_anchor_prefix: promptLower.startsWith(project.character_anchor.toLowerCase().substring(0, 20)),
                         critical_keywords_present: anchorKeywordsPresent,
@@ -4008,6 +4023,10 @@ app.post('/api/shot-images/:shotId/generate', async (req: any, res: any) => {
             anchor_image_url,
             referenceImageDataUrl,
             continuity,
+            shot_payload,
+            scene_payload,
+            previous_shot,
+            previous_prompt,
         } = req.body;
 
         const authHeader = req.headers.authorization;
@@ -4084,6 +4103,32 @@ app.post('/api/shot-images/:shotId/generate', async (req: any, res: any) => {
             storyEntities: suppressCharacterLock ? [] : continuity?.project_context?.story_entities,
             suppressCharacterLock,
         });
+
+        let compiledPromptMeta: any = null;
+        if (shot_payload) {
+            const compiledShot = buildShotImagePrompt({
+                shot: shot_payload,
+                scene: scene_payload || {},
+                styleBible: continuity?.style_bible || {},
+                continuityState: continuity,
+                previousShot: previous_shot,
+                previousPrompt: previous_prompt,
+                characterAnchor: suppressCharacterLock ? '' : character_anchor,
+                styleLabel: style || 'none',
+            });
+
+            if (compiledShot.variance_report.requires_substantive_change && !compiledShot.variance_report.pass) {
+                return res.status(422).json({
+                    error: '该镜头未充分响应剧本内容，请重新编译 prompt',
+                    code: 'PROMPT_VARIANCE_FAIL',
+                    variance_report: compiledShot.variance_report,
+                });
+            }
+
+            promptCandidate = compiledShot.model_prompt;
+            compiledPromptMeta = compiledShot;
+        }
+
         promptCandidate = applyContinuityLocks(promptCandidate, continuityProfile);
 
         const continuityNegative = buildContinuityNegativePrompt(negative_prompt, continuityProfile);
@@ -4178,6 +4223,11 @@ app.post('/api/shot-images/:shotId/generate', async (req: any, res: any) => {
                 created_at: now, completed_at: new Date().toISOString(), duration_ms: Date.now() - startTime,
                 continuity_score: finalContinuityScore?.overall ?? null,
                 continuity_failures: finalContinuityScore?.failures || [],
+                compiler: compiledPromptMeta ? {
+                    shot_summary: compiledPromptMeta.shot_summary,
+                    continuity_notes: compiledPromptMeta.continuity_notes,
+                    variance_report: compiledPromptMeta.variance_report,
+                } : null,
             },
         });
     } catch (error: any) {
@@ -4788,6 +4838,72 @@ app.get('/api/storyboard/:projectId/assembly-manifest', requireAuth, async (req:
 });
 
 // ───────────────────────────────────────────────────────────────
+// POST /api/batch/compile-prompts — Compile per-shot prompt previews before generation
+// ───────────────────────────────────────────────────────────────
+app.post('/api/batch/compile-prompts', async (req: any, res: any) => {
+    const traceId: string = req.traceId || generateTraceId();
+    try {
+        const { project_id, shots, style = 'none', character_anchor = '', style_bible } = req.body;
+        if (!project_id) return res.status(400).json(createErrorResponse(createError.missingField('project_id'), traceId));
+        if (!Array.isArray(shots) || shots.length === 0) {
+            return res.status(400).json(createErrorResponse(createError.invalidParameter('shots', '不能为空'), traceId));
+        }
+
+        const authHeader = req.headers.authorization;
+        if (!authHeader) return res.status(401).json(createErrorResponse(createError.unauthorized(), traceId));
+
+        const sortedShots = [...shots].sort((a: any, b: any) => (a.scene_number - b.scene_number) || (a.shot_number - b.shot_number));
+        const compiled: any[] = [];
+
+        for (let i = 0; i < sortedShots.length; i += 1) {
+            const shot = sortedShots[i];
+            const previousShot = i > 0 ? sortedShots[i - 1] : undefined;
+            const previousPrompt = i > 0 ? compiled[i - 1]?.model_prompt : undefined;
+
+            const compiledShot = buildShotImagePrompt({
+                shot,
+                scene: {
+                    scene_id: shot.scene_id,
+                    synopsis: shot.scene_summary || shot.visual_description || '',
+                    location: shot.location || shot.scene_setting || '',
+                    time_of_day: shot.time_of_day || '',
+                },
+                styleBible: style_bible || {},
+                previousShot,
+                previousPrompt,
+                characterAnchor: character_anchor,
+                styleLabel: style,
+            });
+
+            compiled.push(compiledShot);
+        }
+
+        const duplicateWarnings: any[] = [];
+        for (let i = 2; i < compiled.length; i += 1) {
+            const a = compiled[i - 2]?.variance_report?.similarity_score ?? 0;
+            const b = compiled[i - 1]?.variance_report?.similarity_score ?? 0;
+            if (a > 0.92 && b > 0.92) {
+                duplicateWarnings.push({
+                    code: 'PROMPT_REPEAT_ALERT',
+                    shot_id: compiled[i]?.shot_id,
+                    message: '该镜头未充分响应剧本内容，请重新编译 prompt',
+                });
+            }
+        }
+
+        return res.json({
+            success: true,
+            project_id,
+            compiled_shots: compiled,
+            duplicate_warnings: duplicateWarnings,
+        });
+    } catch (error: any) {
+        logger.replicate.error('batch_compile_prompts_error', error?.message || String(error));
+        return res.status(500).json({ error: error?.message || 'Failed to compile prompts' });
+    }
+});
+
+// ───────────────────────────────────────────────────────────────
 // POST /api/batch/gen-images — Synchronous batch image generation with SSE streaming
 // On Vercel serverless, in-memory state doesn't persist across requests.
 // This endpoint processes all images within a single request and streams progress via SSE.
@@ -4814,6 +4930,42 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
         const replicatePath = (REPLICATE_MODEL_PATHS as any)[model] || REPLICATE_MODEL_PATHS['flux'];
         const costPerImage = (IMAGE_MODEL_COSTS as any)[model] ?? 6;
         const totalCost = costPerImage * sortedShots.length;
+
+        // Compile prompts shot-by-shot (script/shot driven), then validate variance.
+        const compiledMap = new Map<string, any>();
+        const compiledOrdered: any[] = [];
+        for (let i = 0; i < sortedShots.length; i += 1) {
+            const shot = sortedShots[i];
+            const previousShot = i > 0 ? sortedShots[i - 1] : undefined;
+            const previousPrompt = i > 0 ? compiledOrdered[i - 1]?.model_prompt : undefined;
+
+            const compiledShot = buildShotImagePrompt({
+                shot,
+                scene: {
+                    scene_id: shot.scene_id,
+                    synopsis: shot.scene_summary || shot.visual_description || '',
+                    location: shot.location || shot.scene_setting || '',
+                    time_of_day: shot.time_of_day || '',
+                },
+                styleBible: style_bible || {},
+                previousShot,
+                previousPrompt,
+                characterAnchor: character_anchor,
+                styleLabel: style,
+            });
+
+            if (compiledShot.variance_report.requires_substantive_change && !compiledShot.variance_report.pass) {
+                return res.status(422).json({
+                    error: '该镜头未充分响应剧本内容，请重新编译 prompt',
+                    code: 'PROMPT_VARIANCE_FAIL',
+                    shot_id: compiledShot.shot_id,
+                    variance_report: compiledShot.variance_report,
+                });
+            }
+
+            compiledMap.set(shot.shot_id, compiledShot);
+            compiledOrdered.push(compiledShot);
+        }
 
         // ★ GOD MODE: Check entitlement
         const entitlement = await checkEntitlement(userId, userEmail, 'batch_images', totalCost);
@@ -4868,18 +5020,31 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
         // Send initial progress
         sendSSE('progress', { job, items });
 
-        // ★ FLUX REDUX ANCHORING — First-image anchoring for extreme consistency
-        // Priority: 1) User's uploaded reference photo  2) First successfully generated image
-        // The anchor image is passed as `image_prompt` to Flux Redux, conditioning
-        // every subsequent image on the same face, outfit, palette, and style.
-        let anchorImageUrl: string | null = reference_image_url || null;
+        const anchorImageUrl: string | null = reference_image_url || null;
         if (anchorImageUrl) {
-            console.log(`[Batch] ★ Using user reference image as anchor: ${anchorImageUrl.substring(0, 80)}...`);
+            console.log(`[Batch] Using user-provided anchor reference: ${anchorImageUrl.substring(0, 80)}...`);
         }
+
+        sendSSE('compiled', {
+            compiled_shots: compiledOrdered.map((c: any) => ({
+                shot_id: c.shot_id,
+                scene_id: c.scene_id,
+                shot_summary: c.shot_summary,
+                user_readable_prompt: c.user_readable_prompt,
+                model_prompt: c.model_prompt,
+                negative_prompt: c.negative_prompt,
+                continuity_notes: c.continuity_notes,
+                variance_report: c.variance_report,
+            })),
+        });
 
         // ★ Process each image sequentially
         let cancelled = false;
         req.on('close', () => { cancelled = true; });
+
+        const generatedByShot = new Map<string, string>();
+        const firstFrameByScene = new Map<string, string>();
+        const generatedUrlOwner = new Map<string, string>();
 
         for (const item of items) {
             if (cancelled) {
@@ -4922,14 +5087,19 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
                     visualStyle: style,
                 });
 
-                let finalPrompt = buildFinalPrompt({
-                    basePrompt: shotData.image_prompt || '',
-                    characterAnchor: character_anchor,
-                    style,
-                    referencePolicy: shotData.reference_policy || 'anchor'
+                const compiledShot = compiledMap.get(item.shot_id);
+                if (!compiledShot) throw new Error('Compiled shot prompt missing');
+
+                const shotIndex = sortedShots.findIndex((s: any) => s.shot_id === item.shot_id);
+                const previousShotId = shotIndex > 0 ? sortedShots[shotIndex - 1]?.shot_id : undefined;
+                const payload = buildShotGenerationPayload(compiledShot, {
+                    anchorImage: anchorImageUrl || undefined,
+                    previousFrame: previousShotId ? generatedByShot.get(previousShotId) : undefined,
+                    firstFrameInScene: firstFrameByScene.get(String(shotData.scene_id || '')),
                 });
-                finalPrompt = applyContinuityLocks(finalPrompt, continuityProfile);
-                const continuityNegative = buildContinuityNegativePrompt('', continuityProfile);
+
+                let finalPrompt = applyContinuityLocks(payload.prompt, continuityProfile);
+                const continuityNegative = buildContinuityNegativePrompt(payload.negative_prompt || '', continuityProfile);
 
                 const maxAttempts = 2;
                 const threshold = continuityThreshold('high');
@@ -4945,8 +5115,8 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
                         negativePrompt: continuityNegative,
                         model: replicatePath,
                         aspectRatio: aspect_ratio,
-                        seed: shotData.seed_hint ?? projectSeed,
-                        imagePrompt: anchorImageUrl || undefined,
+                        seed: shotData.seed_hint ?? computeDeterministicShotSeed(projectSeed, shotData.shot_id, shotData.shot_number),
+                        imagePrompt: payload.reference_image_url,
                     });
                     if (scored.overall >= threshold || attempt === maxAttempts) {
                         finalPrompt = candidate;
@@ -4954,17 +5124,24 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
                     }
                 }
 
+                if (result?.url) {
+                    generatedByShot.set(item.shot_id, result.url);
+                    if (!firstFrameByScene.has(String(shotData.scene_id || ''))) {
+                        firstFrameByScene.set(String(shotData.scene_id || ''), result.url);
+                    }
+
+                    const existingOwner = generatedUrlOwner.get(result.url);
+                    if (existingOwner && existingOwner !== item.shot_id) {
+                        throw new Error('该镜头未充分响应剧本内容，请重新编译 prompt');
+                    }
+                    generatedUrlOwner.set(result.url, item.shot_id);
+                }
+
                 item.status = 'succeeded';
                 item.image_id = crypto.randomUUID();
                 item.image_url = result?.url;
                 item.completed_at = new Date().toISOString();
                 job.succeeded += 1;
-
-                // ★ First successful image becomes the anchor for all subsequent images
-                if (!anchorImageUrl && result?.url) {
-                    anchorImageUrl = result.url;
-                    console.log(`[Batch] ★ First-image anchor set: ${result.url.substring(0, 80)}...`);
-                }
 
                 if (result?.url) {
                     registerApprovedFrame(project_id, {
@@ -5072,6 +5249,40 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
         const costPerImage = (IMAGE_MODEL_COSTS as any)[model] ?? 6;
         const totalCost = costPerImage * nextBatch.length;
 
+        const compiledMap = new Map<string, any>();
+        const compiledOrdered: any[] = [];
+        for (let i = 0; i < nextBatch.length; i += 1) {
+            const shot = nextBatch[i];
+            const previousShot = i > 0 ? nextBatch[i - 1] : undefined;
+            const previousPrompt = i > 0 ? compiledOrdered[i - 1]?.model_prompt : undefined;
+            const compiledShot = buildShotImagePrompt({
+                shot,
+                scene: {
+                    scene_id: shot.scene_id,
+                    synopsis: shot.scene_summary || shot.visual_description || '',
+                    location: shot.location || shot.scene_setting || '',
+                    time_of_day: shot.time_of_day || '',
+                },
+                styleBible: style_bible || {},
+                previousShot,
+                previousPrompt,
+                characterAnchor: character_anchor,
+                styleLabel: style,
+            });
+
+            if (compiledShot.variance_report.requires_substantive_change && !compiledShot.variance_report.pass) {
+                return res.status(422).json({
+                    error: '该镜头未充分响应剧本内容，请重新编译 prompt',
+                    code: 'PROMPT_VARIANCE_FAIL',
+                    shot_id: compiledShot.shot_id,
+                    variance_report: compiledShot.variance_report,
+                });
+            }
+
+            compiledMap.set(shot.shot_id, compiledShot);
+            compiledOrdered.push(compiledShot);
+        }
+
         // ★ GOD MODE: Check entitlement
         const entitlement = await checkEntitlement(userId, userEmail, 'batch_images', totalCost);
         if (!entitlement.allowed) {
@@ -5125,7 +5336,7 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
 
         sendSSE('progress', { job, items, range_label: rangeLabel });
 
-        // ★ FLUX REDUX ANCHORING — Use anchor from previous batch or reference image
+        // Use explicit user/previous-batch anchor only. Do not globally reuse first generated frame.
         let anchorImageUrl: string | null = anchor_image_url || reference_image_url || null;
         if (anchorImageUrl) {
             console.log(`[Batch Continue] ★ Using anchor image: ${anchorImageUrl.substring(0, 80)}...`);
@@ -5133,6 +5344,23 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
 
         let cancelled = false;
         req.on('close', () => { cancelled = true; });
+
+        const generatedByShot = new Map<string, string>();
+        const firstFrameByScene = new Map<string, string>();
+        const generatedUrlOwner = new Map<string, string>();
+
+        sendSSE('compiled', {
+            compiled_shots: compiledOrdered.map((c: any) => ({
+                shot_id: c.shot_id,
+                scene_id: c.scene_id,
+                shot_summary: c.shot_summary,
+                user_readable_prompt: c.user_readable_prompt,
+                model_prompt: c.model_prompt,
+                negative_prompt: c.negative_prompt,
+                continuity_notes: c.continuity_notes,
+                variance_report: c.variance_report,
+            })),
+        });
 
         for (const item of items) {
             if (cancelled) { item.status = 'cancelled'; continue; }
@@ -5144,15 +5372,40 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
             try {
                 const shotData = nextBatch.find((s: any) => s.shot_id === item.shot_id);
                 if (!shotData) throw new Error('Shot data not found');
-                const finalPrompt = buildFinalPrompt({ basePrompt: shotData.image_prompt || '', characterAnchor: character_anchor, style, referencePolicy: shotData.reference_policy || 'anchor' });
-                const result = await callReplicateImage({ prompt: finalPrompt, model: replicatePath, aspectRatio: aspect_ratio, seed: shotData.seed_hint ?? projectSeed, imagePrompt: anchorImageUrl || undefined });
+
+                const compiledShot = compiledMap.get(item.shot_id);
+                if (!compiledShot) throw new Error('Compiled shot prompt missing');
+
+                const shotIndex = nextBatch.findIndex((s: any) => s.shot_id === item.shot_id);
+                const previousShotId = shotIndex > 0 ? nextBatch[shotIndex - 1]?.shot_id : undefined;
+                const payload = buildShotGenerationPayload(compiledShot, {
+                    anchorImage: anchorImageUrl || undefined,
+                    previousFrame: previousShotId ? generatedByShot.get(previousShotId) : undefined,
+                    firstFrameInScene: firstFrameByScene.get(String(shotData.scene_id || '')),
+                });
+
+                const result = await callReplicateImage({
+                    prompt: payload.prompt,
+                    negativePrompt: payload.negative_prompt,
+                    model: replicatePath,
+                    aspectRatio: aspect_ratio,
+                    seed: shotData.seed_hint ?? computeDeterministicShotSeed(projectSeed, shotData.shot_id, shotData.shot_number),
+                    imagePrompt: payload.reference_image_url,
+                });
+                if (result.url) {
+                    generatedByShot.set(item.shot_id, result.url);
+                    if (!firstFrameByScene.has(String(shotData.scene_id || ''))) {
+                        firstFrameByScene.set(String(shotData.scene_id || ''), result.url);
+                    }
+                    const existingOwner = generatedUrlOwner.get(result.url);
+                    if (existingOwner && existingOwner !== item.shot_id) {
+                        throw new Error('该镜头未充分响应剧本内容，请重新编译 prompt');
+                    }
+                    generatedUrlOwner.set(result.url, item.shot_id);
+                }
+
                 item.status = 'succeeded'; item.image_id = crypto.randomUUID(); item.image_url = result.url;
                 item.completed_at = new Date().toISOString(); job.succeeded += 1;
-                // ★ First successful image becomes anchor if none was provided
-                if (!anchorImageUrl && result.url) {
-                    anchorImageUrl = result.url;
-                    console.log(`[Batch Continue] ★ First-image anchor set: ${result.url.substring(0, 80)}...`);
-                }
             } catch (err: any) {
                 item.status = 'failed'; item.error = err.message || 'Unknown error';
                 item.completed_at = new Date().toISOString(); job.failed += 1;

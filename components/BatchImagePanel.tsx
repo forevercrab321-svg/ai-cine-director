@@ -15,12 +15,14 @@ import { Shot, ShotImage, BatchJob, BatchJobItem, ImageModel, ContinueStrategy }
 import {
     startBatchGenImagesSSE,
     continueBatchGenImagesSSE,
+    compileBatchPrompts,
     cancelBatchJob,
     retryBatchJob,
     getBatchCost,
     computeShotImageStatus,
     type ShotForBatch,
     type BatchProgressResult,
+    type CompiledShotPromptPreview,
 } from '../services/batchService';
 import { useAppContext } from '../context/AppContext';
 import { LoaderIcon } from './IconComponents';
@@ -165,6 +167,9 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
     // Continue state
     const [rangeLabel, setRangeLabel] = useState<string | null>(null);
     const [showStrategyDialog, setShowStrategyDialog] = useState(false);
+    const [compiledPrompts, setCompiledPrompts] = useState<CompiledShotPromptPreview[]>([]);
+    const [compileWarnings, setCompileWarnings] = useState<Array<{ code: string; shot_id: string; message: string }>>([]);
+    const [isCompilingPrompts, setIsCompilingPrompts] = useState(false);
 
     // Compute image status from props
     const imageStatus = computeShotImageStatus(
@@ -223,10 +228,50 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
             shot_number: s.shot_number,
             scene_number: sceneNum,
             image_prompt: s.image_prompt,
+            scene_id: s.scene_id,
+            scene_summary: s.visual_description,
+            shot_description: s.action || s.visual_description,
+            characters_in_shot: Array.isArray(s.characters) ? s.characters : [],
+            location: s.location || s.scene_setting,
+            time_of_day: s.time_of_day,
+            action: s.action || s.visual_description,
+            emotion: s.emotional_beat || s.mood,
+            camera_framing: s.composition || s.framing,
+            camera_angle: s.camera_angle,
+            lens_style: s.lens || s.lens_hint,
+            lighting: s.lighting,
+            continuity_constraints: s.continuity_notes || s.continuity_from_previous,
+            negative_constraints: s.negative_constraints || s.negative_prompt,
+            scene_setting: s.scene_setting,
+            visual_description: s.visual_description,
+            composition: s.composition,
             seed_hint: s.seed_hint,
             reference_policy: s.reference_policy,
         };
     }, []);
+
+    const handleCompilePrompts = useCallback(async () => {
+        if (!isAuthenticated) return alert('请先登录');
+        if (!projectId || sortedShots.length === 0) return;
+
+        setIsCompilingPrompts(true);
+        setError(null);
+        try {
+            const result = await compileBatchPrompts({
+                project_id: projectId,
+                shots: sortedShots.map(toShotForBatch),
+                style: 'none',
+                character_anchor: characterAnchor,
+                style_bible: styleBible,
+            });
+            setCompiledPrompts(result.compiled_shots || []);
+            setCompileWarnings(result.duplicate_warnings || []);
+        } catch (err: any) {
+            setError(err.message || 'Prompt compile failed');
+        } finally {
+            setIsCompilingPrompts(false);
+        }
+    }, [characterAnchor, isAuthenticated, projectId, sortedShots, styleBible, toShotForBatch]);
 
     // ── Start initial batch (SSE) ──
     const handleStart = async () => {
@@ -240,6 +285,18 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
         setJobId('streaming');
 
         try {
+            if (compiledPrompts.length === 0) {
+                const compiled = await compileBatchPrompts({
+                    project_id: projectId || '',
+                    shots: sortedShots.map(toShotForBatch),
+                    style: 'none',
+                    character_anchor: characterAnchor,
+                    style_bible: styleBible,
+                });
+                setCompiledPrompts(compiled.compiled_shots || []);
+                setCompileWarnings(compiled.duplicate_warnings || []);
+            }
+
             const result = await startBatchGenImagesSSE({
                 project_id: projectId || '',
                 shots: sortedShots.map(toShotForBatch),
@@ -282,6 +339,18 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
         setJobId('streaming');
 
         try {
+            if (compiledPrompts.length === 0) {
+                const compiled = await compileBatchPrompts({
+                    project_id: projectId || '',
+                    shots: sortedShots.map(toShotForBatch),
+                    style: 'none',
+                    character_anchor: characterAnchor,
+                    style_bible: styleBible,
+                });
+                setCompiledPrompts(compiled.compiled_shots || []);
+                setCompileWarnings(compiled.duplicate_warnings || []);
+            }
+
             const result = await continueBatchGenImagesSSE({
                 project_id: projectId || '',
                 shots: sortedShots.map(toShotForBatch),
@@ -459,6 +528,16 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
 
                     {/* Action buttons */}
                     <div className="flex gap-2">
+                        <button
+                            onClick={handleCompilePrompts}
+                            disabled={isCompilingPrompts || sortedShots.length === 0}
+                            className={`px-4 py-2 rounded-xl text-sm font-bold transition-all border ${isCompilingPrompts
+                                ? 'bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed'
+                                : 'bg-slate-900 text-cyan-300 border-cyan-700/40 hover:bg-slate-800'
+                                }`}
+                        >
+                            {isCompilingPrompts ? '编译中...' : '🧠 生成前预览 Prompt'}
+                        </button>
                         {isFirstBatch ? (
                             <button
                                 onClick={handleStart}
@@ -502,6 +581,47 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                 <div className="bg-red-900/20 border border-red-500/20 rounded-xl p-3 text-xs text-red-400 flex items-center justify-between">
                     <span>{error}</span>
                     <button onClick={() => setError(null)} className="text-red-500 hover:text-red-300 ml-2">✕</button>
+                </div>
+            )}
+
+            {/* Prompt preview */}
+            {compiledPrompts.length > 0 && (
+                <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                        <h4 className="text-xs font-bold text-cyan-300 uppercase tracking-wider">逐镜头 Prompt 预览（生成前）</h4>
+                        <span className="text-[10px] text-slate-500">{compiledPrompts.length} shots compiled</span>
+                    </div>
+
+                    {compileWarnings.length > 0 && (
+                        <div className="bg-amber-900/20 border border-amber-500/30 rounded-lg p-2 text-[11px] text-amber-300">
+                            {compileWarnings.map((w, idx) => (
+                                <div key={`${w.shot_id}-${idx}`}>⚠ {w.shot_id}: {w.message}</div>
+                            ))}
+                        </div>
+                    )}
+
+                    <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
+                        {compiledPrompts.slice(0, Math.max(6, count)).map((p, idx) => (
+                            <div key={`${p.shot_id}-${idx}`} className="rounded-lg border border-slate-700/60 bg-slate-900/50 p-3 space-y-2">
+                                <div className="flex items-center justify-between gap-2">
+                                    <div className="text-xs text-white font-bold">#{idx + 1} · {p.shot_id}</div>
+                                    <div className={`text-[10px] px-2 py-0.5 rounded-full border ${p.variance_report.pass
+                                        ? 'text-green-300 border-green-500/40 bg-green-900/20'
+                                        : 'text-red-300 border-red-500/40 bg-red-900/20'
+                                        }`}>
+                                        Δ {p.variance_report.delta.summary}
+                                    </div>
+                                </div>
+                                <div className="text-[11px] text-slate-300 whitespace-pre-line">{p.user_readable_prompt}</div>
+                                <div className="text-[10px] text-slate-400 bg-slate-950/70 rounded p-2 max-h-24 overflow-y-auto">
+                                    {p.model_prompt}
+                                </div>
+                                <div className="text-[10px] text-slate-500">
+                                    similarity: <span className="font-mono">{p.variance_report.similarity_score}</span> · overlap: <span className="font-mono">{p.variance_report.overlap_score}</span>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             )}
 

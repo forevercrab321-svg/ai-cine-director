@@ -33,11 +33,9 @@
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "replicate": "^1.4.0",
-    "stripe": "^20.3.1",
-    "tsx": "^4.21.0"
+    "stripe": "^20.3.1"
   },
   "devDependencies": {
-    "esbuild": "^0.24.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^22.14.0",
@@ -46,8 +44,10 @@
     "@vercel/node": "^5.6.15",
     "@vitejs/plugin-react": "^5.0.0",
     "autoprefixer": "^10.4.21",
+    "esbuild": "^0.27.4",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
+    "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }

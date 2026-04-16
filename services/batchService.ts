@@ -37,8 +37,47 @@ export interface ShotForBatch {
     shot_number: number;
     scene_number: number;
     image_prompt: string;
+    scene_id?: string;
+    scene_summary?: string;
+    shot_description?: string;
+    characters_in_shot?: string[];
+    location?: string;
+    time_of_day?: string;
+    action?: string;
+    emotion?: string;
+    camera_framing?: string;
+    camera_angle?: string;
+    lens_style?: string;
+    lighting?: string;
+    continuity_constraints?: string;
+    negative_constraints?: string;
+    scene_setting?: string;
+    visual_description?: string;
+    composition?: string;
     seed_hint?: number | null;
     reference_policy?: string;
+}
+
+export interface CompiledShotPromptPreview {
+    shot_id: string;
+    scene_id: string;
+    shot_summary: string;
+    user_readable_prompt: string;
+    model_prompt: string;
+    negative_prompt: string;
+    continuity_notes: string[];
+    variance_report: {
+        similarity_score: number;
+        overlap_score: number;
+        requires_substantive_change: boolean;
+        has_substantive_change: boolean;
+        pass: boolean;
+        fail_reasons: string[];
+        delta: {
+            changed_fields: string[];
+            summary: string;
+        };
+    };
 }
 
 /**
@@ -170,6 +209,38 @@ export async function startBatchGenImagesSSE(params: {
     }
 
     return readSSEStream(response, onProgress, abortController.signal);
+}
+
+export async function compileBatchPrompts(params: {
+    project_id: string;
+    shots: ShotForBatch[];
+    style?: VideoStyle;
+    character_anchor?: string;
+    style_bible?: any;
+}): Promise<{ compiled_shots: CompiledShotPromptPreview[]; duplicate_warnings: Array<{ code: string; shot_id: string; message: string }> }> {
+    const headers = await getAuthHeaders();
+    const response = await fetch(`${API_BASE}/compile-prompts`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+            project_id: params.project_id,
+            shots: params.shots,
+            style: params.style ?? 'none',
+            character_anchor: params.character_anchor ?? '',
+            style_bible: params.style_bible,
+        }),
+    });
+
+    if (!response.ok) {
+        const errData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+        throw new Error(errData.error || `Failed to compile prompts (${response.status})`);
+    }
+
+    const data = await response.json();
+    return {
+        compiled_shots: data.compiled_shots || [],
+        duplicate_warnings: data.duplicate_warnings || [],
+    };
 }
 
 // Keep old function name for compatibility

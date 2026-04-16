@@ -204,6 +204,31 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
                 reference_policy: shot.reference_policy || (images.length > 0 ? 'previous-frame' : 'anchor'),
                 project_id: projectId,
                 continuity: continuityPayload,
+                shot_payload: {
+                    shot_id: shot.shot_id,
+                    scene_id: shot.scene_id,
+                    scene_summary: sceneDescription,
+                    shot_description: shot.action || shot.visual_description,
+                    characters_in_shot: shot.characters,
+                    location: shot.location || shot.scene_setting,
+                    time_of_day: shot.time_of_day,
+                    action: shot.action,
+                    emotion: shot.emotional_beat || shot.mood,
+                    camera_framing: shot.composition || shot.framing,
+                    camera_angle: shot.camera_angle,
+                    lens_style: shot.lens || shot.lens_hint,
+                    lighting: shot.lighting,
+                    continuity_constraints: shot.continuity_notes || shot.continuity_from_previous,
+                    negative_constraints: shot.negative_constraints || shot.negative_prompt,
+                    reference_policy: shot.reference_policy,
+                },
+                scene_payload: {
+                    scene_id: shot.scene_id,
+                    synopsis: sceneDescription,
+                    location: shot.location || shot.scene_setting,
+                    time_of_day: shot.time_of_day,
+                },
+                previous_prompt: images.length > 0 ? (images[images.length - 1]?.generation?.prompt || undefined) : undefined,
                 // Use previous shot's last frame for continuity, or reference image for first shot
                 referenceImageDataUrl: images.length > 0
                     ? (images[images.length - 1]?.url || referenceImageDataUrl)
