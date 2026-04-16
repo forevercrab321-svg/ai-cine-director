@@ -18,6 +18,7 @@ import ProjectDashboard from './components/ProjectDashboard';
 import ExportButton from './components/ExportButton';
 import { LoaderIcon } from './components/IconComponents';
 import DirectorBrainPanel from './components/DirectorBrainPanel';
+import DirectorOSStatus from './components/DirectorOSStatus';
 import ShotTimeline from './components/ShotTimeline';
 import VerificationPanel from './components/VerificationPanel';
 import { t } from './i18n';
@@ -592,7 +593,19 @@ const MainLayout: React.FC = () => {
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
               <DirectorBrainPanel project={project} lang={settings.lang} />
             </div>
+            {/* Director OS Layer Status — visible warning if any layer failed */}
+            {(project as any).director_os_layers && (
+              <DirectorOSStatus
+                layers={(project as any).director_os_layers}
+                degraded={!!(project as any).director_os_degraded}
+                criticalFailures={(project as any).director_os_critical_failures ?? []}
+              />
+            )}
 
+            {/* Director Brain Panel — logline, world_setting, character_bible, style_bible */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+              <DirectorBrainPanel project={project} lang={settings.lang} />
+            </div>
             {/* Cast Photo Generator Plugin */}
             <CastPhotoGenerator
               project={project}

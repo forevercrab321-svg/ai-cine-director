@@ -208,9 +208,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                   <option value="wan_2_2_fast">
                     {getModelLabel('wan_2_2_fast')} (💎 {Math.ceil(MODEL_COSTS.wan_2_2_fast * (MODEL_MULTIPLIERS.wan_2_2_fast || 1))})
                   </option>
-                  <option value="hailuo_02_fast">
-                    {getModelLabel('hailuo_02_fast')} (💎 {Math.ceil(MODEL_COSTS.hailuo_02_fast * (MODEL_MULTIPLIERS.hailuo_02_fast || 1))})
-                  </option>
                 </optgroup>
 
                 {/* Standard Tier */}
@@ -245,7 +242,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                 {MODEL_METADATA[videoModel].badge && (
                   <span className={`text-[10px] px-2 py-1 rounded font-bold border
                       ${videoModel === 'wan_2_2_fast' ? 'bg-green-500/10 text-green-400 border-green-500/20' : ''}
-                      ${videoModel === 'hailuo_02_fast' ? 'bg-sky-500/10 text-sky-400 border-sky-500/20' : ''}
                       ${videoModel === 'kling_2_5_pro' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : ''}
                       ${videoModel === 'kling_2_6_pro' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : ''}
                       ${videoModel === 'veo_3' ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' : ''}

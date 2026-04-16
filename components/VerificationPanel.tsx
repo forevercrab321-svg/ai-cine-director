@@ -129,6 +129,15 @@ const VerificationPanel: React.FC<Props> = ({ project, lang }) => {
     const criticalPassed = critical.filter(c => c.pass).length;
     const allCriticalPass = criticalPassed === critical.length;
 
+    // Director OS verifier report
+    const verifierReport = (project as any)?.verifier_report as {
+        pass: boolean;
+        overall_score: number;
+        checks: Array<{ id: string; label: string; pass: boolean; score: number; failure_reason?: string; retry_hint?: string }>;
+        failures: string[];
+        repair_entries: Array<{ shot_id: string; issue: string; suggested_fix: string }>;
+    } | undefined;
+
     const scoreColor = passed / total >= 0.8
         ? 'text-emerald-400'
         : passed / total >= 0.5
@@ -190,6 +199,54 @@ const VerificationPanel: React.FC<Props> = ({ project, lang }) => {
                     </div>
                 ))}
             </div>
+
+            {/* ── Director OS Verifier Report ── */}
+            {verifierReport && (
+                <div className="mt-4 space-y-3 border-t border-slate-700/40 pt-4">
+                    <div className="flex items-center justify-between">
+                        <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Director OS Verifier</span>
+                        <span className={`text-xs font-bold font-mono ${verifierReport.pass ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {Math.round(verifierReport.overall_score * 100)}%
+                            <span className="ml-2">{verifierReport.pass ? '✓ PASS' : '✗ FAIL'}</span>
+                        </span>
+                    </div>
+
+                    {/* OS check list */}
+                    <div className="space-y-1">
+                        {verifierReport.checks?.map((chk: any) => (
+                            <div key={chk.id} className={`flex items-start gap-2 px-3 py-1.5 rounded-lg border text-xs ${chk.pass ? 'bg-emerald-900/10 border-emerald-500/15' : 'bg-rose-900/10 border-rose-500/20'}`}>
+                                <span className={`shrink-0 ${chk.pass ? 'text-emerald-400' : 'text-rose-400'}`}>{chk.pass ? '✓' : '✗'}</span>
+                                <div className="flex-1 min-w-0">
+                                    <span className={`font-medium ${chk.pass ? 'text-slate-300' : 'text-rose-300'}`}>{chk.label}</span>
+                                    {!chk.pass && chk.failure_reason && (
+                                        <p className="text-[10px] text-slate-500 mt-0.5">{chk.failure_reason}</p>
+                                    )}
+                                    {!chk.pass && chk.retry_hint && (
+                                        <p className="text-[10px] text-amber-500/80 mt-0.5">💡 {chk.retry_hint}</p>
+                                    )}
+                                </div>
+                                <span className="text-[10px] text-slate-600 shrink-0">{Math.round(chk.score * 100)}%</span>
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Repair entries */}
+                    {verifierReport.repair_entries?.length > 0 && (
+                        <div className="space-y-1.5">
+                            <p className="text-[10px] uppercase tracking-widest text-amber-500 font-bold">Repair Queue</p>
+                            {verifierReport.repair_entries.map((entry: any, i: number) => (
+                                <div key={i} className="bg-amber-900/10 border border-amber-500/20 rounded-lg px-3 py-2 text-[10px] space-y-0.5">
+                                    <div className="flex gap-2">
+                                        <span className="text-slate-500 font-mono shrink-0">{entry.shot_id}</span>
+                                        <span className="text-amber-300">{entry.issue}</span>
+                                    </div>
+                                    <p className="text-slate-500 pl-4">→ {entry.suggested_fix}</p>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
         </div>
     );
 };

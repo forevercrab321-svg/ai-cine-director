@@ -57,9 +57,6 @@ const STEP_DEFS: Array<{ step: PipelineStep; label: string; icon: string }> = [
 
 // Video model key mapping: settings key → version key the backend expects
 const VIDEO_MODEL_MAP: Record<string, string> = {
-  'minimax': 'hailuo_02_fast',
-  'hailuo': 'hailuo_02_fast',
-  'hailuo_02_fast': 'hailuo_02_fast',
   'wan': 'wan_2_2_fast',
   'wan_2_2_fast': 'wan_2_2_fast',
   'kling': 'kling_2_5_pro',
@@ -364,8 +361,8 @@ const OneClickDirector: React.FC<Props> = ({ onBack }) => {
     storyData: StoryboardProject,
   ): Promise<string> => {
     // Map settings.videoModel to the version key backend expects
-    const settingsModel = settings.videoModel || 'minimax';
-    const versionKey = VIDEO_MODEL_MAP[settingsModel] || 'hailuo_02_fast';
+    const settingsModel = settings.videoModel || 'wan';
+    const versionKey = VIDEO_MODEL_MAP[settingsModel] || 'wan_2_2_fast';
 
     // Build input object matching what /api/replicate/predict expects
     const prompt = scene.video_motion_prompt || scene.video_prompt || scene.visual_description || '';

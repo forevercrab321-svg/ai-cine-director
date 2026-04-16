@@ -1,0 +1,76 @@
+{
+  "overall_score": 0.556,
+  "pass": false,
+  "checks": [
+    {
+      "id": "identity_consistency",
+      "pass": false,
+      "score": 0.333,
+      "reason": "2 shot(s) with identity drift"
+    },
+    {
+      "id": "temporal_continuity",
+      "pass": false,
+      "score": 0.667,
+      "reason": "1 continuity failure(s) detected"
+    },
+    {
+      "id": "audio_video_alignment",
+      "pass": false,
+      "score": 0.667,
+      "reason": "1 timeline mismatch(es) detected"
+    }
+  ],
+  "failed_reasons": [
+    "identity drift @ b8c9d0a1-f2e3-4567-8901-234567890abc",
+    "identity drift @ c9d0a1b2-e3f4-5678-9012-34567890abcd",
+    "continuity break @ b8c9d0a1-f2e3-4567-8901-234567890abc: environment continuity unresolved; emotion continuity drop too abrupt; missing next shot link",
+    "audio/video mismatch @ b8c9d0a1-f2e3-4567-8901-234567890abc"
+  ],
+  "retry_hints": [
+    {
+      "target": "b8c9d0a1-f2e3-4567-8901-234567890abc",
+      "action": "Regenerate with anchor/previous-frame reference and stronger character lock"
+    },
+    {
+      "target": "c9d0a1b2-e3f4-5678-9012-34567890abcd",
+      "action": "Regenerate with anchor/previous-frame reference and stronger character lock"
+    },
+    {
+      "target": "b8c9d0a1-f2e3-4567-8901-234567890abc",
+      "action": "Regenerate with temporal guidance + previous-frame handoff constraints"
+    },
+    {
+      "target": "b8c9d0a1-f2e3-4567-8901-234567890abc",
+      "action": "Trim dialogue or extend shot duration in edit plan to match timing"
+    }
+  ],
+  "failures": [
+    "identity drift @ b8c9d0a1-f2e3-4567-8901-234567890abc",
+    "identity drift @ c9d0a1b2-e3f4-5678-9012-34567890abcd",
+    "continuity break @ b8c9d0a1-f2e3-4567-8901-234567890abc: environment continuity unresolved; emotion continuity drop too abrupt; missing next shot link",
+    "audio/video mismatch @ b8c9d0a1-f2e3-4567-8901-234567890abc"
+  ],
+  "repair_entries": [
+    {
+      "shot_id": "b8c9d0a1-f2e3-4567-8901-234567890abc",
+      "issue": "identity_drift",
+      "suggested_fix": "Increase identity_strength, lock face/outfit anchors, enforce anchor reference policy"
+    },
+    {
+      "shot_id": "c9d0a1b2-e3f4-5678-9012-34567890abcd",
+      "issue": "identity_drift",
+      "suggested_fix": "Increase identity_strength, lock face/outfit anchors, enforce anchor reference policy"
+    },
+    {
+      "shot_id": "b8c9d0a1-f2e3-4567-8901-234567890abc",
+      "issue": "continuity_break",
+      "suggested_fix": "Align entering/exiting state, preserve motion bridge and expression bridge"
+    },
+    {
+      "shot_id": "b8c9d0a1-f2e3-4567-8901-234567890abc",
+      "issue": "audio_video_mismatch",
+      "suggested_fix": "Shift subtitle blocks and adjust clip duration/J-cut/L-cut windows"
+    }
+  ]
+}

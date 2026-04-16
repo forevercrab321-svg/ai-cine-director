@@ -20,10 +20,10 @@ export const analyzePromptAndRecommendModel = (
     return { model: 'seedance_pro', reason: 'Audio/Lip-Sync Detected', isDialogue: true };
   }
 
-  // 2. High Motion / Action → Hailuo-02 Fast (fast + good motion)
+  // 2. High Motion / Action → Wan 2.2 Fast (fast + good motion, replaces Hailuo)
   const motionKeywords = ['run', 'fight', 'dance', 'fast', 'jump', 'action', 'chase', 'explode', 'crash', 'fly', 'spin', 'rapid'];
   if (motionKeywords.some(k => p.includes(k))) {
-    return { model: 'hailuo_02_fast', reason: 'Complex Motion Detected' };
+    return { model: 'wan_2_2_fast', reason: 'Complex Motion Detected' };
   }
 
   // 3. Narrative / Cinematic → Kling 2.5 Pro (best physics & cinema quality)

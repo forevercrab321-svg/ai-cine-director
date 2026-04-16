@@ -1,0 +1,13 @@
+{
+  "compileOk": true,
+  "buildOk": true,
+  "dupCounts": {
+    "buildDirectorBrainLayer": 1,
+    "build12PanelStoryboard": 1,
+    "buildCharacterIdentityLaw": 1,
+    "buildShotGraph": 1,
+    "buildEditPlan": 1,
+    "buildVerificationReport": 1
+  },
+  "noDups": true
+}

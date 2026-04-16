@@ -1,0 +1,28 @@
+{
+  "layers": {
+    "director_brain": {
+      "pass": true
+    },
+    "storyboard_12panel": {
+      "pass": true
+    },
+    "character_identity": {
+      "pass": true
+    },
+    "shot_graph": {
+      "pass": true
+    },
+    "temporal_guidance": {
+      "pass": true
+    },
+    "edit_plan": {
+      "pass": true
+    },
+    "verifier": {
+      "pass": true
+    }
+  },
+  "degraded": false,
+  "critFails": [],
+  "scene_count": 41
+}

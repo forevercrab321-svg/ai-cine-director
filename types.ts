@@ -104,6 +104,16 @@ export interface Shot {
 
   // Pipeline control flags
   is_first_shot_in_scene?: boolean;
+
+  // Backward-compatible aliases used by existing components/routes
+  scene_setting?: string;
+  visual_description?: string;
+  framing?: string;
+  camera_angle?: string;
+  camera_motion?: CameraMovement | string;
+  lens_hint?: string;
+  continuity_from_previous?: string;
+  continuity_to_next?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -449,6 +459,141 @@ export interface Scene {
   image_url?: string;
   video_url?: string;
   audio_url?: string;
+
+  // Director OS sequence graph fields
+  panel_id?: string;
+  panel_index?: number;
+  prev_shot_id?: string;
+  next_shot_id?: string;
+  entering_state?: string;
+  exiting_state?: string;
+  continuity_in?: string;
+  continuity_out?: string;
+  motion_bridge?: string;
+  expression_bridge?: string;
+  environment_bridge?: string;
+  object_bridge?: string;
+  temporal_guidance?: {
+    previous_visual_state?: string;
+    current_target_frame_state?: string;
+    next_visual_target_state?: string;
+    start_frame_intent?: string;
+    middle_motion_intent?: string;
+    end_frame_intent?: string;
+  };
+}
+
+export interface DirectorBrainSummary {
+  story_arc: {
+    opening: string;
+    development: string;
+    climax: string;
+    resolution: string;
+  };
+  emotional_beats: Array<{ beat_id: string; scene_id?: string; intensity: number; emotion: string; intent: string }>;
+  visual_beats: Array<{ beat_id: string; scene_id?: string; framing: string; camera_angle: string; lens: string; lighting: string }>;
+  pacing_strategy: {
+    global_pacing: string;
+    fast_sections: string[];
+    slow_sections: string[];
+    rhythm_notes: string[];
+  };
+  directorial_rules: string[];
+  character_focus_rules: Array<{ character_id: string; focus_style: string; prohibited_drift: string[] }>;
+  continuity_rules: string[];
+}
+
+export interface StoryboardPanel12 {
+  panel_id: string;
+  panel_index: number;
+  source_scene_id?: string;
+  beat_summary: string;
+  location: string;
+  characters: string[];
+  action: string;
+  emotional_intent: string;
+  framing: string;
+  camera_angle: string;
+  continuity_anchor: string;
+  audio_intent: string;
+}
+
+export interface ShotGraphNode {
+  shot_id: string;
+  panel_id: string;
+  panel_index: number;
+  prev_shot_id?: string;
+  next_shot_id?: string;
+  shot_role: 'setup' | 'handoff' | 'reaction' | 'transition' | 'push' | 'climax';
+  entering_state: string;
+  exiting_state: string;
+  continuity_in: string;
+  continuity_out: string;
+  motion_bridge: string;
+  expression_bridge: string;
+  environment_bridge: string;
+  object_bridge: string;
+  temporal_guidance: {
+    previous_visual_state: string;
+    current_target_frame_state: string;
+    next_visual_target_state: string;
+    start_frame_intent: string;
+    middle_motion_intent: string;
+    end_frame_intent: string;
+  };
+}
+
+export interface CharacterIdentityLaw {
+  character_registry: Array<{ character_id: string; name: string }>;
+  identity_lock_bundle: {
+    lock_version: string;
+    stable_anchor_descriptors: string[];
+    face_body_consistency_rules: string[];
+    outfit_memory: Record<string, string>;
+    prop_memory: Record<string, string>;
+  };
+  profiles: Array<{
+    character_id: string;
+    canonical_description: string;
+    forbidden_drift_rules: string[];
+    reference_assets: string[];
+    appearance_anchors: string[];
+    voice_anchors: string[];
+    motion_anchors: string[];
+    emotion_range_constraints: string[];
+  }>;
+}
+
+export interface EditTimelinePlan {
+  project_id: string;
+  total_duration_sec: number;
+  shot_order: string[];
+  timeline: Array<{
+    shot_id: string;
+    sequence_order: number;
+    start_sec: number;
+    end_sec: number;
+    clip_duration_sec: number;
+    image_hold_duration_sec: number;
+    motion_segment_duration_sec: number;
+    dialogue_sync_points: number[];
+    subtitle_blocks: Array<{ text: string; start_sec: number; end_sec: number }>;
+    transition_plan: string;
+    music_bed_hint: string;
+    j_cut_opportunity: boolean;
+    l_cut_opportunity: boolean;
+  }>;
+  rough_cut_assembly: { mode: string; strategy: string };
+  preview_export: { format: string; resolution: string };
+  final_assembly_plan: { requires_verification: boolean; pass_threshold: number };
+}
+
+export interface DirectorVerificationReport {
+  overall_score: number;
+  pass: boolean;
+  checks: Array<{ id: string; pass: boolean; score: number; reason: string }>;
+  failed_reasons: string[];
+  retry_hints: Array<{ target: string; action: string }>;
 }
 
 export interface StoryboardProject {
@@ -464,6 +609,12 @@ export interface StoryboardProject {
   logline?: string;
   world_setting?: string;
   style_bible?: any;
+  director_brain?: DirectorBrainSummary;
+  storyboard_12panel?: StoryboardPanel12[];
+  shot_graph?: ShotGraphNode[];
+  character_identity_law?: CharacterIdentityLaw;
+  edit_timeline_plan?: EditTimelinePlan;
+  verifier_report?: DirectorVerificationReport;
 
   // Episode structure
   episode_count?: number;
@@ -501,9 +652,8 @@ export type AspectRatio = '1:1' | '3:4' | '4:3' | '9:16' | '16:9';
 export type ImageModel = 'flux' | 'flux_schnell' | 'nano_banana';
 
 export type VideoModel =
-  // ★ 性价比模型 (2个) - 快速出片
+  // ★ 性价比模型
   | 'wan_2_2_fast'           // ★ Alibaba Wan 2.2 - 性价比之王 $0.01-0.02
-  | 'hailuo_02_fast'        // ★ MiniMax Hailuo-02 - 均衡之选 $0.10-0.15
   // ★ 顶级画质模型 (6个) - 电影级质量
   | 'kling_2_5_pro'        // ★ 快手Kling 2.5 Pro - 顶级物理 $0.50-0.90
   | 'kling_2_6_pro'        // ★ 快手Kling 2.6 Pro - 顶级物理升级版 原生音频+Lip-sync
@@ -663,9 +813,8 @@ export const STYLE_PRESETS: StylePreset[] = [
  * 5. Kling 2.5 - $0.25/视频 (电影级质量)
  */
 export const MODEL_COSTS: Record<VideoModel | 'DEFAULT', number> = {
-  // ★ 性价比模型 (2个) - 快速出片
+  // ★ 性价比模型
   wan_2_2_fast: 8,           // API: ~$0.02/video → 8 💎  ⚡ 最便宜
-  hailuo_02_fast: 22,        // API: ~$0.10/video → 22 💎  🇨🇳 均衡之选
 
   // ★ 顶级画质模型 (6个) - 电影级质量
   kling_2_5_pro: 85,        // API: ~$0.50/video → 85 💎  🏆 顶级物理
@@ -686,9 +835,8 @@ export const MODEL_COSTS: Record<VideoModel | 'DEFAULT', number> = {
  * ★ TOP 5 模型路径:
  */
 export const REPLICATE_MODEL_PATHS: Record<VideoModel | ImageModel, string> = {
-  // ★ 性价比模型 (2个)
+  // ★ 性价比模型
   wan_2_2_fast: "wan-video/wan-2.2-i2v-fast",
-  hailuo_02_fast: "minimax/hailuo-02-fast",
 
   // ★ 顶级画质模型 (6个) - 电影级质量
   kling_2_5_pro: "kwaivgi/kling-v2.5-turbo-pro",
@@ -747,15 +895,6 @@ export const MODEL_METADATA: Record<VideoModel, { label: string; tags: string[];
     resolution: "480p-720p",
     duration: "5秒",
     speed: "⚡⚡⚡⚡⚡ 最快6秒"
-  },
-  hailuo_02_fast: {
-    label: "Hailuo-02 (MiniMax)",
-    tags: ["⚡ 快速", "🎬 高质量", "🇨🇳 中国顶尖", "🏷️ 6-10秒"],
-    badge: "⭐ 推荐",
-    priceLabel: "22 credits",
-    resolution: "512p-768p",
-    duration: "6-10秒",
-    speed: "⚡⚡⚡⚡ 41秒"
   },
 
   // ★ 顶级画质模型 (6个) - 电影级质量
@@ -833,7 +972,6 @@ export const CREDIT_COSTS = {
 export const MODEL_MULTIPLIERS: Record<VideoModel, number> = {
   // ★ 性价比模型
   wan_2_2_fast: 1.0,
-  hailuo_02_fast: 1.2,
 
   // ★ 顶级画质模型
   kling_2_5_pro: 1.6,

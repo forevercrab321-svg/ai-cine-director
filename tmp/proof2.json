@@ -1,0 +1,75 @@
+{
+  "project_id": "1b52593c-81cd-4982-81f4-667a6db08008",
+  "title": "Maya Chen, a female detective, chases a suspect through a ne",
+  "scene_count": 39,
+  "director_os_layers": {
+    "director_brain": {
+      "pass": true
+    },
+    "storyboard_12panel": {
+      "pass": true
+    },
+    "character_identity": {
+      "pass": true
+    },
+    "shot_graph": {
+      "pass": true
+    },
+    "temporal_guidance": {
+      "pass": true
+    },
+    "edit_plan": {
+      "pass": true
+    },
+    "verifier": {
+      "pass": true
+    }
+  },
+  "director_os_degraded": false,
+  "director_os_critical_failures": [],
+  "character_anchor": "Maya Chen, East Asian female, short black bob haircut, sharp jawline, dark green trench coat, red scarf, silver ring on left hand",
+  "character_identity_law_profiles": 3,
+  "shot_graph_count": 39,
+  "storyboard_12panel_count": 12,
+  "verifier_pass": true,
+  "verifier_score": 1,
+  "verifier_checks": [
+    {
+      "id": "identity_consistency",
+      "pass": true,
+      "score": 1,
+      "reason": "Character identity stable across checked shots"
+    },
+    {
+      "id": "temporal_continuity",
+      "pass": true,
+      "score": 1,
+      "reason": "Prev/next frame continuity checks passed"
+    },
+    {
+      "id": "audio_video_alignment",
+      "pass": true,
+      "score": 1,
+      "reason": "Audio/subtitle timing aligns with clip durations"
+    }
+  ],
+  "edit_total_dur": 168,
+  "shot_0_temporal": {
+    "previous_visual_state": "sequence opening state",
+    "current_target_frame_state": "preserve scene memory",
+    "next_visual_target_state": "inherit previous shot appearance and screen direction",
+    "start_frame_intent": "N/A",
+    "middle_motion_intent": "hold -> pan-right",
+    "end_frame_intent": "inherit previous shot appearance and screen direction"
+  },
+  "shot_1_temporal": {
+    "previous_visual_state": "preserve scene memory",
+    "current_target_frame_state": "preserve scene memory",
+    "next_visual_target_state": "inherit previous shot appearance and screen direction",
+    "start_frame_intent": "preserve scene memory",
+    "middle_motion_intent": "pan-right -> static",
+    "end_frame_intent": "inherit previous shot appearance and screen direction"
+  },
+  "token": "eyJhbGciOiJFUzI1NiIsImtpZCI6IjIxZjhjYzZlLWYxMWUtNGNmZS04MWYzLTg1ODcwMjg4Zjk4NCIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2d0eGdrZHNheXN3b25sZXdxZnpqLnN1cGFiYXNlLmNvL2F1dGgvdjEiLCJzdWIiOiIwMzIyNjcxMy1lOTM5LTQxYzctOWFmOS0zMGQ2MGU2NmJhNTIiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzc2MzI5ODkyLCJpYXQiOjE3NzYzMjYyOTIsImVtYWlsIjoicHJvb2YtMTc3NjMyNjI5MTA0NUBleGFtcGxlLmNvbSIsInBob25lIjoiIiwiYXBwX21ldGFkYXRhIjp7InByb3ZpZGVyIjoiZW1haWwiLCJwcm92aWRlcnMiOlsiZW1haWwiXX0sInVzZXJfbWV0YWRhdGEiOnsiZW1haWxfdmVyaWZpZWQiOnRydWUsInByb29mIjp0cnVlfSwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJhYWwiOiJhYWwxIiwiYW1yIjpbeyJtZXRob2QiOiJwYXNzd29yZCIsInRpbWVzdGFtcCI6MTc3NjMyNjI5Mn1dLCJzZXNzaW9uX2lkIjoiZGQwZDYxZDYtMDkxMy00MTA2LWFkM2MtYjY1MDY1ZWM3NTAzIiwiaXNfYW5vbnltb3VzIjpmYWxzZX0.NQfcMjYch7GtmXtPCg_BpF_iUIUJZtIcyquz9UWCKNgXw80XU0b1ILYay6NLeqYrfeNIy6hHaIL8fvCL0gcFsQ",
+  "userId": "03226713-e939-41c7-9af9-30d60e66ba52"
+}

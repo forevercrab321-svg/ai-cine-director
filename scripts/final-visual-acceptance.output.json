@@ -1,0 +1,286 @@
+[dotenv@17.2.4] injecting env (27) from .env.local -- tip: 👥 sync secrets across teammates & machines: https://dotenvx.com/ops
+{
+  "test_user": "visual-1776304422260@example.com",
+  "project_id": "f4f71d01-cdf4-486d-ab90-31e69a9b8abf",
+  "total_shots_generated": 38,
+  "compiled_shots_count": 38,
+  "duplicate_warnings": [],
+  "repeated_url_count": 0,
+  "visual_rows": [
+    {
+      "index": 1,
+      "shot_id": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+      "shot_text": "Characters: Pip. Inside a cramped, neon-lit apartment, cluttered with toy-like furniture and delivery packages., Night. Pip slumps on an overstuffed beanbag chair, idly tossing a miniature plushie into the air.. Camera: medium, rule of thirds, Pip on the left, cluttered apartment visible in the background. @ Inside a cramped, neon-lit apartment, cluttered with toy-like furniture and delivery packages. (night)",
+      "prompt_summary": "Scene summary: Characters: Pip. Inside a cramped, neon-lit apartment, cluttered with toy-like furniture and delivery packages., Night. Pip slumps on an overstuffed beanbag chair, idly tossing a miniat",
+      "diff_report": {
+        "similarity_score": 0,
+        "overlap_score": 0,
+        "requires_substantive_change": false,
+        "has_substantive_change": true,
+        "pass": true,
+        "fail_reasons": [],
+        "delta": {
+          "changed_fields": [
+            "initial_shot"
+          ],
+          "summary": "First shot in sequence"
+        }
+      },
+      "expected_changed_axes": [
+        "initial"
+      ],
+      "image_url": "https://replicate.delivery/xezq/pb07OehS94TDQiw3CwBrNClG3XQ4DC33Gjv05oM4F6TfNf2sA/out-0.jpg",
+      "vision_description": "A cinematic character",
+      "identity_fingerprint": []
+    },
+    {
+      "index": 2,
+      "shot_id": "f7g8h9i0-j1k2-3456-7890-1234567890abcde",
+      "shot_text": "Characters: Pip. Inside a cramped, neon-lit apartment, cluttered with toy-like furniture and delivery packages., Night. Pip's wrist-mounted communicator flashes, displaying a new delivery request. He sits up straighter.. Camera: close, focus on Pip's face and the communicator; shallow depth of field. @ Inside a cramped, neon-lit apartment, cluttered with toy-like furniture and delivery packages. (night)",
+      "prompt_summary": "Scene summary: Characters: Pip. Inside a cramped, neon-lit apartment, cluttered with toy-like furniture and delivery packages., Night. Pip's wrist-mounted communicator flashes, displaying a new delive",
+      "diff_report": {
+        "similarity_score": 0.7423,
+        "overlap_score": 0.4074,
+        "requires_substantive_change": true,
+        "has_substantive_change": true,
+        "pass": true,
+        "fail_reasons": [],
+        "delta": {
+          "changed_fields": [
+            "emotion",
+            "camera_framing",
+            "camera_angle"
+          ],
+          "summary": "Changed: emotion, camera_framing, camera_angle"
+        }
+      },
+      "expected_changed_axes": [
+        "emotion",
+        "camera"
+      ],
+      "image_url": "https://replicate.delivery/xezq/ilmeKszLWcQhAqcIqOD0fGHh0YWk3WC4x8rOcuhCcfDe38tZB/out-0.jpg",
+      "vision_description": "A cinematic character",
+      "identity_fingerprint": []
+    },
+    {
+      "index": 3,
+      "shot_id": "b3c4d5e6-f7g8-9012-3456-7890123456abcd",
+      "shot_text": "Characters: Pip. Inside a cramped, neon-lit apartment, cluttered with toy-like furniture and delivery packages., Night. Pip taps the 'ACCEPT' button on his communicator with exaggerated enthusiasm.. Camera: ecu, extreme close-up on Pip's finger and the 'ACCEPT' button. @ Inside a cramped, neon-lit apartment, cluttered with toy-like furniture and delivery packages. (night)",
+      "prompt_summary": "Scene summary: Characters: Pip. Inside a cramped, neon-lit apartment, cluttered with toy-like furniture and delivery packages., Night. Pip taps the 'ACCEPT' button on his communicator with exaggerated",
+      "diff_report": {
+        "similarity_score": 0.8258,
+        "overlap_score": 0.5106,
+        "requires_substantive_change": true,
+        "has_substantive_change": true,
+        "pass": true,
+        "fail_reasons": [],
+        "delta": {
+          "changed_fields": [
+            "emotion",
+            "camera_framing",
+            "camera_angle"
+          ],
+          "summary": "Changed: emotion, camera_framing, camera_angle"
+        }
+      },
+      "expected_changed_axes": [
+        "emotion",
+        "camera"
+      ],
+      "image_url": "https://replicate.delivery/xezq/1dNyZLlJfA3WMiuemFfsokg8KJdUqtGgL0kC6HAtx3SAcetZB/out-0.jpg",
+      "vision_description": "A cinematic character",
+      "identity_fingerprint": []
+    },
+    {
+      "index": 4,
+      "shot_id": "d4e5f6g7-h8i9-0123-4567-8901234567abcde",
+      "shot_text": "Characters: Pip. Inside a cramped, neon-lit apartment, cluttered with toy-like furniture and delivery packages., Night. A small, elaborately wrapped box materializes via drone delivery inside Pip's apartment.. Camera: medium, begins focused on the ceiling hatch where the drone enters, then tilts down to reveal the box on the floor.. @ Inside a cramped, neon-lit apartment, cluttered with toy-like furniture and delivery packages. (night)",
+      "prompt_summary": "Scene summary: Characters: Pip. Inside a cramped, neon-lit apartment, cluttered with toy-like furniture and delivery packages., Night. A small, elaborately wrapped box materializes via drone delivery ",
+      "diff_report": {
+        "similarity_score": 0.759,
+        "overlap_score": 0.4074,
+        "requires_substantive_change": true,
+        "has_substantive_change": true,
+        "pass": true,
+        "fail_reasons": [],
+        "delta": {
+          "changed_fields": [
+            "emotion",
+            "camera_framing",
+            "camera_angle"
+          ],
+          "summary": "Changed: emotion, camera_framing, camera_angle"
+        }
+      },
+      "expected_changed_axes": [
+        "emotion",
+        "camera"
+      ],
+      "image_url": "https://replicate.delivery/xezq/1A1SVH5vPapUEJPc6oVtetKeoUdTZKtjr0Lkl21lv9CBOf2sA/out-0.jpg",
+      "vision_description": "A cinematic character",
+      "identity_fingerprint": []
+    },
+    {
+      "index": 5,
+      "shot_id": "1a2b3c4d-5e6f-7890-1234-567890abcdef",
+      "shot_text": "Characters: Pip. A crowded, narrow alleyway filled with strange toy-like characters and overflowing trash cans., Night. Pip emerges from a shadowed doorway into the blindingly colorful alley, instantly overwhelmed by the sensory overload.. Camera: wide, center-framed, Pip dwarfed by towering piles of discarded toys and blinking neon signs. Over the shoulder from behind Pip.. @ A crowded, narrow alleyway filled with strange toy-like characters and overflowing trash cans. (night)",
+      "prompt_summary": "Scene summary: Characters: Pip. A crowded, narrow alleyway filled with strange toy-like characters and overflowing trash cans., Night. Pip emerges from a shadowed doorway into the blindingly colorful ",
+      "diff_report": {
+        "similarity_score": 0.599,
+        "overlap_score": 0.1733,
+        "requires_substantive_change": true,
+        "has_substantive_change": true,
+        "pass": true,
+        "fail_reasons": [],
+        "delta": {
+          "changed_fields": [
+            "location",
+            "action",
+            "emotion",
+            "camera_framing",
+            "camera_angle"
+          ],
+          "summary": "Changed: location, action, emotion, camera_framing, camera_angle"
+        }
+      },
+      "expected_changed_axes": [
+        "location",
+        "action",
+        "emotion",
+        "camera"
+      ],
+      "image_url": "https://replicate.delivery/xezq/GiI03vujePydLac2PVQd0nIz70zJ8DCW4Xv6MObcVpvAnvNLA/out-0.jpg",
+      "vision_description": "A cinematic character",
+      "identity_fingerprint": []
+    },
+    {
+      "index": 6,
+      "shot_id": "2b3c4d5e-6f7g-8901-2345-678901abcdef",
+      "shot_text": "Characters: Pip. A crowded, narrow alleyway filled with strange toy-like characters and overflowing trash cans., Night. Pip weaves through the crowded alley, dodging strange robotic characters and overflowing bins, his pace quickening.. Camera: tracking, low angle, tracking Pip from the side, emphasizing his small stature amidst the chaos. Rule of thirds, with Pip on the left.. @ A crowded, narrow alleyway filled with strange toy-like characters and overflowing trash cans. (night)",
+      "prompt_summary": "Scene summary: Characters: Pip. A crowded, narrow alleyway filled with strange toy-like characters and overflowing trash cans., Night. Pip weaves through the crowded alley, dodging strange robotic cha",
+      "diff_report": {
+        "similarity_score": 0.7443,
+        "overlap_score": 0.3134,
+        "requires_substantive_change": true,
+        "has_substantive_change": true,
+        "pass": true,
+        "fail_reasons": [],
+        "delta": {
+          "changed_fields": [
+            "emotion",
+            "camera_framing",
+            "camera_angle"
+          ],
+          "summary": "Changed: emotion, camera_framing, camera_angle"
+        }
+      },
+      "expected_changed_axes": [
+        "emotion",
+        "camera"
+      ],
+      "image_url": "https://replicate.delivery/xezq/qzkxY8tJ256AARqnfsdAOmECCtW1fAMeKr9eCLBiJnSL48tZB/out-0.jpg",
+      "vision_description": "A cinematic character",
+      "identity_fingerprint": []
+    },
+    {
+      "index": 7,
+      "shot_id": "3c4d5e6f-7g8h-9012-3456-789012abcdef",
+      "shot_text": "Characters: Pip. A crowded, narrow alleyway filled with strange toy-like characters and overflowing trash cans., Night. A rogue RC car, decorated like a miniature tank, speeds directly toward Pip. He barely leaps out of the way.. Camera: medium, Obstructed view, mimicking the chaotic environment. Focus is on the RC car zooming past, with Pip reacting in the background.. @ A crowded, narrow alleyway filled with strange toy-like characters and overflowing trash cans. (night)",
+      "prompt_summary": "Scene summary: Characters: Pip. A crowded, narrow alleyway filled with strange toy-like characters and overflowing trash cans., Night. A rogue RC car, decorated like a miniature tank, speeds directly ",
+      "diff_report": {
+        "similarity_score": 0.7386,
+        "overlap_score": 0.2836,
+        "requires_substantive_change": true,
+        "has_substantive_change": true,
+        "pass": true,
+        "fail_reasons": [],
+        "delta": {
+          "changed_fields": [
+            "emotion",
+            "camera_framing",
+            "camera_angle"
+          ],
+          "summary": "Changed: emotion, camera_framing, camera_angle"
+        }
+      },
+      "expected_changed_axes": [
+        "emotion",
+        "camera"
+      ],
+      "image_url": "https://replicate.delivery/xezq/AhieZ1FfjNsiUk4XJZwdluVoTxg77n90EfclzgCmpsWGcetZB/out-0.jpg",
+      "vision_description": "A cinematic character",
+      "identity_fingerprint": []
+    },
+    {
+      "index": 8,
+      "shot_id": "4d5e6f7g-8h9i-0123-4567-890123abcdef",
+      "shot_text": "Characters: Pip. A crowded, narrow alleyway filled with strange toy-like characters and overflowing trash cans., Night. Pip stumbles forward, regaining his balance, his eyes darting around anxiously. He clutches something in his pocket.. Camera: close, Tight focus on Pip's face, showing his strained expression. Shallow depth of field, blurring the background chaos.. @ A crowded, narrow alleyway filled with strange toy-like characters and overflowing trash cans. (night)",
+      "prompt_summary": "Scene summary: Characters: Pip. A crowded, narrow alleyway filled with strange toy-like characters and overflowing trash cans., Night. Pip stumbles forward, regaining his balance, his eyes darting aro",
+      "diff_report": {
+        "similarity_score": 0.7278,
+        "overlap_score": 0.3235,
+        "requires_substantive_change": true,
+        "has_substantive_change": true,
+        "pass": true,
+        "fail_reasons": [],
+        "delta": {
+          "changed_fields": [
+            "emotion",
+            "camera_framing",
+            "camera_angle"
+          ],
+          "summary": "Changed: emotion, camera_framing, camera_angle"
+        }
+      },
+      "expected_changed_axes": [
+        "emotion",
+        "camera"
+      ],
+      "image_url": "https://replicate.delivery/xezq/eIpxz7C1BLUESiAFMfH7VDr9EJ8607Gfo5y0XMfzukxM48tZB/out-0.jpg",
+      "vision_description": "A cinematic character",
+      "identity_fingerprint": []
+    }
+  ],
+  "identity_consistency": [
+    {
+      "shot_id": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+      "overlap": 0,
+      "fingerprint": []
+    },
+    {
+      "shot_id": "f7g8h9i0-j1k2-3456-7890-1234567890abcde",
+      "overlap": 0,
+      "fingerprint": []
+    },
+    {
+      "shot_id": "b3c4d5e6-f7g8-9012-3456-7890123456abcd",
+      "overlap": 0,
+      "fingerprint": []
+    },
+    {
+      "shot_id": "d4e5f6g7-h8i9-0123-4567-8901234567abcde",
+      "overlap": 0,
+      "fingerprint": []
+    },
+    {
+      "shot_id": "1a2b3c4d-5e6f-7890-1234-567890abcdef",
+      "overlap": 0,
+      "fingerprint": []
+    },
+    {
+      "shot_id": "2b3c4d5e-6f7g-8901-2345-678901abcdef",
+      "overlap": 0,
+      "fingerprint": []
+    },
+    {
+      "shot_id": "3c4d5e6f-7g8h-9012-3456-789012abcdef",
+      "overlap": 0,
+      "fingerprint": []
+    },
+    {
+      "shot_id": "4d5e6f7g-8h9i-0123-4567-890123abcdef",
+      "overlap": 0,
+      "fingerprint": []
+    }
+  ]
+}

@@ -240,16 +240,6 @@ function buildVideoInput(modelType: VideoModel, prompt: string, imageUrl: string
     case 'runway_gen4_turbo':
       // Runway Gen-4 Turbo: 极速生成
       return { prompt: finalPrompt, image: imageUrl, num_frames: duration * 24, seed: 142857 };
-    case 'hailuo_02_fast':
-      // Hailuo-02: 使用 first_frame_image，支持音频生成
-      // ★ Safety: Hailuo strictly requires duration to be 6 or 10
-      const safeDuration = duration >= 8 ? 10 : 6;
-      const hailuoInput: any = { prompt: finalPrompt, first_frame_image: imageUrl, duration: safeDuration, resolution: "512P", aspect_ratio: aspectRatio, prompt_optimizer: false, seed: 142857 };
-      // 如果有音频描述，添加到输入中（MiniMax Hailuo支持audio参数）
-      if (audioPrompt) {
-        hailuoInput.audio_prompt = audioPrompt;
-      }
-      return hailuoInput;
     case 'seedance_pro':
       // Seedance Pro: 支持首帧尾帧链接
       return { prompt: finalPrompt, image: imageUrl, duration, resolution: "720p", seed: 142857 };
@@ -360,7 +350,7 @@ export const startVideoTask = async (
 
   let modelIdentifier = modelType.includes('/')
     ? modelType
-    : (REPLICATE_MODEL_MAP[modelType] || REPLICATE_MODEL_MAP['hailuo_02_fast']);
+    : (REPLICATE_MODEL_MAP[modelType] || REPLICATE_MODEL_MAP['wan_2_2_fast']);
 
   const headers = await getAuthHeaders();
 

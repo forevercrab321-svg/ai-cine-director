@@ -9,6 +9,21 @@ export interface ShotPromptCompilerInput {
   previousPrompt?: string;
   characterAnchor?: string;
   styleLabel?: string;
+  /** Director OS shot graph node — injects temporal / prev-next frame guidance */
+  shotGraphNode?: {
+    temporal_guidance?: {
+      previous_visual_state?: string;
+      start_frame_intent?: string;
+      mid_frame_intent?: string;
+      end_frame_intent?: string;
+      next_visual_target_state?: string;
+    };
+    continuity_in?: string;
+    continuity_out?: string;
+    motion_bridge?: string;
+    expression_bridge?: string;
+    environment_bridge?: string;
+  };
 }
 
 export interface ShotDeltaReport {
@@ -178,13 +193,28 @@ export function buildShotImagePrompt(input: ShotPromptCompilerInput): CompiledSh
   const negativeConstraints = getField(shot, scene, ['negative_constraints', 'negative_prompt'], 'duplicate framing, wrong character, identity drift, extra limbs, text watermark');
   const characters = Array.isArray(shot.characters) ? shot.characters.map((c: any) => String(c).trim()).filter(Boolean) : [];
 
+  // Director OS temporal guidance
+  const tg = input.shotGraphNode?.temporal_guidance;
+  const prevVisualState = tg?.previous_visual_state || input.shotGraphNode?.continuity_in || '';
+  const startFrameIntent = tg?.start_frame_intent || '';
+  const midFrameIntent = tg?.mid_frame_intent || '';
+  const endFrameIntent = tg?.end_frame_intent || '';
+  const nextTargetState = tg?.next_visual_target_state || input.shotGraphNode?.continuity_out || '';
+  const motionBridge = input.shotGraphNode?.motion_bridge || '';
+  const expressionBridge = input.shotGraphNode?.expression_bridge || '';
+
   const storyBlock = [
     `Scene summary: ${sceneSummary}`,
     `Shot description: ${shotDescription}`,
     `Primary action: ${action}`,
     `Location & time: ${location}, ${timeOfDay}`,
     `Emotion: ${emotion}`,
-  ].join('. ');
+    prevVisualState ? `PREVIOUS VISUAL STATE: ${prevVisualState}` : '',
+    startFrameIntent ? `FRAME OPEN: ${startFrameIntent}` : '',
+    midFrameIntent ? `MID FRAME: ${midFrameIntent}` : '',
+    endFrameIntent ? `FRAME CLOSE: ${endFrameIntent}` : '',
+    nextTargetState ? `NEXT TARGET STATE: ${nextTargetState}` : '',
+  ].filter(Boolean).join('. ');
 
   const cameraBlock = [
     `Camera framing: ${cameraFraming}`,
@@ -199,6 +229,8 @@ export function buildShotImagePrompt(input: ShotPromptCompilerInput): CompiledSh
     characters.length ? `Characters in shot: ${characters.join(', ')}` : 'No visible character required if shot is environmental',
     styleBible?.color_palette ? `Style palette lock: ${styleBible.color_palette}` : '',
     styleBible?.lens_language ? `Style lens language: ${styleBible.lens_language}` : '',
+    motionBridge ? `Motion bridge: ${motionBridge}` : '',
+    expressionBridge ? `Expression bridge: ${expressionBridge}` : '',
   ].filter(Boolean);
 
   const technicalPolish = [

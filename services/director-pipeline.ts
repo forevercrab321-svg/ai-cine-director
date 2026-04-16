@@ -171,7 +171,7 @@ export const generateSceneChain = async (
   sceneId: string,
   storyboard: any[],
   extractedAnchor: string,
-  videoModel: VideoModel = 'hailuo_02_fast',  // ★ Now accepts user-selected model (default: hailuo)
+  videoModel: VideoModel = 'wan_2_2_fast',  // ★ Now accepts user-selected model (default: wan)
   imageModel: ImageModel = 'flux', // ★ user-selected image model
   referenceImageBase64?: string, // ★ NEW: Fast forwarding base64 image reference to backend
   storyEntities: StoryEntity[] = [], // ★ NEW: pass locked entities to reinforce identity consistency

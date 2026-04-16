@@ -1,0 +1,34 @@
+{
+  "layers": {
+    "director_brain": {
+      "pass": true
+    },
+    "storyboard_12panel": {
+      "pass": true
+    },
+    "character_identity": {
+      "pass": false,
+      "error": "buildCharacterIdentityLaw: bible empty, character profiles not built"
+    },
+    "shot_graph": {
+      "pass": true
+    },
+    "temporal_guidance": {
+      "pass": false,
+      "error": "zero shots received temporal_guidance — check buildShotGraph output"
+    },
+    "edit_plan": {
+      "pass": true
+    },
+    "verifier": {
+      "pass": false,
+      "error": "identity_lock_bundle missing: verifier cannot validate identity"
+    }
+  },
+  "degraded": true,
+  "critFails": [
+    "character_identity",
+    "temporal_guidance",
+    "verifier"
+  ]
+}

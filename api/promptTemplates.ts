@@ -298,6 +298,14 @@ export function buildVideoPrompt(inputs: {
     scene?: any;
     styleBible?: any;
     directorControls?: DirectorControlsInput;
+    /** Director OS temporal guidance — injected from shot graph node */
+    temporalGuidance?: {
+        previous_visual_state?: string;
+        start_frame_intent?: string;
+        mid_frame_intent?: string;
+        end_frame_intent?: string;
+        next_visual_target_state?: string;
+    };
 }): string {
     // Video prompts: ONE action, ONE camera movement, locked continuity.
     // Keep them tightly scoped — the AI hallucinates heavily with long video prompts.
@@ -332,7 +340,24 @@ export function buildVideoPrompt(inputs: {
         else if (tension <= 3) parts.push('Pacing: slow, deliberate');
     }
 
-    // 6. Hard continuity lock — always last
+    // 5b. Director OS — temporal guidance (sequence thinking)
+    const tg = inputs.temporalGuidance;
+    if (tg?.start_frame_intent) {
+        parts.push(`Opening frame: ${tg.start_frame_intent}`);
+    }
+    if (tg?.mid_frame_intent) {
+        parts.push(`Mid frame: ${tg.mid_frame_intent}`);
+    }
+    if (tg?.end_frame_intent) {
+        parts.push(`Closing frame: ${tg.end_frame_intent}`);
+    }
+    if (tg?.previous_visual_state) {
+        parts.push(`Picks up from: ${tg.previous_visual_state}`);
+    }
+    if (tg?.next_visual_target_state) {
+        parts.push(`Must transition into: ${tg.next_visual_target_state}`);
+    }
+
     parts.push('Maintain exact visual consistency with the first frame. Do not change subject identity, clothing, hair, or environment geometry.');
 
     return parts.join('. ') + '.';

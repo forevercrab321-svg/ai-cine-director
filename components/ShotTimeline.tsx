@@ -91,6 +91,13 @@ const ShotChip: React.FC<{ shot: Scene; idx: number; onPress?: () => void }> = (
     const hasVideo = !!(shot.video_url);
     const hasImage = !!(shot.image_url);
 
+    // Director OS graph fields
+    const panelId: string | undefined = (shot as any).panel_id;
+    const shotRole: string | undefined = (shot as any).shot_role;
+    const hasPrev = !!(shot as any).prev_shot_id;
+    const hasNext = !!(shot as any).next_shot_id;
+    const temporalGuidance: any = (shot as any).temporal_guidance;
+
     return (
         <div
             className="relative flex-shrink-0 cursor-pointer group"
@@ -107,6 +114,10 @@ const ShotChip: React.FC<{ shot: Scene; idx: number; onPress?: () => void }> = (
                 )}
                 {/* Status dot */}
                 <div className={`absolute top-1 right-1 w-1.5 h-1.5 rounded-full ${hasVideo ? 'bg-emerald-400 shadow-sm shadow-emerald-400' : hasImage ? 'bg-amber-400' : 'bg-slate-500'}`} />
+                {/* Panel badge (Director OS) */}
+                {panelId && (
+                    <div className="absolute top-1 left-1 bg-indigo-600/70 text-white text-[7px] font-bold px-1 rounded leading-tight z-10">{panelId}</div>
+                )}
                 {/* Shot number */}
                 <span className="text-[10px] font-bold text-white/80 z-10">{idx + 1}</span>
                 {/* Movement icon */}
@@ -115,20 +126,34 @@ const ShotChip: React.FC<{ shot: Scene; idx: number; onPress?: () => void }> = (
                 <span className="text-[9px] text-white/40 z-10">{duration}s</span>
             </div>
 
+            {/* Prev-arrow connector (Director OS) */}
+            {hasPrev && (
+                <div className="absolute top-7 -left-1.5 w-3 h-px bg-indigo-500/60 z-20" />
+            )}
+
             {/* Connector line to next shot */}
-            <div className="absolute top-7 -right-1.5 w-3 h-px bg-slate-600 z-20" />
+            <div className={`absolute top-7 -right-1.5 w-3 h-px z-20 ${hasNext ? 'bg-indigo-500/60' : 'bg-slate-600'}`} />
 
             {/* Hover tooltip */}
             {hovered && (
                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 min-w-48 max-w-64 pointer-events-none">
                     <div className="bg-slate-900 border border-slate-600 rounded-lg shadow-2xl p-2.5 text-[10px] space-y-1">
                         <p className="text-slate-200 font-bold text-xs capitalize">{cameraKey} shot</p>
+                        {shotRole && (
+                            <p className="text-indigo-400 text-[9px] uppercase tracking-wider font-bold">Role: {shotRole}</p>
+                        )}
                         <p className="text-slate-400 leading-relaxed">{shot.visual_description?.substring(0, 100) || (shot as any).action || '—'}</p>
                         {shot.dialogue_text && (
                             <p className="text-amber-300/80 italic">"{shot.dialogue_text.substring(0, 60)}"</p>
                         )}
                         {shot.emotional_beat && (
                             <p className="text-rose-400/70">🎭 {shot.emotional_beat.substring(0, 60)}</p>
+                        )}
+                        {temporalGuidance?.start_frame_intent && (
+                            <p className="text-violet-400/70">▶ {temporalGuidance.start_frame_intent.substring(0, 60)}</p>
+                        )}
+                        {temporalGuidance?.end_frame_intent && (
+                            <p className="text-violet-400/70">⏹ {temporalGuidance.end_frame_intent.substring(0, 60)}</p>
                         )}
                     </div>
                     {/* Arrow */}
@@ -146,6 +171,11 @@ const ShotTimeline: React.FC<Props> = ({ project, lang, onShotClick }) => {
     const groups = groupByScene(scenes);
     const totalDuration = scenes.reduce((acc, s) => acc + Math.max(2, (s as any).duration_sec || 4), 0);
 
+    // Director OS shot graph stats
+    const graphNodes = project.shot_graph || [];
+    const linkedShots = scenes.filter(s => (s as any).temporal_guidance).length;
+    const panels12 = project.storyboard_12panel || [];
+
     return (
         <div className="space-y-3">
             {/* Header */}
@@ -159,6 +189,12 @@ const ShotTimeline: React.FC<Props> = ({ project, lang, onShotClick }) => {
                 <div className="flex items-center gap-4 text-[10px] text-slate-500">
                     <span>{scenes.length} {t(lang, 'shots')}</span>
                     <span>≈ {Math.round(totalDuration)}s total</span>
+                    {linkedShots > 0 && (
+                        <span className="text-indigo-400">⛓ {linkedShots}/{scenes.length} linked</span>
+                    )}
+                    {panels12.length > 0 && (
+                        <span className="text-violet-400">🎞 {panels12.length} panels</span>
+                    )}
                 </div>
             </div>
 

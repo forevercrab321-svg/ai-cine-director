@@ -1,0 +1,112 @@
+{
+  "A_stability": {
+    "compile": true,
+    "build": true,
+    "no_dups": true
+  },
+  "B_layers": {
+    "director_brain": {
+      "pass": true
+    },
+    "storyboard_12panel": {
+      "pass": true
+    },
+    "character_identity": {
+      "pass": true
+    },
+    "shot_graph": {
+      "pass": true
+    },
+    "temporal_guidance": {
+      "pass": true
+    },
+    "edit_plan": {
+      "pass": true
+    },
+    "verifier": {
+      "pass": true
+    }
+  },
+  "B_degraded": false,
+  "C_images": [
+    {
+      "shot_id": "a7b8c9d0-e1f2-3456-7890-1234567890ab",
+      "url": "https://replicate.delivery/xezq/tp5nzA83g5bnOZ7e7kMYMFKtZ8mE...",
+      "score": 0.85,
+      "ok": true
+    },
+    {
+      "shot_id": "b8c9d0a1-f2e3-4567-8901-234567890abc",
+      "url": "https://replicate.delivery/xezq/ACluqzrIJu4VGlJYTX8Bc1vFGaby...",
+      "score": 0.85,
+      "ok": true
+    },
+    {
+      "shot_id": "c9d0a1b2-e3f4-5678-9012-34567890abcd",
+      "url": "https://replicate.delivery/xezq/Q4yHYIe1uxWMWC4J65ioAmQlvQHG...",
+      "score": 0.85,
+      "ok": true
+    },
+    {
+      "shot_id": "d0a1b2c3-f4e5-6789-0123-4567890abcde",
+      "url": "https://replicate.delivery/xezq/j0I9grC1RtZzJVqP0ttfVrSYnLA5...",
+      "score": 0.85,
+      "ok": true
+    },
+    {
+      "shot_id": "e1b2c3d4-f5a6-7890-1234-567890abcdef",
+      "url": "https://replicate.delivery/xezq/FxDAsdGUieyZdyHiPFYSDCeyWPVI...",
+      "score": 0.85,
+      "ok": true
+    },
+    {
+      "shot_id": "a0b1c2d3-e4f5-6789-0123-456789abcdef",
+      "url": "https://replicate.delivery/xezq/yx3bTcDbfXWnEiRz8GMuO0u5vqYZ...",
+      "score": 0.85,
+      "ok": true
+    },
+    {
+      "shot_id": "b1c2d3e4-f5a6-7890-1234-567890abcdef12",
+      "url": "https://replicate.delivery/xezq/apwbNSSrlx7YOhaIFfewG3c0AwGY...",
+      "score": 0.85,
+      "ok": true
+    },
+    {
+      "shot_id": "c2d3e4f5-a6b7-8901-2345-67890abcdef1234",
+      "url": "https://replicate.delivery/xezq/2yw5rmfW0RWTEy92SkTxhDjFXhj1...",
+      "score": 0.85,
+      "ok": true
+    }
+  ],
+  "D_regen": {
+    "ok": true,
+    "original_url": "https://replicate.delivery/xezq/tp5nzA83g5bnOZ7e7kMYMFKtZ8mE...",
+    "regen_url": "https://replicate.delivery/xezq/xv6ssiVuvF7LNphZKNn3Qyy1B8BX..."
+  },
+  "E_failure_injection": {
+    "pass": false,
+    "failures": [
+      "identity drift @ b8c9d0a1-f2e3-4567-8901-234567890abc",
+      "identity drift @ c9d0a1b2-e3f4-5678-9012-34567890abcd",
+      "continuity break @ b8c9d0a1-f2e3-4567-8901-234567890abc: environment continuity unresolved; emotion continuity drop too abrupt; missing next shot link",
+      "audio/video mismatch @ b8c9d0a1-f2e3-4567-8901-234567890abc"
+    ],
+    "repair_count": 4
+  },
+  "F_degraded_mode": {
+    "degraded": true,
+    "critical_failures": [
+      "character_identity",
+      "temporal_guidance",
+      "verifier"
+    ]
+  },
+  "G_temporal": {
+    "shot0": true,
+    "edit_plan": true
+  },
+  "H_voice": {
+    "status": "skipped",
+    "reason": "no dialogue_text in shot"
+  }
+}

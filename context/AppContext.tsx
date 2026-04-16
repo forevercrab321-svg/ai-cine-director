@@ -94,7 +94,7 @@ const isDeveloperEmail = (email: string): boolean => {
 const defaultSettings: AppSettings = {
   lang: 'en',
   imageModel: 'flux',
-  videoModel: 'hailuo_02_fast',
+  videoModel: 'wan_2_2_fast',
   videoStyle: 'pop_mart',
   aspectRatio: '16:9',
   videoQuality: 'standard',

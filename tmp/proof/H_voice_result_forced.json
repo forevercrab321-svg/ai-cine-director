@@ -1,0 +1,8 @@
+{
+  "email": "proof-voice-1776368897690@example.com",
+  "status": 500,
+  "request_text": "Maya, move now. The train is leaving in ten seconds. Keep your eyes on the red signal and do not look back.",
+  "response": {
+    "error": "Eleven Labs API error: 401"
+  }
+}

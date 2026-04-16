@@ -1,0 +1,82 @@
+{
+  "shot0temporal": {
+    "previous_visual_state": "sequence opening state",
+    "current_target_frame_state": "preserve scene memory",
+    "next_visual_target_state": "inherit previous shot appearance and screen direction",
+    "start_frame_intent": "N/A",
+    "middle_motion_intent": "hold -> static",
+    "end_frame_intent": "inherit previous shot appearance and screen direction"
+  },
+  "shot1temporal": {
+    "previous_visual_state": "preserve scene memory",
+    "current_target_frame_state": "preserve scene memory",
+    "next_visual_target_state": "inherit previous shot appearance and screen direction",
+    "start_frame_intent": "preserve scene memory",
+    "middle_motion_intent": "static -> handheld, shaky",
+    "end_frame_intent": "inherit previous shot appearance and screen direction"
+  },
+  "edit_total_dur": 175,
+  "shot_order": [
+    "a7b8c9d0-e1f2-3456-7890-1234567890ab",
+    "b8c9d0a1-f2e3-4567-8901-234567890abc",
+    "c9d0a1b2-e3f4-5678-9012-34567890abcd",
+    "d0a1b2c3-f4e5-6789-0123-4567890abcde",
+    "e1b2c3d4-f5a6-7890-1234-567890abcdef",
+    "a0b1c2d3-e4f5-6789-0123-456789abcdef",
+    "b1c2d3e4-f5a6-7890-1234-567890abcdef12",
+    "c2d3e4f5-a6b7-8901-2345-67890abcdef1234"
+  ],
+  "timeline_sample": [
+    {
+      "shot_id": "a7b8c9d0-e1f2-3456-7890-1234567890ab",
+      "sequence_order": 1,
+      "start_sec": 0,
+      "end_sec": 5,
+      "clip_duration_sec": 5,
+      "image_hold_duration_sec": 3,
+      "motion_segment_duration_sec": 2,
+      "dialogue_sync_points": [],
+      "subtitle_blocks": [],
+      "transition_plan": "fade_in",
+      "music_bed_hint": "intro low",
+      "j_cut_opportunity": false,
+      "l_cut_opportunity": true
+    },
+    {
+      "shot_id": "b8c9d0a1-f2e3-4567-8901-234567890abc",
+      "sequence_order": 2,
+      "start_sec": 5,
+      "end_sec": 9,
+      "clip_duration_sec": 4,
+      "image_hold_duration_sec": 2.4,
+      "motion_segment_duration_sec": 1.6,
+      "dialogue_sync_points": [],
+      "subtitle_blocks": [
+        {
+          "text": "Pleasure doing business with you.",
+          "start_sec": 5,
+          "end_sec": 8.2
+        }
+      ],
+      "transition_plan": "cut",
+      "music_bed_hint": "intro low",
+      "j_cut_opportunity": true,
+      "l_cut_opportunity": true
+    },
+    {
+      "shot_id": "c9d0a1b2-e3f4-5678-9012-34567890abcd",
+      "sequence_order": 3,
+      "start_sec": 9,
+      "end_sec": 15,
+      "clip_duration_sec": 6,
+      "image_hold_duration_sec": 3.5,
+      "motion_segment_duration_sec": 2.4000000000000004,
+      "dialogue_sync_points": [],
+      "subtitle_blocks": [],
+      "transition_plan": "cut",
+      "music_bed_hint": "adaptive underscore",
+      "j_cut_opportunity": true,
+      "l_cut_opportunity": true
+    }
+  ]
+}

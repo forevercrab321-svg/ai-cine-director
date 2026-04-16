@@ -76,9 +76,8 @@ interface Profile {
 }
 
 type VideoModel =
-    // ★ 性价比模型 (2个) - 快速出片
+    // ★ 性价比模型
     | 'wan_2_2_fast'           // ★ Alibaba Wan 2.2 - 性价比之王
-    | 'hailuo_02_fast'        // ★ MiniMax Hailuo-02 - 均衡之选
 
     // ★ 顶级画质模型 (4个) - 电影级质量
     | 'kling_2_5_pro'        // ★ 快手Kling 2.5 Pro - 顶级物理
@@ -126,9 +125,8 @@ interface BatchJobItem {
 }
 
 const REPLICATE_MODEL_PATHS: Record<VideoModel | ImageModel, string> = {
-    // ★ 性价比模型 (2个)
+    // ★ 性价比模型
     wan_2_2_fast: "wan-video/wan-2.2-i2v-fast",
-    hailuo_02_fast: "minimax/hailuo-02-fast",
 
     // ★ 顶级画质模型 (4个)
     kling_2_5_pro: "kwaivgi/kling-v2.5-turbo-pro",
@@ -151,7 +149,6 @@ const IMAGE_MODEL_COSTS: Record<ImageModel, number> = {
 // ★ 视频模型成本映射 (与 types.ts 同步)
 const VIDEO_MODEL_COSTS: Record<VideoModel, number> = {
     wan_2_2_fast: 8,
-    hailuo_02_fast: 22,
     kling_2_5_pro: 85,
     veo_3: 300,
     seedance_pro: 55,
@@ -171,7 +168,6 @@ function estimateCost(modelPath: string): number {
     }
     // 回退到基于路径的模式匹配
     if (modelPath.includes('wan-video')) return 8;
-    if (modelPath.includes('hailuo') || modelPath.includes('minimax')) return 22;
     if (modelPath.includes('kling')) return 85;
     if (modelPath.includes('veo') || modelPath.includes('google/veo')) return 300;
     if (modelPath.includes('seedance') || modelPath.includes('bytedance')) return 55;
@@ -1237,101 +1233,7 @@ const isAdminUser = (email: string | undefined): boolean => {
     return isDeveloper(email);
 };
 
-// ═══════════════════════════════════════════════════════════════
-// MINIMAX AI SETUP (Replacing Gemini)
-// ═══════════════════════════════════════════════════════════════
-
-function getMinimaxApiKey() {
-    const key = process.env.VITE_MINIMAX_API_KEY || process.env.MINIMAX_API_KEY;
-    if (!key) throw new Error("MINIMAX_API_KEY is missing in environment variables.");
-    return key;
-}
-
-const MINIMAX_TEXT_API = 'https://api.minimax.io/v1/text/chatcompletion_v2';
-
-/**
- * Raw fetch wrapper for Minimax Text API (Supports Vision)
- */
-async function getMinimaxChatCompletion(systemInstruction: string, promptContent: any, options: {
-    model?: string;
-    temperature?: number;
-    responseFormat?: any;
-} = {}) {
-    const apiKey = getMinimaxApiKey();
-    const model = options.model || 'MiniMax-Text-01'; // Default model (MiniMax-Text-01 is abi 2.5)
-
-    const payload = {
-        model: model,
-        messages: [
-            { role: "system", name: "System", content: systemInstruction },
-            { role: "user", name: "User", content: promptContent }
-        ],
-        temperature: options.temperature || 0.7,
-        response_format: options.responseFormat ? { type: "json_object" } : undefined
-    };
-
-    const response = await fetch(MINIMAX_TEXT_API, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload)
-    });
-
-    const rawText = await response.text();
-    let data: any;
-    try {
-        data = JSON.parse(rawText);
-    } catch {
-        throw new Error(`Minimax API returned non-JSON response(${response.status}): ${rawText.slice(0, 300)}`);
-    }
-
-    if (!response.ok) {
-        throw new Error(`Minimax API Error(${response.status}): ${rawText.slice(0, 500)}`);
-    }
-
-    const statusCode = Number(data?.base_resp?.status_code ?? 0);
-    if (statusCode && statusCode !== 0) {
-        const statusMsg = data?.base_resp?.status_msg || data?.base_resp?.status_message || 'Unknown error';
-        throw new Error(`Minimax API business error(${statusCode}): ${statusMsg}`);
-    }
-
-    return data;
-}
-
-function extractMinimaxText(responseData: any): string {
-    const content = responseData?.choices?.[0]?.message?.content;
-
-    if (typeof content === 'string' && content.trim()) {
-        return content.trim();
-    }
-
-    if (Array.isArray(content)) {
-        const merged = content
-            .map((part: any) => {
-                if (typeof part === 'string') return part;
-                if (typeof part?.text === 'string') return part.text;
-                return '';
-            })
-            .join(' ')
-            .trim();
-        if (merged) return merged;
-    }
-
-    const fallbackCandidates = [
-        responseData?.choices?.[0]?.text,
-        responseData?.reply,
-        responseData?.output_text,
-        responseData?.output?.text,
-        typeof responseData?.response === 'string' ? responseData.response : '',
-    ];
-
-    const fallback = fallbackCandidates.find((v) => typeof v === 'string' && v.trim().length > 0);
-    if (fallback) return fallback.trim();
-
-    throw new Error(`Minimax response missing text payload: ${JSON.stringify(responseData).slice(0, 500)}`);
-}
+// MiniMax removed — all text and vision calls now use Gemini (getGeminiTextCompletion)
 
 // ═══════════════════════════════════════════════════════════════
 // Entitlement Types
@@ -1541,7 +1443,7 @@ app.get('/api/entitlement', requireAuth, async (req: any, res: any) => {
 // ═══════════════════════════════════════════════════════════════
 
 // Video models that require image input
-const VIDEO_MODELS = ['wan-video', 'minimax', 'bytedance', 'kwaivgi', 'hailuo', 'kling'];
+const VIDEO_MODELS = ['wan-video', 'bytedance', 'kwaivgi', 'kling', 'google', 'openai'];
 
 // Check if this is a video model request
 function isVideoModelRequest(version: string): boolean {
@@ -1654,8 +1556,6 @@ app.post('/api/replicate/generate-image', requireAuth, async (req: any, res: any
 
         let resultUrl = '';
         try {
-            const modelToRun = (REPLICATE_MODEL_PATHS as any)[imageModel] || REPLICATE_MODEL_PATHS['flux'];
-
             // ★ Build strict consistency instructions from Story Entities
             let entityRules = '';
             if (Array.isArray(storyEntities) && storyEntities.length > 0) {
@@ -1673,23 +1573,12 @@ app.post('/api/replicate/generate-image', requireAuth, async (req: any, res: any
 
             const promptWithLocks = `${prompt} ${entityRules} ${legacyAnchorRule}`.trim();
             const finalPrompt = appendLockedCastToPrompt(promptWithLocks, storyEntities);
-            const nonHumanGuide = detectNonHumanCharacterGuide(
-                finalPrompt,
-                characterAnchor,
-                ...(Array.isArray(storyEntities) ? storyEntities.map((e: any) => `${e?.name || ''} ${e?.description || ''}`) : [])
-            );
-            const useUniversalGuide = !!referenceImageDataUrl;
-            const disableFaceCloning = nonHumanGuide.hasNonHuman || isRemoteImageReference(referenceImageDataUrl);
 
-            const result = await callReplicateImage({
+            // ★ Gemini image generation — no Replicate dependency
+            const result = await callGeminiImage({
                 prompt: finalPrompt,
-                model: modelToRun,
                 aspectRatio: aspectRatio || '16:9',
-                seed: null,
-                imagePrompt: useUniversalGuide ? referenceImageDataUrl : undefined,
-                referenceImageDataUrl: referenceImageDataUrl,
-                disableFaceCloning,
-                allowReferenceFallback: true,
+                referenceImageDataUrl: referenceImageDataUrl || undefined,
             });
             resultUrl = result.url;
         } catch (genErr: any) {
@@ -1702,20 +1591,8 @@ app.post('/api/replicate/generate-image', requireAuth, async (req: any, res: any
         res.json({ url: resultUrl });
     } catch (err: any) {
         console.error('[/api/replicate/generate-image Error]', err);
-        if (err.message === 'FACE_ALIGN_FAIL') {
-            return res.status(400).json({ error: '未能检测到清晰的人物面部；如果你在做动物或非人类动画，系统现已自动回退到物种安全模式。若仍失败，请尝试更清晰的参考图或直接使用文本锚点。' });
-        }
         const status = Number(err?.status) || 500;
-        const isRateLimited = status === 429 || /throttle|rate\s*limit|too many/i.test(String(err?.message || ''));
-        if (isRateLimited) {
-            return res.status(429).json({
-                error: err?.message || '请求过于频繁，触发上游限流，请稍后重试。',
-                code: err?.code || 'RATE_LIMITED',
-                retry_after: err?.retryAfter,
-                detail: err?.detail,
-            });
-        }
-        res.status(status).json({ error: err.message || 'Server error', code: err?.code, retry_after: err?.retryAfter });
+        res.status(status).json({ error: err.message || 'Image generation failed' });
     }
 });
 
@@ -1756,7 +1633,7 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
         logger.replicate.debug('entities_received', { total: storyEntities.length, locked: lockedCount, project_id, shot_id }, traceId);
     }
 
-    // Map short format like 'hailuo_02_fast' to actual replicate model path
+    // Map short format like 'wan_2_2_fast' to actual replicate model path
     if (version && (REPLICATE_MODEL_PATHS as any)[version]) {
         version = (REPLICATE_MODEL_PATHS as any)[version];
     }
@@ -1923,9 +1800,6 @@ app.post('/api/replicate/predict', requireAuth, async (req: any, res: any) => {
                 input.image = tailFrameImg;
                 delete input.first_frame_image;
                 logger.replicate.debug('i2v_frame_aligned', { model: 'kling', field: 'image' }, traceId);
-            } else if (version.includes('hailuo') || version.includes('minimax')) {
-                input.first_frame_image = tailFrameImg;
-                logger.replicate.debug('i2v_frame_aligned', { model: 'hailuo', field: 'first_frame_image' }, traceId);
             } else if (version.includes('bytedance') || version.includes('seedance')) {
                 input.image = tailFrameImg;
                 delete input.first_frame_image;
@@ -2163,6 +2037,83 @@ const getGeminiAI = () => {
 };
 
 const GEMINI_TEXT_MODEL = 'gemini-2.0-flash';
+const GEMINI_IMAGE_MODEL = 'gemini-2.0-flash-preview-image-generation';
+
+// ═══════════════════════════════════════════════════════════════
+// Gemini Image Generation — replaces Replicate/Flux for image gen
+// ═══════════════════════════════════════════════════════════════
+async function callGeminiImage(params: {
+    prompt: string;
+    aspectRatio?: string;
+    referenceImageDataUrl?: string; // base64 data URL for character reference
+    negativePrompt?: string;        // appended to prompt text
+    seed?: number | null;           // ignored (Gemini doesn't support fixed seeds)
+}): Promise<{ url: string; predictionId: string }> {
+    const ai = getGeminiAI();
+    const parts: any[] = [];
+
+    // If a reference image is provided, prepend it so Gemini sees the character first
+    if (params.referenceImageDataUrl) {
+        const refStr = params.referenceImageDataUrl.trim();
+        const cleanBase64 = refStr.includes(',') ? refStr.split(',')[1] : refStr;
+        const prefixMatch = refStr.match(/^data:(image\/[a-zA-Z+]+);base64,/);
+        const refMime = prefixMatch ? prefixMatch[1] : 'image/jpeg';
+        if (cleanBase64.length > 0) {
+            parts.push({ inlineData: { mimeType: refMime, data: cleanBase64 } });
+        }
+    }
+
+    // Build text prompt (include negative hints as instruction)
+    let textPrompt = params.prompt;
+    if (params.negativePrompt) {
+        textPrompt += `\n\nAvoid: ${params.negativePrompt}`;
+    }
+    if (params.aspectRatio) {
+        textPrompt += `\n\nGenerate in ${params.aspectRatio} aspect ratio.`;
+    }
+    parts.push({ text: textPrompt });
+
+    // @ts-ignore — responseModalities is supported in @google/genai >= 1.x
+    const result = await ai.models.generateContent({
+        model: GEMINI_IMAGE_MODEL,
+        contents: [{ role: 'user', parts }],
+        generationConfig: {
+            responseModalities: ['TEXT', 'IMAGE'],
+        },
+    });
+
+    const resultParts: any[] = result?.candidates?.[0]?.content?.parts || [];
+    const imagePart = resultParts.find((p: any) => p.inlineData?.data);
+    if (!imagePart?.inlineData?.data) {
+        throw new Error('Gemini image generation returned no image data. Check GEMINI_API_KEY and model availability.');
+    }
+
+    const mimeType: string = imagePart.inlineData.mimeType || 'image/png';
+    const ext = mimeType.includes('png') ? 'png' : 'jpeg';
+    const imageBuffer = Buffer.from(imagePart.inlineData.data, 'base64');
+    const fileName = `gemini_img/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+
+    const supabaseAdmin = getSupabaseAdmin();
+
+    // Ensure 'videos' bucket exists
+    const { data: buckets } = await supabaseAdmin.storage.listBuckets();
+    if (!buckets?.find((b: any) => b.name === 'videos')) {
+        await supabaseAdmin.storage.createBucket('videos', { public: true, fileSizeLimit: '50MB' });
+    }
+
+    const { error: uploadErr } = await supabaseAdmin.storage
+        .from('videos')
+        .upload(fileName, imageBuffer, { contentType: mimeType, upsert: true });
+
+    if (uploadErr) throw new Error(`Supabase image upload failed: ${uploadErr.message}`);
+
+    const { data: urlData } = supabaseAdmin.storage
+        .from('videos')
+        .getPublicUrl(fileName);
+
+    const predictionId = `gemini-img-${Date.now()}`;
+    return { url: urlData.publicUrl, predictionId };
+}
 
 const getGeminiTextCompletion = async (promptContent: any, options: {
     systemInstruction?: string;
@@ -3057,7 +3008,7 @@ app.post('/api/gemini/analyze', requireAuth, async (req: any, res: any) => {
             else if (cleanBase64.startsWith('R0lGO')) mimeType = 'image/gif';
         }
 
-        console.log(`[MiniMax Analyze] MIME: ${mimeType}, base64 length: ${cleanBase64.length}, hasPrefix: ${base64Data.startsWith('data:')}`);
+        console.log(`[Gemini Analyze] MIME: ${mimeType}, base64 length: ${cleanBase64.length}, hasPrefix: ${base64Data.startsWith('data:')}`);
 
         const analyzePrompt = `You are a professional character designer. Analyze the provided image and produce an EXACT visual identity description for AI image generation.
 
@@ -3070,42 +3021,21 @@ app.post('/api/gemini/analyze', requireAuth, async (req: any, res: any) => {
     - Output ONLY the description paragraph.
     - Use English.`;
 
-        // MiniMax Vision uses ChatCompletion V2 with base64 content
-        const apiKey = getMinimaxApiKey();
-        const payload = {
-            model: "MiniMax-Text-01",
-            messages: [
-                { role: "system", name: "System", content: "You are a vision analysis assistant." },
-                {
-                    role: "user",
-                    name: "User",
-                    content: [
-                        { type: "text", text: analyzePrompt },
-                        {
-                            type: "image_url",
-                            image_url: {
-                                url: base64Data.startsWith('data:') ? base64Data : `data:${mimeType};base64,${cleanBase64}`
-                            }
-                        }
-                    ]
-                }
-            ]
-        };
-
-        const response = await fetch(MINIMAX_TEXT_API, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${apiKey}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(payload)
-        });
-
-        const rawText = await response.text();
-        if (!response.ok) throw new Error(`MiniMax Vision Error: ${rawText.slice(0, 500)}`);
-
-        const data = await response.json();
-        const anchor = extractMinimaxText(data);
+        // Gemini Vision: pass image as inlineData alongside the text prompt
+        const anchor = await getGeminiTextCompletion(
+            [{
+                role: 'user',
+                parts: [
+                    { inlineData: { mimeType, data: cleanBase64 } },
+                    { text: analyzePrompt }
+                ]
+            }],
+            {
+                systemInstruction: 'You are a vision analysis assistant specializing in character description for AI image generation.',
+                model: GEMINI_TEXT_MODEL,
+                temperature: 0.2,
+            }
+        );
         res.json({ anchor });
     } catch (error: any) {
         console.error('[Gemini Analyze] ❌ Error:', (error as any).message);
@@ -4344,16 +4274,12 @@ app.post('/api/shot-images/:shotId/generate', async (req: any, res: any) => {
                     promptCandidate = strengthenPromptForRetry(promptCandidate, continuityProfile, attempt, scored.failures);
                 }
 
-                result = await callReplicateImage({
+                // ★ Gemini image generation — no Replicate dependency
+                result = await callGeminiImage({
                     prompt: promptCandidate,
                     negativePrompt: continuityNegative,
-                    model: replicatePath,
                     aspectRatio: aspect_ratio || '16:9',
-                    seed: seed ?? 142857,
-                    imagePrompt: effectiveGuideImage,
-                    referenceImageDataUrl: referenceImageDataUrl || undefined,
-                    disableFaceCloning,
-                    allowReferenceFallback: true,
+                    referenceImageDataUrl: (!isRemoteImageReference(referenceImageDataUrl) && referenceImageDataUrl) ? referenceImageDataUrl : undefined,
                 });
 
                 if (scored.overall >= threshold || attempt === maxAttempts) {
@@ -4553,13 +4479,11 @@ app.post('/api/shot-images/:imageId/edit', async (req: any, res: any) => {
                 if (scored.overall < threshold) {
                     candidate = strengthenPromptForRetry(candidate, continuityProfile, attempt, scored.failures);
                 }
-                result = await callReplicateImage({
+                // ★ Gemini image generation — no Replicate dependency
+                result = await callGeminiImage({
                     prompt: candidate,
                     negativePrompt: continuityNegative,
-                    model: replicatePath,
                     aspectRatio: aspect_ratio || '16:9',
-                    seed: editSeed,
-                    imagePrompt: memoryReference || undefined,
                 });
                 if (scored.overall >= threshold || attempt === maxAttempts) {
                     finalPrompt = candidate;
@@ -5299,13 +5223,12 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
                     if (scored.overall < threshold) {
                         candidate = strengthenPromptForRetry(candidate, continuityProfile, attempt, scored.failures);
                     }
-                    result = await callReplicateImage({
+                    // ★ Gemini image generation — no Replicate dependency
+                    result = await callGeminiImage({
                         prompt: candidate,
                         negativePrompt: continuityNegative,
-                        model: replicatePath,
                         aspectRatio: aspect_ratio,
-                        seed: shotData.seed_hint ?? computeDeterministicShotSeed(projectSeed, shotData.shot_id, shotData.shot_number),
-                        imagePrompt: payload.reference_image_url,
+                        referenceImageDataUrl: isRemoteImageReference(payload.reference_image_url) ? undefined : payload.reference_image_url,
                     });
                     if (scored.overall >= threshold || attempt === maxAttempts) {
                         finalPrompt = candidate;
@@ -5574,13 +5497,12 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
                     firstFrameInScene: firstFrameByScene.get(String(shotData.scene_id || '')),
                 });
 
-                const result = await callReplicateImage({
+                // ★ Gemini image generation — no Replicate dependency
+                const result = await callGeminiImage({
                     prompt: payload.prompt,
                     negativePrompt: payload.negative_prompt,
-                    model: replicatePath,
                     aspectRatio: aspect_ratio,
-                    seed: shotData.seed_hint ?? computeDeterministicShotSeed(projectSeed, shotData.shot_id, shotData.shot_number),
-                    imagePrompt: payload.reference_image_url,
+                    referenceImageDataUrl: isRemoteImageReference(payload.reference_image_url) ? undefined : payload.reference_image_url,
                 });
                 if (result.url) {
                     generatedByShot.set(item.shot_id, result.url);
@@ -5693,7 +5615,8 @@ app.post('/api/batch/:jobId/retry', async (req: any, res: any) => {
             let finalPrompt = buildFinalPrompt({ basePrompt: shotData?.image_prompt || '', characterAnchor: character_anchor, style, referencePolicy: shotData?.reference_policy || 'anchor' });
             finalPrompt = applyContinuityLocks(finalPrompt, continuityProfile);
             const continuityNegative = buildContinuityNegativePrompt('', continuityProfile);
-            const result = await callReplicateImage({ prompt: finalPrompt, negativePrompt: continuityNegative, model: replicatePath, aspectRatio: aspect_ratio, seed: shotData?.seed_hint ?? retryProjectSeed });
+            // ★ Gemini image generation — no Replicate dependency
+            const result = await callGeminiImage({ prompt: finalPrompt, negativePrompt: continuityNegative, aspectRatio: aspect_ratio });
             return { image_id: crypto.randomUUID(), image_url: result.url };
         };
         const ok = retryFailedBatchItems(req.params.jobId, executor);
