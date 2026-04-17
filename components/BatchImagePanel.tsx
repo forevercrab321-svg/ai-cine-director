@@ -149,8 +149,8 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
 }) => {
     const { settings, isAuthenticated, hasEnoughCredits, openPricingModal, refreshBalance } = useAppContext();
 
-    // Config - Allow up to 100 images per batch
-    const [count, setCount] = useState(Math.min(3, allShots.length));
+    // Config - Default to 12 (one full storyboard page) per batch
+    const [count, setCount] = useState(Math.min(12, allShots.length));
     const [model, setModel] = useState<ImageModel>('flux');
 
     // Job state
@@ -170,6 +170,8 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
     const [compiledPrompts, setCompiledPrompts] = useState<CompiledShotPromptPreview[]>([]);
     const [compileWarnings, setCompileWarnings] = useState<Array<{ code: string; shot_id: string; message: string }>>([]);
     const [isCompilingPrompts, setIsCompilingPrompts] = useState(false);
+    // Storyboard grid: which 12-shot page is visible (0 = shots 1-12, 12 = shots 13-24, …)
+    const [gridOffset, setGridOffset] = useState(0);
 
     // Compute image status from props
     const imageStatus = computeShotImageStatus(
@@ -180,10 +182,22 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
     const estimatedCost = getBatchCost(Math.min(count, imageStatus.shotsMissing.length || count), model);
     const allDone = imageStatus.allDone;
 
-    // Sort shots for consistent ordering
+    // Sort shots for consistent ordering — preserves script sequence for the storyboard grid
     const sortedShots = [...allShots].sort((a, b) =>
         (a.scene_id === b.scene_id ? a.shot_number - b.shot_number : a.scene_id.localeCompare(b.scene_id))
     );
+
+    // Live status lookup keyed by shot_id — drives storyboard grid overlays during generation
+    const itemsByShot = React.useMemo(() => {
+        const map: Record<string, BatchJobItem> = {};
+        items.forEach(item => { map[item.shot_id] = item; });
+        return map;
+    }, [items]);
+
+    // 12-panel window into the sorted shot list
+    const gridShots = sortedShots.slice(gridOffset, gridOffset + 12);
+    const totalPages = Math.max(1, Math.ceil(sortedShots.length / 12));
+    const currentPage = Math.floor(gridOffset / 12) + 1;
 
     // ── SSE Progress handler ──
     const handleSSEProgress = useCallback((data: BatchProgressResult & { anchor_image_url?: string }) => {
@@ -283,6 +297,12 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
         setError(null);
         setRangeLabel(null);
         setJobId('streaming');
+
+        // Auto-scroll storyboard grid to show the first shots being generated
+        const firstMissingIdx = sortedShots.findIndex(s => !(imagesByShot[s.shot_id]?.length));
+        if (firstMissingIdx >= 0) {
+            setGridOffset(Math.floor(firstMissingIdx / 12) * 12);
+        }
 
         try {
             if (compiledPrompts.length === 0) {
@@ -484,7 +504,7 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                             每批数量
                         </label>
                         <div className="flex gap-1">
-                            {[3, 5, 6, 9, 12, 30].filter(n => n <= allShots.length || n === 3).map(n => {
+                            {[3, 5, 6, 9, 12, 30].filter(n => n <= allShots.length || n === 12).map(n => {
                                 const effectiveN = Math.min(n, allShots.length);
                                 return (
                                     <button
@@ -625,6 +645,152 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                 </div>
             )}
 
+            {/* ═══════════════════════════════════════════════════
+                12-Panel Storyboard Grid — always visible, script order
+                Shows character/scene continuity across the full film.
+                Each cell: shot badge, image when ready, live spinner during gen.
+                ═══════════════════════════════════════════════════ */}
+            {sortedShots.length > 0 && (
+                <div className="space-y-2">
+                    {/* Grid header */}
+                    <div className="flex items-center justify-between">
+                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                            <span>🎞</span>
+                            分镜宫格 · 剧本顺序
+                            <span className="text-[10px] text-slate-600 font-normal normal-case ml-1">
+                                {sortedShots.length} 个镜头
+                                {imageStatus.generatedCount > 0 && ` · ${imageStatus.generatedCount} 已生图`}
+                            </span>
+                        </h4>
+                        <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] text-slate-600 tabular-nums">
+                                {currentPage}/{totalPages} 组
+                            </span>
+                            <button
+                                onClick={() => setGridOffset(g => Math.max(0, g - 12))}
+                                disabled={gridOffset === 0}
+                                className="w-6 h-6 rounded flex items-center justify-center text-xs text-slate-400 hover:text-white hover:bg-slate-700 disabled:opacity-20 disabled:cursor-not-allowed transition-all"
+                                title="上一组"
+                            >◀</button>
+                            <button
+                                onClick={() => setGridOffset(g => Math.min(g + 12, (totalPages - 1) * 12))}
+                                disabled={gridOffset + 12 >= sortedShots.length}
+                                className="w-6 h-6 rounded flex items-center justify-center text-xs text-slate-400 hover:text-white hover:bg-slate-700 disabled:opacity-20 disabled:cursor-not-allowed transition-all"
+                                title="下一组"
+                            >▶</button>
+                        </div>
+                    </div>
+
+                    {/* 4×3 grid */}
+                    <div className="grid grid-cols-4 gap-2">
+                        {gridShots.map((shot, cellIdx) => {
+                            const absIdx = gridOffset + cellIdx;
+                            const existingImages = imagesByShot[shot.shot_id] || [];
+                            const primaryImage = existingImages[0];
+                            const batchItem = itemsByShot[shot.shot_id];
+                            // Prefer live batch URL (succeeded) > already-stored image
+                            const imageUrl = (batchItem?.status === 'succeeded' ? batchItem.image_url : undefined) || primaryImage?.url;
+                            const isGenerating = batchItem?.status === 'running';
+                            const isFailed = batchItem?.status === 'failed';
+                            const isQueued = batchItem?.status === 'queued';
+                            const hasImage = !!imageUrl;
+
+                            const sceneLabel = shot.scene_id && /^\d+$/.test(String(shot.scene_id))
+                                ? `S${shot.scene_id}.${shot.shot_number}`
+                                : `#${absIdx + 1}`;
+
+                            return (
+                                <div
+                                    key={shot.shot_id}
+                                    className={`rounded-xl border overflow-hidden transition-all group/cell ${
+                                        isGenerating
+                                            ? 'border-indigo-500/70 ring-1 ring-indigo-500/30 shadow-lg shadow-indigo-500/10'
+                                            : isFailed
+                                                ? 'border-red-500/30'
+                                                : hasImage
+                                                    ? 'border-green-500/20'
+                                                    : isQueued
+                                                        ? 'border-indigo-500/20'
+                                                        : 'border-slate-800'
+                                    }`}
+                                >
+                                    <div className="aspect-video relative bg-slate-900">
+                                        {hasImage ? (
+                                            <>
+                                                <img
+                                                    src={imageUrl!}
+                                                    alt={sceneLabel}
+                                                    className="w-full h-full object-cover"
+                                                />
+                                                {/* Download on hover */}
+                                                <button
+                                                    onClick={async (e) => {
+                                                        e.stopPropagation();
+                                                        try {
+                                                            const res = await fetch(imageUrl!);
+                                                            const blob = await res.blob();
+                                                            const url = URL.createObjectURL(blob);
+                                                            const a = document.createElement('a');
+                                                            a.href = url;
+                                                            a.download = `${sceneLabel}.jpg`;
+                                                            document.body.appendChild(a);
+                                                            a.click();
+                                                            document.body.removeChild(a);
+                                                            URL.revokeObjectURL(url);
+                                                        } catch {
+                                                            window.open(imageUrl, '_blank');
+                                                        }
+                                                    }}
+                                                    className="absolute inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center opacity-0 group-hover/cell:opacity-100 transition-opacity"
+                                                    title="下载图片"
+                                                >
+                                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 text-white">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                                                    </svg>
+                                                </button>
+                                                {/* Green dot: already generated */}
+                                                <div className="absolute top-1 right-1 w-2 h-2 rounded-full bg-green-400 border border-green-200/40 shadow" />
+                                            </>
+                                        ) : isGenerating ? (
+                                            <div className="w-full h-full flex flex-col items-center justify-center gap-1.5 bg-indigo-950/50">
+                                                <LoaderIcon className="w-5 h-5 animate-spin text-indigo-400" />
+                                                <span className="text-[9px] text-indigo-300 font-bold">生成中</span>
+                                            </div>
+                                        ) : isFailed ? (
+                                            <div className="w-full h-full flex flex-col items-center justify-center gap-1 bg-red-950/30">
+                                                <span className="text-base">✗</span>
+                                                <span className="text-[9px] text-red-400">失败</span>
+                                            </div>
+                                        ) : isQueued ? (
+                                            <div className="w-full h-full flex flex-col items-center justify-center gap-1 bg-slate-800/40">
+                                                <LoaderIcon className="w-4 h-4 text-slate-600" />
+                                                <span className="text-[9px] text-slate-500">等待</span>
+                                            </div>
+                                        ) : (
+                                            <div className="w-full h-full flex items-center justify-center">
+                                                <span className="text-slate-700 text-lg font-bold select-none">{absIdx + 1}</span>
+                                            </div>
+                                        )}
+
+                                        {/* Shot label — always shown */}
+                                        <div className="absolute bottom-0 left-0 right-0 px-1.5 py-0.5 bg-black/60 backdrop-blur-sm text-center">
+                                            <span className="text-[9px] font-bold text-slate-300">{sceneLabel}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })}
+
+                        {/* Empty cells to pad to 12 panels */}
+                        {Array.from({ length: Math.max(0, 12 - gridShots.length) }).map((_, i) => (
+                            <div key={`empty-${i}`} className="rounded-xl border border-slate-800/20 overflow-hidden opacity-20">
+                                <div className="aspect-video bg-slate-900/30" />
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
             {/* Progress section */}
             {job && (
                 <div className="space-y-3">
@@ -734,82 +900,8 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                         </div>
                     )}
 
-                    {/* Item grid — thumbnail-style cards */}
-                    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-9 gap-2">
-                        {items.map((item) => {
-                            const statusInfo = STATUS_LABELS[item.status] || STATUS_LABELS.queued;
-
-                            return (
-                                <div
-                                    key={item.id}
-                                    className={`rounded-xl border overflow-hidden transition-all group/thumb ${item.status === 'succeeded' ? 'border-green-500/30' :
-                                        item.status === 'failed' ? 'border-red-500/30' :
-                                            item.status === 'running' ? 'border-indigo-500/50 ring-1 ring-indigo-500/20' :
-                                                'border-slate-800'
-                                        }`}
-                                >
-                                    <div className="aspect-video relative">
-                                        {item.status === 'succeeded' && item.image_url ? (
-                                            <>
-                                                <img
-                                                    src={item.image_url}
-                                                    alt={`Shot ${item.shot_number}`}
-                                                    className="w-full h-full object-cover"
-                                                />
-                                                {/* 下载按钮 - 悬停时显示 */}
-                                                <button
-                                                    onClick={async () => {
-                                                        try {
-                                                            const response = await fetch(item.image_url!);
-                                                            const blob = await response.blob();
-                                                            const url = URL.createObjectURL(blob);
-                                                            const a = document.createElement('a');
-                                                            a.href = url;
-                                                            a.download = `scene-${item.scene_number}-shot-${item.shot_number}.jpg`;
-                                                            document.body.appendChild(a);
-                                                            a.click();
-                                                            document.body.removeChild(a);
-                                                            URL.revokeObjectURL(url);
-                                                        } catch {
-                                                            window.open(item.image_url, '_blank');
-                                                        }
-                                                    }}
-                                                    className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center opacity-0 group-hover/thumb:opacity-100 transition-opacity"
-                                                    title="下载图片"
-                                                >
-                                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6 text-white">
-                                                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                                                    </svg>
-                                                </button>
-                                            </>
-                                        ) : (
-                                            <div className={`w-full h-full flex items-center justify-center ${statusInfo.bg}`}>
-                                                {item.status === 'running' ? (
-                                                    <LoaderIcon className="w-5 h-5 animate-spin text-indigo-400" />
-                                                ) : item.status === 'failed' ? (
-                                                    <span className="text-lg">✗</span>
-                                                ) : item.status === 'cancelled' ? (
-                                                    <span className="text-lg">⚠</span>
-                                                ) : (
-                                                    <span className="text-slate-600 text-lg font-bold">
-                                                        {item.shot_number || '?'}
-                                                    </span>
-                                                )}
-                                            </div>
-                                        )}
-                                        <div className={`absolute bottom-0 left-0 right-0 py-0.5 text-center text-[9px] font-bold ${statusInfo.bg} ${statusInfo.color} backdrop-blur-sm`}>
-                                            {statusInfo.label}
-                                        </div>
-                                    </div>
-                                    <div className="px-1.5 py-1 text-center">
-                                        <span className="text-[10px] text-slate-500 truncate block">
-                                            S{item.scene_number}.{item.shot_number}
-                                        </span>
-                                    </div>
-                                </div>
-                            );
-                        })}
-                    </div>
+                    {/* Item list is now shown in the 12-panel storyboard grid above.
+                        Live status per item is overlaid via itemsByShot lookup. */}
                 </div>
             )}
         </div>
