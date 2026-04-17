@@ -2,7 +2,7 @@
  * ShotListView — Enhanced shot-level storyboard view
  * Shows detailed shot breakdowns per scene with editing, AI rewrite, and field locking.
  */
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { StoryboardProject, Scene, Shot, ShotImage, ShotRevision, Language, VideoModel, StoryEntity } from '../types';
 import { generateShots, rewriteShotFields } from '../services/shotService';
 import { useAppContext } from '../context/AppContext';
@@ -504,6 +504,95 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
     const [generatingScenes, setGeneratingScenes] = useState<Set<number>>(new Set());
     const [error, setError] = useState<string | null>(null);
 
+    // ── Scene grouping ──────────────────────────────────────────────────────────
+    // project.scenes from the AI pipeline stores ONE ENTRY PER SHOT (shots-as-scenes).
+    // Each entry has shot_id, image_prompt, camera_angle, etc. — it IS a shot.
+    // We group by scene_id (UUID, available right after generation) or scene_title
+    // (the only grouping key surviving a DB round-trip) to collapse repeated location
+    // cards into actual scene groups, each with its shots array.
+    const sceneGroups = useMemo<Array<{ scene: Scene; shots: Shot[] }>>(() => {
+        if (!project.scenes.length) return [];
+
+        const groups = new Map<string, { scene: Scene; shots: Shot[] }>();
+        let groupIndex = 0;
+
+        project.scenes.forEach(sceneEntry => {
+            // scene_id (UUID) is best — unique per actual scene across the whole film.
+            // scene_title (location string) is the fallback when reloaded from DB.
+            // Do NOT fall through to scene_number — that is the global SHOT index.
+            const raw = sceneEntry as any;
+            const groupKey = raw.scene_id || raw.scene_title || `group-${groupIndex}`;
+
+            if (!groups.has(groupKey)) {
+                groupIndex++;
+                const representativeScene: Scene = {
+                    ...sceneEntry,
+                    scene_number: groupIndex, // Re-assign sequential 1..N for scene cards
+                };
+                groups.set(groupKey, { scene: representativeScene, shots: [] });
+            }
+
+            // Each project.scenes entry IS a shot — cast to Shot for rendering.
+            // It has image_prompt, camera_angle, action, emotional_beat, etc.
+            const asShot: Shot = {
+                shot_id:         raw.shot_id         || sceneEntry.id || `shot-${sceneEntry.scene_number}`,
+                scene_id:        raw.scene_id        || '',
+                scene_title:     raw.scene_title     || '',
+                shot_number:     raw.shot_number     || groups.get(groupKey)!.shots.length + 1,
+                duration_sec:    sceneEntry.duration_sec || 3,
+                location:        raw.scene_setting   || raw.location || '',
+                location_type:   raw.location_type   || 'INT',
+                time_of_day:     raw.time_of_day     || '',
+                characters:      Array.isArray(raw.characters) ? raw.characters : [],
+                action:          raw.action          || sceneEntry.visual_description || '',
+                dialogue:        sceneEntry.dialogue_text || '',
+                camera:          raw.camera_angle    || raw.camera || 'medium',
+                lens:            raw.lens_hint       || raw.lens   || '35mm',
+                movement:        raw.camera_motion   || raw.movement || 'static',
+                composition:     raw.framing         || raw.composition || '',
+                lighting:        raw.lighting        || '',
+                art_direction:   raw.art_direction   || '',
+                mood:            raw.emotional_beat  || raw.mood   || '',
+                sfx_vfx:         raw.sfx_vfx         || '',
+                audio_notes:     raw.audio_notes     || sceneEntry.audio_description || '',
+                continuity_notes: raw.continuity_notes || '',
+                image_prompt:    sceneEntry.image_prompt || '',
+                video_prompt:    raw.video_prompt    || raw.video_motion_prompt || sceneEntry.video_motion_prompt || '',
+                negative_prompt: raw.negative_prompt || '',
+                image_url:       sceneEntry.image_url,
+                video_url:       sceneEntry.video_url,
+                status:          raw.status          || 'draft',
+                locked_fields:   raw.locked_fields   || [],
+                version:         raw.version         || 1,
+            } as Shot;
+
+            groups.get(groupKey)!.shots.push(asShot);
+        });
+
+        return Array.from(groups.values());
+    }, [project.scenes]);
+
+    // ── Auto-populate shotsByScene from project.scenes on mount/project change ──
+    // Runs once when sceneGroups is ready, before the user manually clicks Generate.
+    // If the user has already generated/edited shots (shotsByScene non-empty), we do
+    // not overwrite their work.
+    useEffect(() => {
+        if (sceneGroups.length === 0) return;
+        setShotsByScene(prev => {
+            // Only initialize if empty — never overwrite user-triggered shots
+            if (Object.keys(prev).length > 0) return prev;
+            const initial: Record<number, Shot[]> = {};
+            sceneGroups.forEach(({ shots }, idx) => {
+                if (shots.length > 0) {
+                    initial[idx + 1] = shots;
+                }
+            });
+            if (Object.keys(initial).length === 0) return prev;
+            console.log(`[ShotListView] Auto-populated ${sceneGroups.length} scene groups with ${Object.values(initial).flat().length} shots from project.scenes`);
+            return initial;
+        });
+    }, [sceneGroups]);
+
     // Revision history (in-memory for now, can persist to DB)
     const [revisionHistory, setRevisionHistory] = useState<Record<string, ShotRevision[]>>({});
 
@@ -660,9 +749,13 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
     }, [isAuthenticated, hasEnoughCredits, openPricingModal, project, settings.lang, handleUpdateShot, refreshBalance]);
 
     const handleGenerateAll = async () => {
-        for (const scene of project.scenes) {
-            if (shotsByScene[scene.scene_number]?.length) continue; // Skip already generated
-            await handleGenerateShots(scene);
+        for (const { scene: groupScene, shots: groupShots } of sceneGroups) {
+            const sceneNum = groupScene.scene_number;
+            // Skip if already has user-generated shots OR already has auto-populated shots
+            const existing = shotsByScene[sceneNum];
+            if (existing?.length) continue;
+            if (groupShots?.length) continue;
+            await handleGenerateShots(groupScene);
         }
     };
 
@@ -766,10 +859,12 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
         setChainLog("🔒 全片物理锁链已启动，系统已锁定，请勿重复操作...");
         setIsChainRunning(true);
 
-        // Step 1: 自动验证是否所有场景都已生成拆分镜头
+        // Step 1: 自动验证是否所有场景都已生成拆分镜头 (uses sceneGroups — real grouped scenes)
         let hasMissingShots = false;
-        for (const scene of project.scenes) {
-            if (!shotsByScene[scene.scene_number] || shotsByScene[scene.scene_number].length === 0) {
+        for (const { scene: gs, shots: gs_shots } of sceneGroups) {
+            const sn = gs.scene_number;
+            const loaded = shotsByScene[sn];
+            if ((!loaded || loaded.length === 0) && (!gs_shots || gs_shots.length === 0)) {
                 hasMissingShots = true;
                 break;
             }
@@ -783,12 +878,14 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
         let globalAutoAnchorBase64: string | null = null; // ★ 新增：全片第一帧垫图锚点
 
         try {
-            // Step 2: 遍历大循环 (All Scenes -> All Shots)
-            for (let sIdx = 0; sIdx < project.scenes.length; sIdx++) {
-                const rawScene = project.scenes[sIdx];
-                // ★ 合并场次外挂数据（包含用户上传的定妆图）
-                const scene = { ...rawScene, ...(sceneDataMap[rawScene.scene_number] || {}) };
-                const sceneShots = shotsByScene[scene.scene_number] || [];
+            // Step 2: 遍历大循环 — iterate real scene groups (not flat project.scenes)
+            for (let sIdx = 0; sIdx < sceneGroups.length; sIdx++) {
+                const { scene: rawScene, shots: groupShots } = sceneGroups[sIdx];
+                const sn = rawScene.scene_number;
+                // Merge per-scene overrides (reference image, etc.)
+                const scene = { ...rawScene, ...(sceneDataMap[sn] || {}) };
+                // Prefer user-generated shots; fall back to auto-populated group shots
+                const sceneShots = (shotsByScene[sn]?.length ? shotsByScene[sn] : groupShots) || [];
 
                 for (let i = 0; i < sceneShots.length; i++) {
                     const shot = sceneShots[i];
@@ -951,7 +1048,7 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                     handleUpdateShot(scene.scene_number, shot.shot_id, { video_url: videoUrl });
 
                     // 为下一次循环准备血脉！(哪怕是下一个scene，它也会在下一次被吸纳)
-                    const isVeryLastShotInWholeMovie = (sIdx === project.scenes.length - 1) && (i === sceneShots.length - 1);
+                    const isVeryLastShotInWholeMovie = (sIdx === sceneGroups.length - 1) && (i === sceneShots.length - 1);
                     if (!isVeryLastShotInWholeMovie) {
                         setChainLog(`当前镜头渲染完毕，正在静默截取最后 0.1s 绝对尾帧准备跨域接力...`);
                         globalTailFrameBase64 = await extractLastFrameWithFallback(videoUrl);
@@ -981,7 +1078,7 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                     <div>
                         <h2 className="text-xl font-bold text-white mb-1">🎬 {project.project_title} — 镜头列表</h2>
                         <div className="flex gap-2 text-[10px] uppercase font-bold tracking-wider text-slate-500 items-center">
-                            <span>{project.scenes.length} Scenes</span>
+                            <span>{sceneGroups.length} Scenes</span>
                             <span>•</span>
                             <span>{totalShots} Shots</span>
                             <span>•</span>
@@ -1135,31 +1232,43 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                 />
             )}
 
-            {/* Scene sections */}
+            {/* Scene sections — rendered from sceneGroups (real scenes with their shots) */}
             <div className="space-y-6">
-                {project.scenes.map((scene, idx) => {
-                    // ★ 合并场次狠态数据（包含用户上传的定妆图）
-                    const mergedScene = { ...scene, ...(sceneDataMap[scene.scene_number] || {}) };
+                {sceneGroups.length === 0 ? (
+                    /* Hard warning: no scenes loaded at all */
+                    <div className="text-center py-20 border border-dashed border-slate-700 rounded-2xl">
+                        <div className="text-5xl mb-4">🎬</div>
+                        <div className="text-xl font-bold text-slate-300 mb-2">没有镜头数据</div>
+                        <div className="text-sm text-slate-500 mb-1">当前项目没有已生成的镜头</div>
+                        <div className="text-xs text-slate-600">请先在脚本页面生成剧本，然后返回镜头列表</div>
+                    </div>
+                ) : sceneGroups.map(({ scene: groupScene, shots: groupShots }, idx) => {
+                    // sceneGroups uses 1-based index as scene_number (re-assigned in useMemo)
+                    const sceneNum = idx + 1;
+                    // Merge with any per-scene overrides the user has set (reference image, etc.)
+                    const mergedScene = { ...groupScene, scene_number: sceneNum, ...(sceneDataMap[sceneNum] || {}) };
+                    // Prefer user-generated shots (from clicking "Generate Shots") over auto-populated
+                    const shotsForScene = shotsByScene[sceneNum] || groupShots;
                     return (
                         <SceneSection
-                            key={scene.scene_number}
+                            key={sceneNum}
                             scene={mergedScene}
                             sceneIndex={idx}
-                            shots={shotsByScene[scene.scene_number] || []}
-                            isGenerating={generatingScenes.has(scene.scene_number)}
-                            onGenerateShots={() => handleGenerateShots(scene)}
-                            onUpdateShot={(shotId, updates) => handleUpdateShot(scene.scene_number, shotId, updates)}
-                            onRewriteShot={(shot, fields, instruction) => handleRewriteShot(scene.scene_number, shot, fields, instruction)}
+                            shots={shotsForScene}
+                            isGenerating={generatingScenes.has(sceneNum)}
+                            onGenerateShots={() => handleGenerateShots(mergedScene)}
+                            onUpdateShot={(shotId, updates) => handleUpdateShot(sceneNum, shotId, updates)}
+                            onRewriteShot={(shot, fields, instruction) => handleRewriteShot(sceneNum, shot, fields, instruction)}
                             project={project}
                             imagesByShot={imagesByShot}
                             onImagesChange={handleImagesChange}
                             effectiveProjectId={effectiveProjectId}
                             referenceImageDataUrl={referenceImageDataUrl}
-                            onUpdateScene={(updates) => handleUpdateScene(scene.scene_number, updates)}
+                            onUpdateScene={(updates) => handleUpdateScene(sceneNum, updates)}
                             videoModel={settings.videoModel}
                             lang={settings.lang}
-                            voiceUrl={sceneVoices[scene.scene_number]}
-                            voiceTiming={sceneTiming[scene.scene_number]}
+                            voiceUrl={sceneVoices[sceneNum]}
+                            voiceTiming={sceneTiming[sceneNum]}
                         />
                     );
                 })}

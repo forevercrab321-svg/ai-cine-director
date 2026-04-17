@@ -3844,7 +3844,8 @@ You MUST return EXACTLY ONE JSON object strictly matching this schema. Return ex
 
             return {
                 shot_id: crypto.randomUUID(),
-                scene_id: '', scene_title: result.scene_title || `Scene ${scene_number || 1}`,
+                scene_id: inferredProjectId ? `scene-${inferredProjectId}-${scene_number || 1}` : `scene-${scene_number || 1}`,
+                scene_title: result.scene_title || `Scene ${scene_number || 1}`,
                 shot_number: s.shot_number || idx + 1, duration_sec: s.duration_sec || 3,
                 location_type: s.location_type || 'INT', location: s.location || '',
                 time_of_day: s.time_of_day || 'day',

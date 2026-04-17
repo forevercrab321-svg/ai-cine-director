@@ -41,6 +41,7 @@ function dbRowToProject(row: any, scenes: Scene[] = []): StoryboardProject {
 
 // ─── Map Scene → DB payload ───────────────────────────────────────────────────
 function sceneToDbPayload(scene: Scene, storyboardId: string): any {
+    const raw = scene as any;
     const payload: any = {
         storyboard_id:       storyboardId,
         scene_number:        scene.scene_number || 1,
@@ -50,13 +51,21 @@ function sceneToDbPayload(scene: Scene, storyboardId: string): any {
         image_prompt:        scene.image_prompt        || '',
         image_url:           scene.image_url           || null,
         video_url:           scene.video_url           || null,
-        video_motion_prompt: scene.video_motion_prompt || (scene as any).video_prompt || null,
-        scene_title:         (scene as any).scene_title        || null,
-        dramatic_function:   (scene as any).dramatic_function  || null,
-        tension_level:       (scene as any).tension_level      ?? null,
-        emotional_beat:      (scene as any).emotional_beat     || null,
+        video_motion_prompt: scene.video_motion_prompt || raw.video_prompt || null,
+        scene_title:         raw.scene_title        || null,
+        dramatic_function:   raw.dramatic_function  || null,
+        tension_level:       raw.tension_level      ?? null,
+        emotional_beat:      raw.emotional_beat     || null,
         dialogue_text:       scene.dialogue_text               || null,
         dialogue_speaker:    scene.dialogue_speaker            || null,
+        // ★ Shot-identity fields — critical for scene grouping after DB round-trip.
+        // These columns may not exist on pre-migration DBs; the saveStoryboard
+        // fallback strips unknown columns if Postgres returns 42703.
+        shot_id:             raw.shot_id    || null,
+        source_scene_id:     raw.scene_id   || null,   // actual scene UUID (groups shots together)
+        camera_angle:        raw.camera_angle  || raw.camera  || null,
+        camera_motion:       raw.camera_motion || raw.movement || null,
+        characters_json:     Array.isArray(raw.characters) ? JSON.stringify(raw.characters) : null,
     };
     if (scene.id && scene.id.includes('-')) {
         payload.id = scene.id;
@@ -66,7 +75,13 @@ function sceneToDbPayload(scene: Scene, storyboardId: string): any {
 
 // ─── Map DB scene row → Scene ─────────────────────────────────────────────────
 function dbRowToScene(row: any): Scene {
-    return {
+    // Restore characters array from JSON string saved by sceneToDbPayload
+    let restoredCharacters: string[] = [];
+    if (row.characters_json) {
+        try { restoredCharacters = JSON.parse(row.characters_json); } catch { /* ignore */ }
+    }
+
+    const scene: any = {
         id:                  row.id,
         scene_number:        row.scene_number,
         visual_description:  row.visual_description || '',
@@ -82,7 +97,14 @@ function dbRowToScene(row: any): Scene {
         emotional_beat:      row.emotional_beat      || undefined,
         dialogue_text:       row.dialogue_text        || undefined,
         dialogue_speaker:    row.dialogue_speaker     || undefined,
-    } as Scene;
+        // ★ Shot-identity fields restored from DB (may be null on pre-migration rows)
+        shot_id:             row.shot_id             || undefined,
+        scene_id:            row.source_scene_id     || undefined, // restored as scene_id for grouping
+        camera_angle:        row.camera_angle        || undefined,
+        camera_motion:       row.camera_motion       || undefined,
+        characters:          restoredCharacters.length > 0 ? restoredCharacters : undefined,
+    };
+    return scene as Scene;
 }
 
 // ─── saveStoryboard ───────────────────────────────────────────────────────────
@@ -154,8 +176,14 @@ export const saveStoryboard = async (
 
         let savedScenes: any[] = [];
 
-        // Columns added by migration — strip them if column-missing error
-        const newSceneColumns = ['scene_title','dramatic_function','tension_level','emotional_beat','dialogue_text','dialogue_speaker'];
+        // Columns added by migration — strip them if column-missing error.
+        // shot_id, source_scene_id, camera_angle, camera_motion, characters_json are
+        // Phase 2 additions; strip them on pre-migration DBs so save still succeeds.
+        const newSceneColumns = [
+            'scene_title','dramatic_function','tension_level','emotional_beat',
+            'dialogue_text','dialogue_speaker',
+            'shot_id','source_scene_id','camera_angle','camera_motion','characters_json',
+        ];
         const stripNewSceneColumns = (rows: any[]) => rows.map(r => {
             const clean = { ...r };
             newSceneColumns.forEach(k => delete clean[k]);
