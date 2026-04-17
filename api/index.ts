@@ -603,7 +603,7 @@ app.use(slowQueryLogMiddleware(2000));            // 慢请求监控
 const getReplicateToken = () => {
     const raw = process.env.REPLICATE_API_TOKEN;
     const token = raw?.replace(/\s+/g, '');
-    if (!token) throw new Error('REPLICATE_API_TOKEN not configured');
+    if (!token) throw new Error('Image/video generation unavailable: missing REPLICATE_API_TOKEN. Provider: Replicate (Flux/Wan/Kling/Veo). Set this in Vercel → Settings → Environment Variables.');
     return token;
 };
 
@@ -1573,12 +1573,25 @@ app.post('/api/replicate/generate-image', requireAuth, async (req: any, res: any
 
             const promptWithLocks = `${prompt} ${entityRules} ${legacyAnchorRule}`.trim();
             const finalPrompt = appendLockedCastToPrompt(promptWithLocks, storyEntities);
+            const nonHumanGuide = detectNonHumanCharacterGuide(
+                finalPrompt,
+                characterAnchor,
+                ...(Array.isArray(storyEntities) ? storyEntities.map((e: any) => `${e?.name || ''} ${e?.description || ''}`) : [])
+            );
+            const modelToRun = (REPLICATE_MODEL_PATHS as any)[imageModel] || REPLICATE_MODEL_PATHS['flux'];
+            const useUniversalGuide = !!referenceImageDataUrl;
+            const disableFaceCloning = nonHumanGuide.hasNonHuman || isRemoteImageReference(referenceImageDataUrl);
 
-            // ★ Gemini image generation — no Replicate dependency
-            const result = await callGeminiImage({
+            // ★ Replicate image generation (Flux / PuLID face-clone)
+            const result = await callReplicateImage({
                 prompt: finalPrompt,
+                model: modelToRun,
                 aspectRatio: aspectRatio || '16:9',
-                referenceImageDataUrl: referenceImageDataUrl || undefined,
+                seed: null,
+                imagePrompt: useUniversalGuide ? referenceImageDataUrl : undefined,
+                referenceImageDataUrl: referenceImageDataUrl,
+                disableFaceCloning,
+                allowReferenceFallback: true,
             });
             resultUrl = result.url;
         } catch (genErr: any) {
@@ -1591,8 +1604,23 @@ app.post('/api/replicate/generate-image', requireAuth, async (req: any, res: any
         res.json({ url: resultUrl });
     } catch (err: any) {
         console.error('[/api/replicate/generate-image Error]', err);
+        if (err.message === 'FACE_ALIGN_FAIL') {
+            return res.status(400).json({ error: '未能检测到清晰的人物面部；系统已自动回退到物种安全模式。请尝试更清晰的参考图或使用文本锚点。' });
+        }
+        if (err.message?.includes('REPLICATE_API_TOKEN')) {
+            return res.status(500).json({ error: 'Image generation unavailable: missing REPLICATE_API_TOKEN. Provider: Replicate. Endpoint: /api/replicate/generate-image.' });
+        }
         const status = Number(err?.status) || 500;
-        res.status(status).json({ error: err.message || 'Image generation failed' });
+        const isRateLimited = status === 429 || /throttle|rate\s*limit|too many/i.test(String(err?.message || ''));
+        if (isRateLimited) {
+            return res.status(429).json({
+                error: err?.message || '请求过于频繁，触发上游限流，请稍后重试。',
+                code: err?.code || 'RATE_LIMITED',
+                retry_after: err?.retryAfter,
+                detail: err?.detail,
+            });
+        }
+        res.status(status).json({ error: err.message || 'Replicate image generation failed', code: err?.code, retry_after: err?.retryAfter });
     }
 });
 
@@ -2031,89 +2059,13 @@ app.get('/api/replicate/status/:id', requireAuth, async (req: any, res: any) => 
 
 const getGeminiAI = () => {
     const apiKey = process.env.GEMINI_API_KEY?.replace(/\s+/g, '');
-    if (!apiKey) throw new Error('GEMINI_API_KEY not configured');
+    if (!apiKey) throw new Error('AI planning unavailable: missing GEMINI_API_KEY. Provider: Gemini (script/director/storyboard/analysis). Set this in Vercel → Settings → Environment Variables.');
     // @ts-ignore
     return new GoogleGenAI({ apiKey });
 };
 
 const GEMINI_TEXT_MODEL = 'gemini-2.0-flash';
-const GEMINI_IMAGE_MODEL = 'gemini-2.0-flash-preview-image-generation';
-
-// ═══════════════════════════════════════════════════════════════
-// Gemini Image Generation — replaces Replicate/Flux for image gen
-// ═══════════════════════════════════════════════════════════════
-async function callGeminiImage(params: {
-    prompt: string;
-    aspectRatio?: string;
-    referenceImageDataUrl?: string; // base64 data URL for character reference
-    negativePrompt?: string;        // appended to prompt text
-    seed?: number | null;           // ignored (Gemini doesn't support fixed seeds)
-}): Promise<{ url: string; predictionId: string }> {
-    const ai = getGeminiAI();
-    const parts: any[] = [];
-
-    // If a reference image is provided, prepend it so Gemini sees the character first
-    if (params.referenceImageDataUrl) {
-        const refStr = params.referenceImageDataUrl.trim();
-        const cleanBase64 = refStr.includes(',') ? refStr.split(',')[1] : refStr;
-        const prefixMatch = refStr.match(/^data:(image\/[a-zA-Z+]+);base64,/);
-        const refMime = prefixMatch ? prefixMatch[1] : 'image/jpeg';
-        if (cleanBase64.length > 0) {
-            parts.push({ inlineData: { mimeType: refMime, data: cleanBase64 } });
-        }
-    }
-
-    // Build text prompt (include negative hints as instruction)
-    let textPrompt = params.prompt;
-    if (params.negativePrompt) {
-        textPrompt += `\n\nAvoid: ${params.negativePrompt}`;
-    }
-    if (params.aspectRatio) {
-        textPrompt += `\n\nGenerate in ${params.aspectRatio} aspect ratio.`;
-    }
-    parts.push({ text: textPrompt });
-
-    // @ts-ignore — responseModalities is supported in @google/genai >= 1.x
-    const result = await ai.models.generateContent({
-        model: GEMINI_IMAGE_MODEL,
-        contents: [{ role: 'user', parts }],
-        generationConfig: {
-            responseModalities: ['TEXT', 'IMAGE'],
-        },
-    });
-
-    const resultParts: any[] = result?.candidates?.[0]?.content?.parts || [];
-    const imagePart = resultParts.find((p: any) => p.inlineData?.data);
-    if (!imagePart?.inlineData?.data) {
-        throw new Error('Gemini image generation returned no image data. Check GEMINI_API_KEY and model availability.');
-    }
-
-    const mimeType: string = imagePart.inlineData.mimeType || 'image/png';
-    const ext = mimeType.includes('png') ? 'png' : 'jpeg';
-    const imageBuffer = Buffer.from(imagePart.inlineData.data, 'base64');
-    const fileName = `gemini_img/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
-
-    const supabaseAdmin = getSupabaseAdmin();
-
-    // Ensure 'videos' bucket exists
-    const { data: buckets } = await supabaseAdmin.storage.listBuckets();
-    if (!buckets?.find((b: any) => b.name === 'videos')) {
-        await supabaseAdmin.storage.createBucket('videos', { public: true, fileSizeLimit: '50MB' });
-    }
-
-    const { error: uploadErr } = await supabaseAdmin.storage
-        .from('videos')
-        .upload(fileName, imageBuffer, { contentType: mimeType, upsert: true });
-
-    if (uploadErr) throw new Error(`Supabase image upload failed: ${uploadErr.message}`);
-
-    const { data: urlData } = supabaseAdmin.storage
-        .from('videos')
-        .getPublicUrl(fileName);
-
-    const predictionId = `gemini-img-${Date.now()}`;
-    return { url: urlData.publicUrl, predictionId };
-}
+// NOTE: Gemini is ONLY used for planning/analysis/text. Image and video generation use Replicate.
 
 const getGeminiTextCompletion = async (promptContent: any, options: {
     systemInstruction?: string;
@@ -4274,12 +4226,17 @@ app.post('/api/shot-images/:shotId/generate', async (req: any, res: any) => {
                     promptCandidate = strengthenPromptForRetry(promptCandidate, continuityProfile, attempt, scored.failures);
                 }
 
-                // ★ Gemini image generation — no Replicate dependency
-                result = await callGeminiImage({
+                // ★ Replicate image generation (provider: Replicate, env: REPLICATE_API_TOKEN)
+                result = await callReplicateImage({
                     prompt: promptCandidate,
                     negativePrompt: continuityNegative,
+                    model: replicatePath,
                     aspectRatio: aspect_ratio || '16:9',
-                    referenceImageDataUrl: (!isRemoteImageReference(referenceImageDataUrl) && referenceImageDataUrl) ? referenceImageDataUrl : undefined,
+                    seed: seed ?? 142857,
+                    imagePrompt: effectiveGuideImage,
+                    referenceImageDataUrl: referenceImageDataUrl || undefined,
+                    disableFaceCloning,
+                    allowReferenceFallback: true,
                 });
 
                 if (scored.overall >= threshold || attempt === maxAttempts) {
@@ -4479,11 +4436,14 @@ app.post('/api/shot-images/:imageId/edit', async (req: any, res: any) => {
                 if (scored.overall < threshold) {
                     candidate = strengthenPromptForRetry(candidate, continuityProfile, attempt, scored.failures);
                 }
-                // ★ Gemini image generation — no Replicate dependency
-                result = await callGeminiImage({
+                // ★ Replicate image generation (provider: Replicate, env: REPLICATE_API_TOKEN)
+                result = await callReplicateImage({
                     prompt: candidate,
                     negativePrompt: continuityNegative,
+                    model: replicatePath,
                     aspectRatio: aspect_ratio || '16:9',
+                    seed: editSeed,
+                    imagePrompt: memoryReference || undefined,
                 });
                 if (scored.overall >= threshold || attempt === maxAttempts) {
                     finalPrompt = candidate;
@@ -5223,12 +5183,14 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
                     if (scored.overall < threshold) {
                         candidate = strengthenPromptForRetry(candidate, continuityProfile, attempt, scored.failures);
                     }
-                    // ★ Gemini image generation — no Replicate dependency
-                    result = await callGeminiImage({
+                    // ★ Replicate image generation (provider: Replicate, env: REPLICATE_API_TOKEN)
+                    result = await callReplicateImage({
                         prompt: candidate,
                         negativePrompt: continuityNegative,
+                        model: replicatePath,
                         aspectRatio: aspect_ratio,
-                        referenceImageDataUrl: isRemoteImageReference(payload.reference_image_url) ? undefined : payload.reference_image_url,
+                        seed: shotData.seed_hint ?? computeDeterministicShotSeed(projectSeed, shotData.shot_id, shotData.shot_number),
+                        imagePrompt: payload.reference_image_url,
                     });
                     if (scored.overall >= threshold || attempt === maxAttempts) {
                         finalPrompt = candidate;
@@ -5497,12 +5459,14 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
                     firstFrameInScene: firstFrameByScene.get(String(shotData.scene_id || '')),
                 });
 
-                // ★ Gemini image generation — no Replicate dependency
-                const result = await callGeminiImage({
+                // ★ Replicate image generation (provider: Replicate, env: REPLICATE_API_TOKEN)
+                const result = await callReplicateImage({
                     prompt: payload.prompt,
                     negativePrompt: payload.negative_prompt,
+                    model: replicatePath,
                     aspectRatio: aspect_ratio,
-                    referenceImageDataUrl: isRemoteImageReference(payload.reference_image_url) ? undefined : payload.reference_image_url,
+                    seed: shotData.seed_hint ?? computeDeterministicShotSeed(projectSeed, shotData.shot_id, shotData.shot_number),
+                    imagePrompt: payload.reference_image_url,
                 });
                 if (result.url) {
                     generatedByShot.set(item.shot_id, result.url);
@@ -5615,8 +5579,8 @@ app.post('/api/batch/:jobId/retry', async (req: any, res: any) => {
             let finalPrompt = buildFinalPrompt({ basePrompt: shotData?.image_prompt || '', characterAnchor: character_anchor, style, referencePolicy: shotData?.reference_policy || 'anchor' });
             finalPrompt = applyContinuityLocks(finalPrompt, continuityProfile);
             const continuityNegative = buildContinuityNegativePrompt('', continuityProfile);
-            // ★ Gemini image generation — no Replicate dependency
-            const result = await callGeminiImage({ prompt: finalPrompt, negativePrompt: continuityNegative, aspectRatio: aspect_ratio });
+            // ★ Replicate image generation (provider: Replicate, env: REPLICATE_API_TOKEN)
+            const result = await callReplicateImage({ prompt: finalPrompt, negativePrompt: continuityNegative, model: replicatePath, aspectRatio: aspect_ratio, seed: shotData?.seed_hint ?? retryProjectSeed });
             return { image_id: crypto.randomUUID(), image_url: result.url };
         };
         const ok = retryFailedBatchItems(req.params.jobId, executor);
@@ -6212,7 +6176,7 @@ app.get('/api/audio/elevenlabs/voices', async (req: any, res: any) => {
     try {
         const elevenlabsKey = process.env.ELEVENLABS_API_KEY;
         if (!elevenlabsKey) {
-            return res.status(500).json({ error: 'ElevenLabs API not configured' });
+            return res.status(500).json({ error: 'Voice unavailable: missing ELEVENLABS_API_KEY. Provider: ElevenLabs. Endpoint: /api/audio/elevenlabs/voices. Set in Vercel → Settings → Environment Variables.' });
         }
 
         // Try to get voices from ElevenLabs API
