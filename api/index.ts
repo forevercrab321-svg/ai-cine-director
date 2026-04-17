@@ -612,7 +612,8 @@ let _supabaseAdminSingleton: ReturnType<typeof createClient> | null = null;
 const getSupabaseAdmin = () => {
     const url = (process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim();
     const key = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
-    if (!url || !key) throw new Error('Supabase URL or Service Key missing');
+    if (!url) throw new Error('Supabase admin unavailable: missing SUPABASE URL. Set VITE_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL in Vercel → Settings → Environment Variables.');
+    if (!key) throw new Error('Supabase admin unavailable: missing SUPABASE_SERVICE_ROLE_KEY. Set this in Vercel → Settings → Environment Variables (server scope).');
     if (!_supabaseAdminSingleton) {
         _supabaseAdminSingleton = createClient(url, key);
     }

@@ -679,7 +679,8 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                 // Simple heuristic: check if hair/face hints suggest gender, else default
                 const nameLower = (char.name as string).toLowerCase();
                 const isFemale = /she|her|woman|female|girl|lady/.test(nameLower)
-                    || /she|her|woman|female|girl|lady/.test((char.face_traits ?? '').toLowerCase());
+                    || /她|女|女士|小姐|姐姐|妹妹|姐|妹|阿姨|女孩|女生|太太|夫人/.test(char.name as string)
+                    || /she|her|woman|female|girl|lady|她|女|女士|小姐|姐|妹/.test((char.face_traits ?? '').toLowerCase());
                 character_voices[char.name] = isFemale ? 'zh_female_shuang' : 'zh_male_yong';
             }
             console.log('[ShotListView] character_voices map:', character_voices);
