@@ -104,6 +104,9 @@ const getShotDelta = (currentShot: any, previousShot?: any): ShotDeltaReport => 
   const comparePairs: Array<{ key: string; current: string; previous: string }> = [
     { key: 'location', current: norm(currentShot?.location || currentShot?.scene_setting), previous: norm(previousShot?.location || previousShot?.scene_setting) },
     { key: 'characters', current: toListString(currentShot?.characters), previous: toListString(previousShot?.characters) },
+    // image_prompt is the per-shot Gemini directive — must be compared so shots that differ
+    // only in their AI-generated description are correctly flagged as changed
+    { key: 'image_prompt', current: norm(currentShot?.image_prompt), previous: norm(previousShot?.image_prompt) },
     { key: 'action', current: norm(currentShot?.action || currentShot?.visual_description), previous: norm(previousShot?.action || previousShot?.visual_description) },
     { key: 'emotion', current: norm(currentShot?.emotion || currentShot?.mood || currentShot?.emotional_beat), previous: norm(previousShot?.emotion || previousShot?.mood || previousShot?.emotional_beat) },
     { key: 'camera_framing', current: norm(currentShot?.camera_framing || currentShot?.composition || currentShot?.framing), previous: norm(previousShot?.camera_framing || previousShot?.composition || previousShot?.framing) },
@@ -185,7 +188,9 @@ export function buildShotImagePrompt(input: ShotPromptCompilerInput): CompiledSh
   const shotDescription = getField(shot, scene, ['image_prompt', 'shot_description', 'visual_description', 'action'], 'Character beat in motion');
   const location = getField(shot, scene, ['location', 'scene_setting'], 'Unknown location');
   const timeOfDay = getField(shot, scene, ['time_of_day'], 'unspecified time');
-  const action = getField(shot, scene, ['image_prompt', 'action', 'shot_description', 'visual_description'], shotDescription);
+  // action intentionally does NOT include image_prompt — that's already the `THIS SHOT:` lead directive.
+  // Using it here too would triple-repeat it and collapse model attention on unique action semantics.
+  const action = getField(shot, scene, ['action', 'shot_description', 'visual_description'], shotDescription);
   const emotion = getField(shot, scene, ['emotion', 'mood', 'emotional_beat'], 'cinematic tension');
   const cameraFraming = getField(shot, scene, ['camera_framing', 'composition', 'framing'], 'balanced framing');
   const cameraAngle = getField(shot, scene, ['camera_angle'], 'medium');

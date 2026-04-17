@@ -5,6 +5,266 @@ import { t } from '../i18n';
 import { supabase } from '../lib/supabaseClient';
 import { isDeveloperEmail } from '../context/AppContext';
 
+// ─── Camera Boot Animation ───────────────────────────────────────────────────
+// Simulates a cinema camera powering on: lens aperture opens → viewfinder
+// overlays appear → CAMERA READY → fades to reveal the login form.
+const CameraBootAnimation: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
+  const [stage, setStage] = useState(0);
+  // stage 0 = black
+  // stage 1 = lens/body fades in        (~200ms)
+  // stage 2 = aperture opens            (~800ms)
+  // stage 3 = viewfinder UI appears     (~1400ms)
+  // stage 4 = CAMERA READY + fade-out  (~2200ms)
+  // onComplete called at              ~3000ms
+
+  // Store onComplete in a ref so the timer effect never re-runs when the parent
+  // re-renders (which would recreate the inline arrow fn and restart the animation).
+  const onCompleteRef = React.useRef(onComplete);
+  useEffect(() => { onCompleteRef.current = onComplete; }, [onComplete]);
+
+  useEffect(() => {
+    const t1 = setTimeout(() => setStage(1), 200);
+    const t2 = setTimeout(() => setStage(2), 800);
+    const t3 = setTimeout(() => setStage(3), 1400);
+    const t4 = setTimeout(() => setStage(4), 2200);
+    const t5 = setTimeout(() => onCompleteRef.current(), 3000);
+    return () => [t1, t2, t3, t4, t5].forEach(clearTimeout);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // empty deps — intentional: timers run once per mount
+
+  const tick = (i: number) => ({
+    position: 'absolute' as const,
+    width: '1px',
+    height: '9px',
+    top: '3px',
+    left: '50%',
+    background: 'rgba(255,255,255,0.18)',
+    transformOrigin: '50% 93px',
+    transform: `rotate(${i * 30}deg)`,
+  });
+
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0, zIndex: 300,
+        background: '#000',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        overflow: 'hidden',
+        opacity: stage >= 4 ? 0 : 1,
+        transition: 'opacity 0.75s ease-in-out',
+        pointerEvents: stage >= 4 ? 'none' : 'auto',
+      }}
+    >
+      {/* Custom keyframes injected inline */}
+      <style>{`
+        @keyframes cam-spin    { to { transform: rotate(360deg);  } }
+        @keyframes cam-spin-r  { to { transform: rotate(-360deg); } }
+        @keyframes cam-blink   { 0%,100%{opacity:1} 50%{opacity:0.2} }
+        @keyframes cam-scan    {
+          0%   { background-position: 0 0; }
+          100% { background-position: 0 4px; }
+        }
+      `}</style>
+
+      {/* Scanline texture */}
+      <div style={{
+        position: 'absolute', inset: 0, pointerEvents: 'none',
+        backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,0,0,0.18) 3px, rgba(0,0,0,0.18) 4px)',
+        animation: 'cam-scan 0.1s linear infinite',
+        opacity: 0.5,
+      }} />
+
+      {/* ── Lens Assembly ── */}
+      <div style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '28px',
+        opacity: stage >= 1 ? 1 : 0,
+        transform: stage >= 1 ? 'scale(1)' : 'scale(0.55)',
+        transition: 'opacity 0.6s ease-out, transform 0.7s cubic-bezier(0.34,1.4,0.64,1)',
+      }}>
+
+        {/* Outer lens ring */}
+        <div style={{
+          width: 176, height: 176, borderRadius: '50%',
+          border: '1px solid rgba(255,255,255,0.08)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          position: 'relative',
+          boxShadow: stage >= 2 ? '0 0 80px -20px rgba(99,102,241,0.45)' : 'none',
+          transition: 'box-shadow 1s ease',
+        }}>
+
+          {/* Rotating outer tick ring */}
+          <div style={{
+            position: 'absolute', inset: 0, borderRadius: '50%',
+            animation: stage >= 2 ? 'cam-spin 14s linear infinite' : 'none',
+          }}>
+            {Array.from({ length: 12 }).map((_, i) => (
+              <div key={i} style={tick(i)} />
+            ))}
+          </div>
+
+          {/* Counter-rotating middle ring */}
+          <div style={{
+            position: 'absolute',
+            width: 140, height: 140, borderRadius: '50%',
+            border: '1px solid rgba(99,102,241,0.2)',
+            animation: stage >= 2 ? 'cam-spin-r 7s linear infinite' : 'none',
+          }}>
+            {[0, 60, 120, 180, 240, 300].map((deg) => (
+              <div key={deg} style={{
+                position: 'absolute',
+                width: 8, height: 1,
+                background: 'rgba(99,102,241,0.35)',
+                top: '50%',
+                left: '50%',
+                transformOrigin: '0 0',
+                transform: `rotate(${deg}deg) translateX(68px)`,
+              }} />
+            ))}
+          </div>
+
+          {/* Inner lens barrel */}
+          <div style={{
+            width: 96, height: 96, borderRadius: '50%',
+            border: '1px solid rgba(255,255,255,0.06)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            position: 'relative', overflow: 'hidden',
+            background: stage >= 2
+              ? 'radial-gradient(circle, rgba(30,18,90,0.85) 0%, rgba(0,0,0,0.95) 70%)'
+              : 'radial-gradient(circle, #000 0%, #000 100%)',
+            transition: 'background 1.1s ease',
+            boxShadow: stage >= 2 ? 'inset 0 0 28px rgba(99,102,241,0.2)' : 'none',
+          }}>
+            {/* Iris aperture (clip-path expanding circle) */}
+            <div style={{
+              position: 'absolute', inset: 0, borderRadius: '50%',
+              background: 'radial-gradient(circle, rgba(55,35,140,0.5) 0%, rgba(15,8,50,0.7) 60%, transparent 100%)',
+              clipPath: stage >= 2 ? 'circle(48% at 50% 50%)' : 'circle(0% at 50% 50%)',
+              transition: 'clip-path 1.1s cubic-bezier(0.22,1,0.36,1)',
+            }} />
+            {/* Lens glare */}
+            <div style={{
+              position: 'absolute', top: 10, left: 16,
+              width: 22, height: 10, borderRadius: '50%',
+              background: 'rgba(255,255,255,0.07)',
+              filter: 'blur(4px)',
+              opacity: stage >= 2 ? 1 : 0,
+              transition: 'opacity 0.8s ease 0.4s',
+            }} />
+            {/* Center glow dot */}
+            <div style={{
+              width: 7, height: 7, borderRadius: '50%',
+              background: stage >= 2 ? 'rgba(130,100,255,0.9)' : 'transparent',
+              boxShadow: stage >= 2 ? '0 0 12px 3px rgba(99,102,241,0.6)' : 'none',
+              transition: 'all 0.8s ease 0.5s',
+            }} />
+          </div>
+        </div>
+
+        {/* Camera label */}
+        <div style={{ textAlign: 'center' }}>
+          <div style={{
+            fontSize: 9, letterSpacing: '0.5em', textTransform: 'uppercase',
+            fontFamily: 'monospace', color: 'rgba(255,255,255,0.28)',
+            opacity: stage >= 1 ? 1 : 0,
+            transition: 'opacity 0.5s ease 0.3s',
+          }}>CINE-DIRECTOR AI</div>
+          <div style={{
+            fontSize: 7, letterSpacing: '0.3em', textTransform: 'uppercase',
+            fontFamily: 'monospace', color: 'rgba(255,255,255,0.12)',
+            marginTop: 4,
+            opacity: stage >= 2 ? 1 : 0,
+            transition: 'opacity 0.5s ease 0.2s',
+          }}>PRODUCTION SUITE · INITIALIZING</div>
+        </div>
+      </div>
+
+      {/* ── Viewfinder Overlay (stage 3+) ── */}
+      {stage >= 3 && (
+        <>
+          {/* Corner brackets */}
+          {([
+            { top: 24, left: 24, borderTop: true, borderLeft: true },
+            { top: 24, right: 24, borderTop: true, borderRight: true },
+            { bottom: 24, left: 24, borderBottom: true, borderLeft: true },
+            { bottom: 24, right: 24, borderBottom: true, borderRight: true },
+          ] as any[]).map((pos, i) => (
+            <div key={i} style={{
+              position: 'absolute', width: 32, height: 32,
+              borderColor: 'rgba(255,255,255,0.22)',
+              borderStyle: 'solid',
+              borderTopWidth: pos.borderTop ? 1 : 0,
+              borderBottomWidth: pos.borderBottom ? 1 : 0,
+              borderLeftWidth: pos.borderLeft ? 1 : 0,
+              borderRightWidth: pos.borderRight ? 1 : 0,
+              top: pos.top, bottom: pos.bottom,
+              left: pos.left, right: pos.right,
+              animation: 'cam-spin-r 0s', /* trigger reflow */
+            }} />
+          ))}
+
+          {/* REC indicator */}
+          <div style={{
+            position: 'absolute', top: 28, right: 52,
+            display: 'flex', alignItems: 'center', gap: 7,
+          }}>
+            <div style={{
+              width: 7, height: 7, borderRadius: '50%',
+              background: '#ef4444',
+              animation: 'cam-blink 1.1s ease-in-out infinite',
+            }} />
+            <span style={{
+              fontSize: 9, fontFamily: 'monospace', fontWeight: 700,
+              color: 'rgba(248,113,113,0.75)',
+              letterSpacing: '0.35em',
+            }}>REC</span>
+          </div>
+
+          {/* Shot counter */}
+          <div style={{ position: 'absolute', top: 28, left: 52 }}>
+            <span style={{ fontSize: 9, fontFamily: 'monospace', color: 'rgba(255,255,255,0.28)', letterSpacing: '0.3em' }}>SH 001</span>
+          </div>
+
+          {/* Timecode */}
+          <div style={{ position: 'absolute', bottom: 30, left: 52 }}>
+            <span style={{ fontSize: 8, fontFamily: 'monospace', color: 'rgba(255,255,255,0.22)', letterSpacing: '0.25em' }}>00:00:00:00</span>
+          </div>
+
+          {/* Frame rate */}
+          <div style={{ position: 'absolute', bottom: 30, right: 52 }}>
+            <span style={{ fontSize: 8, fontFamily: 'monospace', color: 'rgba(255,255,255,0.22)', letterSpacing: '0.25em' }}>24 FPS</span>
+          </div>
+
+          {/* Centre crosshair */}
+          <div style={{
+            position: 'absolute', top: '50%', left: '50%',
+            transform: 'translate(-50%, -50%)',
+            width: 28, height: 28,
+          }}>
+            <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, height: 1, background: 'rgba(255,255,255,0.12)' }} />
+            <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, background: 'rgba(255,255,255,0.12)' }} />
+          </div>
+        </>
+      )}
+
+      {/* ── CAMERA READY (stage 4) ── */}
+      {stage >= 4 && (
+        <div style={{
+          position: 'absolute', bottom: '32%', left: 0, right: 0,
+          display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12,
+        }}>
+          <div style={{ width: 32, height: 1, background: 'rgba(74,222,128,0.3)' }} />
+          <span style={{
+            fontSize: 9, fontFamily: 'monospace', fontWeight: 700,
+            color: 'rgba(74,222,128,0.65)',
+            letterSpacing: '0.55em', textTransform: 'uppercase',
+          }}>CAMERA READY</span>
+          <div style={{ width: 32, height: 1, background: 'rgba(74,222,128,0.3)' }} />
+        </div>
+      )}
+    </div>
+  );
+};
+
 interface AuthPageProps {
   lang: Language;
   onLogin: (bypass?: boolean) => void;
@@ -13,6 +273,9 @@ interface AuthPageProps {
 }
 
 const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, hasProfile }) => {
+  // Camera boot animation — show once per mount
+  const [bootDone, setBootDone] = useState(false);
+
   const [step, setStep] = useState<'email' | 'otp' | 'profile'>('email');
 
   // Contact State
@@ -208,6 +471,9 @@ const AuthPage: React.FC<AuthPageProps> = ({ lang, onLogin, onCompleteProfile, h
 
   return (
     <div className="min-h-screen bg-black flex flex-col items-center justify-center p-6 font-sans relative overflow-hidden selection:bg-indigo-500/30">
+      {/* Camera boot animation — unmounts after sequence completes */}
+      {!bootDone && <CameraBootAnimation onComplete={() => setBootDone(true)} />}
+
       {/* Cinematic Aura - Animated */}
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-indigo-600/10 blur-[120px] rounded-full pointer-events-none animate-pulse duration-[5000ms]" />
 

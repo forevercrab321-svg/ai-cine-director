@@ -225,6 +225,14 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
         }
     }, [onImagesGenerated, refreshBalance]);
 
+    // Sync count when shots load asynchronously after mount.
+    // If count is still 0 (shots were empty at mount) and shots have now arrived, reset to 12.
+    useEffect(() => {
+        if (count === 0 && allShots.length > 0) {
+            setCount(Math.min(12, allShots.length));
+        }
+    }, [allShots.length, count]);
+
     useEffect(() => {
         return () => {
             // Cleanup: abort any running SSE stream
@@ -504,21 +512,32 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                             每批数量
                         </label>
                         <div className="flex gap-1">
-                            {[3, 5, 6, 9, 12, 30].filter(n => n <= allShots.length || n === 12).map(n => {
-                                const effectiveN = Math.min(n, allShots.length);
-                                return (
-                                    <button
-                                        key={n}
-                                        onClick={() => setCount(effectiveN)}
-                                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${count === effectiveN
-                                            ? 'bg-indigo-600 text-white border-indigo-500'
-                                            : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-slate-600'
-                                            }`}
-                                    >
-                                        {effectiveN}
-                                    </button>
-                                );
-                            })}
+                            {(() => {
+                                // Build a deduplicated list of effective counts so we never show
+                                // two buttons with the same visible number (e.g. n=5 and n=12 both
+                                // become 5 when allShots.length=5).
+                                const seen = new Set<number>();
+                                return [3, 5, 6, 9, 12, 30]
+                                    .map(n => Math.min(n, allShots.length))
+                                    .filter(n => {
+                                        if (n <= 0) return false;
+                                        if (seen.has(n)) return false;
+                                        seen.add(n);
+                                        return true;
+                                    })
+                                    .map(effectiveN => (
+                                        <button
+                                            key={effectiveN}
+                                            onClick={() => setCount(effectiveN)}
+                                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${count === effectiveN
+                                                ? 'bg-indigo-600 text-white border-indigo-500'
+                                                : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-slate-600'
+                                                }`}
+                                        >
+                                            {effectiveN}
+                                        </button>
+                                    ));
+                            })()}
                         </div>
                     </div>
 
