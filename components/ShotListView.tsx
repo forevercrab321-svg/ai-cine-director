@@ -569,7 +569,47 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
             groups.get(groupKey)!.shots.push(asShot);
         });
 
-        return Array.from(groups.values());
+        const result = Array.from(groups.values());
+
+        // ── Duplicate scene detection (STEP 7) ─────────────────────────────────
+        // Warn if adjacent scenes share the same location OR emotional goal,
+        // which indicates the scene brain returned degenerate/repetitive output.
+        if (result.length > 1) {
+            for (let i = 1; i < result.length; i++) {
+                const prev = result[i - 1].scene as any;
+                const curr = result[i].scene as any;
+
+                const prevLoc  = (prev.scene_title  || prev.location || '').toLowerCase().trim();
+                const currLoc  = (curr.scene_title  || curr.location || '').toLowerCase().trim();
+                const prevEmot = (prev.emotional_beat || prev.mood || '').toLowerCase().trim();
+                const currEmot = (curr.emotional_beat || curr.mood || '').toLowerCase().trim();
+
+                // Jaccard token overlap > 0.8 = near-duplicate
+                const jaccard = (a: string, b: string) => {
+                    if (!a || !b) return 0;
+                    const setA = new Set(a.split(/\s+/));
+                    const setB = new Set(b.split(/\s+/));
+                    const inter = [...setA].filter(t => setB.has(t)).length;
+                    const union = new Set([...setA, ...setB]).size;
+                    return union === 0 ? 0 : inter / union;
+                };
+
+                if (prevLoc && currLoc && jaccard(prevLoc, currLoc) > 0.8) {
+                    console.warn(
+                        `[ShotListView] DUPLICATE SCENE LOCATION detected: Scene ${i} and Scene ${i + 1} share location "${currLoc}". ` +
+                        'Story Brain may have returned repetitive output. Consider re-generating.'
+                    );
+                }
+                if (prevEmot && currEmot && jaccard(prevEmot, currEmot) > 0.8) {
+                    console.warn(
+                        `[ShotListView] DUPLICATE SCENE EMOTION detected: Scene ${i} and Scene ${i + 1} share emotional beat "${currEmot}". ` +
+                        'Adjacent scenes must produce different audience emotions.'
+                    );
+                }
+            }
+        }
+
+        return result;
     }, [project.scenes]);
 
     // ── Auto-populate shotsByScene from project.scenes on mount/project change ──

@@ -408,17 +408,28 @@ function buildFallbackShotResult(params: {
     characterAnchor?: string;
     lockedCharacters: Array<{ name: string; description: string }>;
 }) {
-    const cameras = ['wide', 'medium', 'over-shoulder', 'close', 'ecu', 'tracking', 'two-shot'];
+    const cameras = ['wide shot', 'medium shot', 'over-shoulder', 'close-up', 'extreme close-up', 'tracking shot', 'two-shot'];
+    const cameraAngles = ['eye-level', 'low angle', 'high angle', 'dutch tilt', 'bird\'s eye', 'worm\'s eye', 'eye-level'];
     const movements = ['static', 'push-in', 'pan-left', 'dolly', 'tilt-up', 'tracking', 'pull-out'];
     const lenses = ['24mm anamorphic', '35mm', '50mm', '85mm', '100mm macro', '70mm'];
+    const focalLengths = ['24mm', '35mm', '50mm', '85mm', '100mm', '70mm'];
     const beats = [
         'establishes spatial relationship and threat distance',
-        'detective shifts weight and circles half-step clockwise',
-        'rival raises left hand and glances to rooftop edge',
+        'protagonist shifts weight and reads the environment',
+        'antagonist raises hand and redirects gaze to exit',
         'both characters close distance by one step and pause',
-        'detective reaches coat pocket while rival leans back',
-        'wind intensifies, coat fabric whips, both reframe stance',
+        'protagonist reaches for a prop while rival leans back',
+        'atmosphere shift — fabric, smoke, or light interrupts',
         'final pre-action freeze with micro head-turn and breath hold',
+    ];
+    const emotionalBeats = [
+        'tension building — unspoken threat between characters',
+        "vulnerability exposed — protagonist's weakness visible",
+        'power shift — control moves from one character to another',
+        'revelation — a truth surfaces that changes the stakes',
+        "determination — resolve hardens in protagonist's eyes",
+        'dread — the consequence becomes viscerally real',
+        'release — emotional catharsis or sudden action breaks the stasis',
     ];
 
     const charNames = params.lockedCharacters.length > 0
@@ -428,41 +439,52 @@ function buildFallbackShotResult(params: {
     const shots = Array.from({ length: Math.max(1, params.targetShots) }).map((_, idx) => {
         const shotNo = idx + 1;
         const camera = cameras[idx % cameras.length];
+        const cameraAngle = cameraAngles[idx % cameraAngles.length];
         const movement = movements[idx % movements.length];
         const lens = lenses[idx % lenses.length];
+        const focalLength = focalLengths[idx % focalLengths.length];
         const beat = beats[idx % beats.length];
+        const emotionalBeat = emotionalBeats[idx % emotionalBeats.length];
         const primaryChar = charNames[idx % charNames.length];
+
+        // Generate a stable shot_id: scene-{sceneNo}-shot-{shotNo}-{random suffix}
+        const shotId = `scene-${params.sceneNumber}-shot-${shotNo}-${Math.random().toString(36).slice(2, 8)}`;
 
         const imagePrompt = [
             params.characterAnchor || params.lockedCharacters[0]?.description || primaryChar,
-            `Scene ${params.sceneNumber}, shot ${shotNo}`,
+            `[Scene ${params.sceneNumber} / Shot ${shotNo}]`,
             params.visualDescription,
-            `camera ${camera}, lens ${lens}, movement ${movement}`,
+            `${camera} at ${focalLength}, ${cameraAngle}, ${movement}`,
             'cinematic contrast lighting, high detail, coherent continuity',
         ].filter(Boolean).join('. ');
 
         return {
+            shot_id: shotId,
             shot_number: shotNo,
             duration_sec: 3 + (idx % 3),
             location_type: 'EXT',
             location: `Scene ${params.sceneNumber} location`,
             time_of_day: 'dusk',
             characters: charNames,
-            action: `Shot ${shotNo}: ${primaryChar} ${beat}.`,
+            action: `Shot ${shotNo}: ${primaryChar} — ${beat}.`,
             dialogue: '',
             camera,
+            camera_angle: `${cameraAngle}, ${focalLength}`,
+            focal_length: focalLength,
             lens,
             movement,
-            composition: `Shot ${shotNo} framing with depth layering and clear eyeline continuity`,
-            lighting: 'noir rim light with practical city neon spill',
+            composition: `Shot ${shotNo} — ${camera} with depth layering and clear eyeline continuity`,
+            lighting: 'motivated practical source — rim light with ambient fill',
             art_direction: params.shotType || 'cinematic staging',
-            mood: 'high tension',
+            mood: emotionalBeat,
+            emotional_beat: emotionalBeat,
+            blocking: `${primaryChar}: ${beat}`,
             sfx_vfx: 'subtle atmosphere haze',
-            audio_notes: params.audioDescription || 'wind and distant traffic',
+            audio_notes: params.audioDescription || 'ambient sound, natural texture',
             continuity_notes: `Shot ${shotNo} must preserve costume, face, and spatial axis from shot ${Math.max(1, shotNo - 1)}.`,
             image_prompt: imagePrompt,
             negative_prompt: 'blurry, duplicate pose, extra limbs, identity drift',
-            video_prompt: `Shot ${shotNo}. Camera ${movement}. ${primaryChar} performs a distinct physical beat: ${beat}. Maintain exact character identity and rooftop blocking continuity.`,
+            video_prompt: `Shot ${shotNo}. ${camera} at ${focalLength}. ${movement}. ${primaryChar}: ${beat}. ${emotionalBeat}. Maintain exact character identity and blocking continuity.`,
         };
     });
 
@@ -2169,6 +2191,8 @@ const storyBrainSchema = {
                     // @ts-ignore
                     scene_number: { type: Type.INTEGER },
                     // @ts-ignore
+                    act: { type: Type.INTEGER },
+                    // @ts-ignore
                     location: { type: Type.STRING },
                     // @ts-ignore
                     time_of_day: { type: Type.STRING },
@@ -2176,8 +2200,18 @@ const storyBrainSchema = {
                     synopsis: { type: Type.STRING },
                     // @ts-ignore
                     emotional_goal: { type: Type.STRING },
+                    // @ts-ignore
+                    dramatic_function: { type: Type.STRING },
+                    // @ts-ignore
+                    scene_obstacle: { type: Type.STRING },
+                    // @ts-ignore
+                    tension_level: { type: Type.INTEGER },
+                    // @ts-ignore
+                    character_goal: { type: Type.STRING },
+                    // @ts-ignore
+                    transition_to_next: { type: Type.STRING },
                 },
-                required: ['scene_id', 'scene_number', 'location', 'synopsis'],
+                required: ['scene_id', 'scene_number', 'location', 'synopsis', 'dramatic_function', 'emotional_goal', 'tension_level'],
             },
         },
     },

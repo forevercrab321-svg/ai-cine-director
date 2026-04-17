@@ -135,6 +135,17 @@ SCREENWRITER LAWS (enforce without exception):
    Every scene must: (a) advance plot OR (b) reveal character — preferably both.
    If a scene does neither, it does not exist.
 
+⑥ SCENE UNIQUENESS LAW — HARD CONSTRAINT — NO EXCEPTIONS:
+   • No two consecutive scenes may share the same LOCATION TYPE (interior vs exterior
+     is insufficient distinction — specific setting must differ).
+   • No two consecutive scenes may have the same DRAMATIC FUNCTION (two "setup" scenes
+     back-to-back are forbidden; two "confrontation" scenes must have different combatants).
+   • The TENSION_LEVEL across all scenes must form a clear dramatic curve — never flat.
+     Assign values 1-10 and verify they rise/fall intentionally across acts.
+   • Each scene's EMOTIONAL_GOAL must be DISTINCT from its neighbors — the audience
+     must feel a different emotion entering each new scene.
+   • FORBIDDEN: Generating any scene that is a paraphrase or repetition of a prior scene.
+
 ⑤ DIALOGUE CRAFT (density: ${dialogueDensity}%, subtext: ${subtextLevel}%)
    • Characters speak in conflict — every line either wants, deflects, or attacks
    • ${subtextLevel > 60 ? 'Characters NEVER say what they mean — all meaning lives in subtext' : 'Characters speak directly but with emotional undercurrent'}
