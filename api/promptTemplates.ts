@@ -256,6 +256,7 @@ export function generateShotListPrompt(inputs: {
     characterBible: any[];
     styleBible: any;
     directorControls?: DirectorControlsInput;
+    nonHumanGuide?: string; // Injected when cast includes non-human species (cartoons, animals, etc.)
 }): string {
     const dc = inputs.directorControls || {};
 
@@ -319,6 +320,11 @@ Character goal: ${inputs.scene.character_goal || 'pursue desire'}
 Scene obstacle: ${inputs.scene.scene_obstacle || 'opposition'}
 Emotional goal (audience): ${inputs.scene.emotional_goal}
 ${charRef}${styleRef}
+${inputs.nonHumanGuide ? `━━━ NON-HUMAN CHARACTER DIRECTIVE (MANDATORY) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${inputs.nonHumanGuide}
+Every shot must render these characters as the described non-human species.
+DO NOT humanise faces. Cartoon/anime/animal anatomy must be preserved exactly.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━` : ''}
 ━━━ CINEMATOGRAPHY LAWS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ① COVERAGE STRATEGY

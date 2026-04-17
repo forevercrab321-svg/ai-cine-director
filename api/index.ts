@@ -458,6 +458,11 @@ function buildFallbackShotResult(params: {
             'cinematic contrast lighting, high detail, coherent continuity',
         ].filter(Boolean).join('. ');
 
+        // Vary characters per shot: primary char leads, secondary joins on even shots
+        const shotCharacters = charNames.length > 1 && idx % 2 === 1
+            ? [charNames[idx % charNames.length], charNames[(idx + 1) % charNames.length]]
+            : [charNames[idx % charNames.length]];
+
         return {
             shot_id: shotId,
             shot_number: shotNo,
@@ -465,7 +470,7 @@ function buildFallbackShotResult(params: {
             location_type: 'EXT',
             location: `Scene ${params.sceneNumber} location`,
             time_of_day: 'dusk',
-            characters: charNames,
+            characters: shotCharacters,
             action: `Shot ${shotNo}: ${primaryChar} — ${beat}.`,
             dialogue: '',
             camera,
@@ -2164,7 +2169,7 @@ const storyBrainSchema = {
                     // @ts-ignore
                     props: { type: Type.STRING },
                 },
-                required: ['character_id', 'name', 'face_traits'],
+                required: ['character_id', 'name', 'face_traits', 'hair', 'outfit', 'body_type'],
             },
         },
         style_bible: {
@@ -2268,7 +2273,7 @@ const shotListSchema = {
                         },
                     },
                 },
-                required: ['shot_id', 'shot_number', 'action', 'camera_movement'],
+                required: ['shot_id', 'shot_number', 'action', 'camera_movement', 'focal_length', 'emotional_beat', 'image_prompt', 'video_prompt'],
             },
         },
     },
@@ -2534,6 +2539,36 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
         const rawScenes = Array.isArray(parsedBrain.scenes) ? parsedBrain.scenes : [];
         logger.gemini.info('story_brain_done', { scenes: rawScenes.length, targetScenes }, traceId);
 
+        // ── Post-parse Story Brain validation (Findings 1.1, 1.2, 10.1) ─────────
+        const normLoc = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+        for (let vi = 1; vi < rawScenes.length; vi++) {
+            const prev = normLoc(rawScenes[vi - 1].location);
+            const curr = normLoc(rawScenes[vi].location);
+            if (prev && curr && prev === curr) {
+                logger.gemini.warn('story_brain_duplicate_location', {
+                    sceneA: vi, sceneB: vi + 1, location: rawScenes[vi].location
+                }, traceId);
+                // Auto-repair: append a spatial qualifier to differentiate
+                rawScenes[vi].location = `${rawScenes[vi].location} (different angle / sub-space)`;
+            }
+            // Validate dramatic_function not duplicated adjacently
+            const prevFn = (rawScenes[vi - 1].dramatic_function || '').toLowerCase();
+            const currFn = (rawScenes[vi].dramatic_function || '').toLowerCase();
+            if (prevFn && currFn && prevFn === currFn && prevFn !== 'transition') {
+                logger.gemini.warn('story_brain_duplicate_dramatic_function', {
+                    sceneA: vi, sceneB: vi + 1, function: currFn
+                }, traceId);
+            }
+        }
+        // Check tension curve variance (Finding 1.2)
+        const tensionValues = rawScenes.map((s: any) => Number(s.tension_level) || 5);
+        const tensionRange = Math.max(...tensionValues) - Math.min(...tensionValues);
+        if (tensionRange < 3) {
+            logger.gemini.warn('story_brain_flat_tension_curve', {
+                variance: tensionRange, levels: tensionValues
+            }, traceId);
+        }
+
         // Director OS layer: build formal directorial planning outputs before shot execution.
         const directorBrain = buildDirectorBrainLayer({
             scenes: rawScenes,
@@ -2568,11 +2603,18 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
                 ? Math.min(8, Math.max(1, Math.floor(fallbackShotCountRaw)))
                 : 5;
 
+            // Ensure scene_id is never blank (Finding 10.1)
+            if (!scn.scene_id || scn.scene_id.trim() === '') {
+                scn.scene_id = `scene-${i + 1}-${crypto.randomUUID()}`;
+                logger.gemini.warn('missing_scene_id_repaired', { index: i, assigned: scn.scene_id }, traceId);
+            }
+
             const shotPrompt = generateShotListPrompt({
                 scene: scn,
                 characterBible: parsedBrain.character_bible,
                 styleBible: parsedBrain.style_bible,
                 directorControls: safeDirectorControls,
+                nonHumanGuide: nonHumanGuide.hasNonHuman ? nonHumanGuide.guidance : undefined,
             });
 
             let shotResponse = '';
@@ -2624,6 +2666,20 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
             }
 
             const shots = Array.isArray(parsedShots.shots) ? parsedShots.shots : [];
+            // Finding 2.1: Ensure every shot has a non-blank shot_id
+            shots.forEach((s: any, sIdx: number) => {
+                if (!s.shot_id || String(s.shot_id).trim() === '') {
+                    s.shot_id = `scene-${scn.scene_id}-shot-${sIdx + 1}-${crypto.randomUUID().slice(0, 8)}`;
+                }
+                // Finding 5.1: Ensure video_prompt is never blank
+                if (!s.video_prompt || s.video_prompt.trim() === '') {
+                    s.video_prompt = `${s.camera_movement || 'static'} shot. ${s.action || 'subject holds position'}. ${s.emotional_beat || 'cinematic hold'}. Maintain character identity and continuity with previous shot.`;
+                }
+                // Finding 4.3: Ensure image_prompt is never blank (fallback before compiler runs)
+                if (!s.image_prompt || s.image_prompt.trim() === '') {
+                    s.image_prompt = `${s.action || 'cinematic shot'}. ${s.camera_angle || 'medium shot'}, ${s.focal_length || '50mm'}. ${s.lighting_setup || 'motivated cinematic lighting'}. ${s.emotional_beat || 'dramatic tension'}.`;
+                }
+            });
             logger.gemini.debug('shot_planner_result', {
                 scene: i + 1,
                 shotsCount: shots.length,
@@ -2665,10 +2721,44 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
                     directorControls: safeDirectorControls,
                 });
 
-                // Prepend character anchor to EVERY shot for identity consistency,
-                // while shot-specific sections still drive per-shot variance.
-                const finalImagePrompt = project.character_anchor
-                    ? `${project.character_anchor}. ${imagePrompt}`
+                // ── Per-shot multi-character identity lock (Finding 3.1 fix) ──────────
+                // Lock EVERY character that appears in this specific shot, not just
+                // the first/primary. Works for human AND cartoon/animal characters.
+                const shotCharBibles: any[] = Array.isArray(shot.characters)
+                    ? shot.characters
+                        .map((cid: string) => {
+                            // Try matching by character_id first, then by name (fallback)
+                            return parsedBrain.character_bible?.find((c: any) =>
+                                c.character_id === cid || c.name?.toLowerCase() === cid.toLowerCase()
+                            );
+                        })
+                        .filter(Boolean)
+                    : [];
+
+                // Build per-shot character lock string from biometric bible fields
+                const perShotCharLock = shotCharBibles.length > 0
+                    ? shotCharBibles.map((c: any) => {
+                        const parts = [
+                            `[${(c.name || 'character').toUpperCase()} LOCK]`,
+                            c.face_traits || '',
+                            c.hair ? `hair: ${c.hair}` : '',
+                            c.body_type ? `build: ${c.body_type}` : '',
+                            c.outfit ? `wearing: ${c.outfit}` : '',
+                            c.props ? `holding: ${c.props}` : '',
+                            c.physical_signature ? `signature: ${c.physical_signature}` : '',
+                            // Non-human species flag: if face_traits mentions species keywords, tag it
+                            (c.face_traits || '').toLowerCase().match(/cat|dog|rabbit|fox|bear|wolf|tiger|lion|anime|cartoon|creature|monster|alien|robot/)
+                                ? `[NON-HUMAN — render as described species, do NOT humanise face]`
+                                : '',
+                        ].filter(Boolean).join(', ');
+                        return parts;
+                    }).join(' | ')
+                    : '';
+
+                // Fall back to project.character_anchor if no per-shot bible resolved
+                const charLockPrefix = perShotCharLock || project.character_anchor || '';
+                const finalImagePrompt = charLockPrefix
+                    ? `${charLockPrefix}. ${imagePrompt}`
                     : imagePrompt;
 
                 // Build a rich video prompt using buildVideoPrompt

@@ -98,18 +98,34 @@ export interface CharacterBibleEntry {
  *  distinctive markers only so that shot-specific screenplay content can lead.
  */
 function characterToIdentityLock(bible: CharacterBibleEntry): string {
-  // Build a condensed anchor: name + most distinctive visual markers only
-  const faceShort = bible.face_traits ? clamp(bible.face_traits, 80) : '';
-  const hairShort = bible.hair ? `hair: ${clamp(bible.hair, 40)}` : '';
-  const wardrobeShort = bible.wardrobe ? `wardrobe: ${clamp(bible.wardrobe, 50)}` : '';
+  // Detect non-human species from face_traits / wardrobe description
+  const combinedTraits = `${bible.face_traits || ''} ${(bible as any).outfit || bible.wardrobe || ''}`.toLowerCase();
+  const nonHumanSpeciesMatch = combinedTraits.match(
+    /\b(cat|dog|rabbit|fox|bear|wolf|tiger|lion|panda|deer|owl|eagle|dragon|anime|cartoon|creature|monster|alien|robot|cyborg|anthropomorphic|furry|humanoid animal)\b/
+  );
+  const isNonHuman = !!nonHumanSpeciesMatch;
+  const speciesLabel = isNonHuman ? nonHumanSpeciesMatch![0].toUpperCase() : '';
+
+  const faceShort = bible.face_traits ? clamp(bible.face_traits, 90) : '';
+  const hairShort = bible.hair ? `hair/fur: ${clamp(bible.hair, 45)}` : '';
+  const wardrobeShort = ((bible as any).outfit || bible.wardrobe)
+    ? `wearing: ${clamp((bible as any).outfit || bible.wardrobe, 55)}`
+    : '';
+  const bodyShort = (bible as any).body_type ? `build: ${clamp((bible as any).body_type, 40)}` : '';
+
+  const nonHumanDirective = isNonHuman
+    ? `[NON-HUMAN ${speciesLabel}] Render as ${speciesLabel} species — do NOT humanise. Preserve animal anatomy, proportions, and species-specific facial features exactly.`
+    : 'DO NOT alter face, race, gender, or wardrobe.';
+
   const parts = [
     `[${bible.name.toUpperCase()} IDENTITY LOCK]`,
     faceShort,
     hairShort,
+    bodyShort,
     wardrobeShort,
-    'DO NOT alter face, race, gender, or wardrobe.',
+    nonHumanDirective,
   ].filter(Boolean).join('. ');
-  return clamp(parts, 250);
+  return clamp(parts, 300);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -344,7 +360,7 @@ export function validateShotPromptVariance(
 
   if (requiresChange && !hasSubstantiveChange)
     failReasons.push('shot fields changed but prompts remain highly similar');
-  if (requiresChange && similarity >= 0.94)
+  if (requiresChange && similarity >= 0.88)
     failReasons.push('prompt similarity too high for changed shot semantics');
 
   return {
@@ -523,11 +539,10 @@ function buildImagePromptFromComposer(params: {
   // ── Core shot fields ──────────────────────────────────────────────────────
   // Shot & scene numbers give each prompt a unique fingerprint even when
   // fields overlap — critical for screenplay-driven multi-shot batches.
-  const sceneNumber = shot.scene_number ?? scene.scene_number ?? '';
+  const sceneNumber = shot.scene_number ?? scene?.scene_number ?? '';
   const shotNumber = shot.shot_number ?? '';
-  const shotLabel = sceneNumber !== '' && shotNumber !== ''
-    ? `[Scene ${sceneNumber} / Shot ${shotNumber}]`
-    : shotNumber !== '' ? `[Shot ${shotNumber}]` : '';
+  // Finding 4.2: fingerprint is ALWAYS non-empty — use fallback IDs so every prompt is unique
+  const shotLabel = `[Scene ${sceneNumber || (shot.scene_id ? shot.scene_id.slice(-4) : '?')} / Shot ${shotNumber || (shot.shot_id ? shot.shot_id.slice(-4) : '?')}]`;
 
   // perShotImagePrompt is the screenplay-generated visual directive from Gemini.
   // This is the PRIMARY differentiator between shots — it describes THIS specific
@@ -641,7 +656,7 @@ function buildImagePromptFromComposer(params: {
     'Cinematic still frame, high detail, physically plausible lighting. Single coherent film frame — not a collage or split screen.',
   ].filter(Boolean).join('. ');
 
-  // ── Negative prompt ───────────────────────────────────────────────────────
+  // ── Negative prompt (Finding 10.2: always non-empty) ──────────────────────
   const negativePrompt = [
     negativeRaw,
     'identity drift, wrong outfit, costume change, different hairstyle, wrong props',
@@ -650,6 +665,8 @@ function buildImagePromptFromComposer(params: {
     'same composition as previous shot when shot context changed',
     'watermark, text overlay, letterbox bars, split screen, collage, blurry',
     'extra limbs, distorted anatomy, deformed hands, missing fingers',
+    // Non-human character protection
+    'humanised animal face, wrong species anatomy, realistic human face on cartoon character',
   ].filter(Boolean).join(', ');
 
   return { prompt: clamp(prompt, 1800), negativePrompt: clamp(negativePrompt, 600) };
