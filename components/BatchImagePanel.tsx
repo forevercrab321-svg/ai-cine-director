@@ -37,6 +37,8 @@ interface BatchImagePanelProps {
     referenceImageDataUrl?: string;
     storyEntities?: any[];
     styleBible?: any;
+    /** ★ Director Brain — injected into prompt compiler for per-shot emotional/framing/lighting guidance */
+    directorBrain?: any;
     /** Current images for each shot — used to determine which shots need generation */
     imagesByShot: Record<string, ShotImage[]>;
     /** Called when images are generated — parent updates imagesByShot */
@@ -145,7 +147,7 @@ const StrategyDialog: React.FC<{
 // Main BatchImagePanel
 // ═══════════════════════════════════════════════════════════════
 const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
-    allShots, projectId, characterAnchor, visualStyle, referenceImageDataUrl, storyEntities, styleBible, imagesByShot, onImagesGenerated, onSetGlobalAnchor
+    allShots, projectId, characterAnchor, visualStyle, referenceImageDataUrl, storyEntities, styleBible, directorBrain, imagesByShot, onImagesGenerated, onSetGlobalAnchor
 }) => {
     const { settings, isAuthenticated, hasEnoughCredits, openPricingModal, refreshBalance } = useAppContext();
 
@@ -285,6 +287,8 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                 style: 'none',
                 character_anchor: characterAnchor,
                 style_bible: styleBible,
+                story_entities: storyEntities,
+                director_brain: directorBrain,
             });
             setCompiledPrompts(result.compiled_shots || []);
             setCompileWarnings(result.duplicate_warnings || []);
@@ -293,7 +297,7 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
         } finally {
             setIsCompilingPrompts(false);
         }
-    }, [characterAnchor, isAuthenticated, projectId, sortedShots, styleBible, toShotForBatch]);
+    }, [characterAnchor, directorBrain, isAuthenticated, projectId, sortedShots, storyEntities, styleBible, toShotForBatch]);
 
     // ── Start initial batch (SSE) ──
     const handleStart = async () => {
@@ -320,6 +324,8 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                     style: 'none',
                     character_anchor: characterAnchor,
                     style_bible: styleBible,
+                    story_entities: storyEntities,
+                    director_brain: directorBrain,
                 });
                 setCompiledPrompts(compiled.compiled_shots || []);
                 setCompileWarnings(compiled.duplicate_warnings || []);
@@ -337,6 +343,7 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                 reference_image_url: referenceImageDataUrl || '',
                 story_entities: storyEntities,
                 style_bible: styleBible,
+                director_brain: directorBrain,
             }, handleSSEProgress);
 
             // SSE stream completed — final results already handled in handleSSEProgress
@@ -374,6 +381,8 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                     style: 'none',
                     character_anchor: characterAnchor,
                     style_bible: styleBible,
+                    story_entities: storyEntities,
+                    director_brain: directorBrain,
                 });
                 setCompiledPrompts(compiled.compiled_shots || []);
                 setCompileWarnings(compiled.duplicate_warnings || []);
@@ -394,6 +403,7 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                 reference_image_url: referenceImageDataUrl || '',
                 story_entities: storyEntities,
                 style_bible: styleBible,
+                director_brain: directorBrain,
             }, handleSSEProgress);
 
             setJobId(result.job?.id || null);

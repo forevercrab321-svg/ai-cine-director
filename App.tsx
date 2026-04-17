@@ -21,6 +21,7 @@ import DirectorBrainPanel from './components/DirectorBrainPanel';
 import DirectorOSStatus from './components/DirectorOSStatus';
 import ShotTimeline from './components/ShotTimeline';
 import VerificationPanel from './components/VerificationPanel';
+import FinalCutPanel from './components/FinalCutPanel';
 import { t } from './i18n';
 
 const MainLayout: React.FC = () => {
@@ -43,7 +44,7 @@ const MainLayout: React.FC = () => {
     refreshBalance
   } = useAppContext();
 
-  const [workflowStage, setWorkflowStageRaw] = useState<'dashboard' | 'input' | 'scripting' | 'shots' | 'production' | 'oneclick'>('dashboard');
+  const [workflowStage, setWorkflowStageRaw] = useState<'dashboard' | 'input' | 'scripting' | 'shots' | 'production' | 'finalcut' | 'oneclick'>('dashboard');
   const [pipelineStage, setPipelineStage] = useState<PipelineStage>('script_ready');
   const workflowStageRef = useRef(workflowStage);
   const [storyIdea, setStoryIdea] = useState('A cyberpunk cat delivering pizza in Neo-Tokyo');
@@ -69,7 +70,7 @@ const MainLayout: React.FC = () => {
   const [paymentNotification, setPaymentNotification] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
 
   // ★ Browser history management — pressing back navigates within workflow
-  const setWorkflowStage = (stage: 'dashboard' | 'input' | 'scripting' | 'shots' | 'production' | 'oneclick') => {
+  const setWorkflowStage = (stage: 'dashboard' | 'input' | 'scripting' | 'shots' | 'production' | 'finalcut' | 'oneclick') => {
     setWorkflowStageRaw(stage);
     workflowStageRef.current = stage;
     window.history.pushState({ stage }, '', `#${stage}`);
@@ -81,7 +82,7 @@ const MainLayout: React.FC = () => {
 
     const handlePopState = (e: PopStateEvent) => {
       const stage = e.state?.stage;
-      if (stage && ['dashboard', 'input', 'scripting', 'shots', 'production'].includes(stage)) {
+      if (stage && ['dashboard', 'input', 'scripting', 'shots', 'production', 'finalcut'].includes(stage)) {
         setWorkflowStageRaw(stage);
         workflowStageRef.current = stage;
       } else {
@@ -94,6 +95,15 @@ const MainLayout: React.FC = () => {
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
+
+  // ★ Safety guard: if a project-dependent stage is active but project is gone
+  // (e.g. browser back/forward restored old hash after page reload), redirect to dashboard.
+  useEffect(() => {
+    const projectRequiredStages = ['scripting', 'shots', 'production', 'finalcut'];
+    if (projectRequiredStages.includes(workflowStage) && !project) {
+      setWorkflowStage('dashboard');
+    }
+  }, [workflowStage, project]);
 
   // ★ Stripe Payment Success Callback
   useEffect(() => {
@@ -318,20 +328,22 @@ const MainLayout: React.FC = () => {
         {/* ★ Stage Navigation Pills */}
         {workflowStage !== 'oneclick' && (
           <div className="mb-6 flex items-center gap-1 overflow-x-auto pb-1">
-            {(['dashboard', 'input', 'scripting', 'shots', 'production'] as const).map((stage, idx) => {
+            {(['dashboard', 'input', 'scripting', 'shots', 'production', 'finalcut'] as const).map((stage, idx) => {
               const labels: Record<string, string> = {
                 dashboard: settings.lang === 'zh' ? '我的项目' : 'Projects',
                 input: settings.lang === 'zh' ? '创意输入' : 'Concept',
                 scripting: settings.lang === 'zh' ? '剧本' : 'Script',
                 shots: settings.lang === 'zh' ? '分镜' : 'Shots',
                 production: settings.lang === 'zh' ? '制作' : 'Production',
+                finalcut: settings.lang === 'zh' ? '最终剪辑' : 'Final Cut',
               };
-              const icons: Record<string, string> = { dashboard: '📂', input: '✍️', scripting: '📝', shots: '🎞️', production: '🎬' };
+              const icons: Record<string, string> = { dashboard: '📂', input: '✍️', scripting: '📝', shots: '🎞️', production: '🎬', finalcut: '✂️' };
               const isActive = workflowStage === stage;
               const isReachable = stage === 'dashboard' || stage === 'input' ||
                 (stage === 'scripting' && !!project) ||
                 (stage === 'shots' && !!project) ||
-                (stage === 'production' && !!project);
+                (stage === 'production' && !!project) ||
+                (stage === 'finalcut' && !!project);
 
               return (
                 <button
@@ -573,6 +585,13 @@ const MainLayout: React.FC = () => {
           </div>
         )}
 
+        {workflowStage === 'scripting' && !project && (
+          <div className="flex flex-col items-center justify-center py-24 text-slate-500 animate-in fade-in duration-300">
+            <span className="text-4xl mb-4">📝</span>
+            <p className="text-sm">{settings.lang === 'zh' ? '项目未加载，正在返回项目列表…' : 'No project loaded, returning to dashboard…'}</p>
+          </div>
+        )}
+
         {workflowStage === 'scripting' && project && (
           <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="flex justify-between items-center mb-4">
@@ -685,6 +704,13 @@ const MainLayout: React.FC = () => {
           </div>
         )}
 
+        {workflowStage === 'shots' && !project && (
+          <div className="flex flex-col items-center justify-center py-24 text-slate-500 animate-in fade-in duration-300">
+            <span className="text-4xl mb-4">🎞️</span>
+            <p className="text-sm">{settings.lang === 'zh' ? '项目未加载，正在返回项目列表…' : 'No project loaded, returning to dashboard…'}</p>
+          </div>
+        )}
+
         {workflowStage === 'shots' && project && (
           <div className="space-y-6">
             {/* Shot Timeline — visual overview of all scenes + shots */}
@@ -709,13 +735,38 @@ const MainLayout: React.FC = () => {
           </div>
         )}
 
+        {workflowStage === 'production' && !project && (
+          <div className="flex flex-col items-center justify-center py-24 text-slate-500 animate-in fade-in duration-300">
+            <span className="text-4xl mb-4">🎬</span>
+            <p className="text-sm">{settings.lang === 'zh' ? '项目未加载，正在返回项目列表…' : 'No project loaded, returning to dashboard…'}</p>
+          </div>
+        )}
+
         {workflowStage === 'production' && project && (
-          <VideoGenerator
-            project={project}
-            referenceImageDataUrl={referenceImageDataUrl}
-            onBackToScript={() => { setWorkflowStage('scripting'); setPipelineStage('storyboard_review'); }}
-            onUpdateScene={handleSceneSync}
-          />
+          <div className="space-y-4">
+            <VideoGenerator
+              project={project}
+              referenceImageDataUrl={referenceImageDataUrl}
+              onBackToScript={() => { setWorkflowStage('scripting'); setPipelineStage('storyboard_review'); }}
+              onUpdateScene={handleSceneSync}
+            />
+            {/* Quick shortcut to Final Cut once clips exist */}
+            <div className="flex justify-end">
+              <button
+                onClick={() => setWorkflowStage('finalcut')}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold
+                  bg-indigo-900/50 border border-indigo-700/50 hover:bg-indigo-800/60 transition-all text-indigo-300"
+              >
+                ✂️ {settings.lang === 'zh' ? '进入最终剪辑' : 'Go to Final Cut'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {workflowStage === 'finalcut' && project && (
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+            <FinalCutPanel project={project} lang={settings.lang} />
+          </div>
         )}
       </div>
     </div>

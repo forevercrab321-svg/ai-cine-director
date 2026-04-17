@@ -131,8 +131,10 @@ const ShotImageGrid: React.FC<ShotImageGridProps> = ({
         if (!userState.isAdmin) deductCredits(videoCost);
 
         try {
-            // ★ Combine the scene's full context with the specific action to prevent clothing/logic hallucinations
-            const motionPrompt = `Visual Context: ${shot.image_prompt || sceneDescription || 'Cinematic scene'}. Cinematic Action: ${shot.action || 'Cinematic motion'}`;
+            // Use shot.video_prompt set by composeAllPrompts() during shot planning.
+            // Fallback to shot.action for legacy shots without video_prompt.
+            const motionPrompt = shot.video_prompt
+                || `${shot.image_prompt || sceneDescription || 'Cinematic scene'}. ${shot.action || 'Cinematic motion'}`;
             const prediction = await startVideoTask(
                 motionPrompt,
                 img.url,

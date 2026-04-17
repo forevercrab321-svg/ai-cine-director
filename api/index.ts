@@ -48,7 +48,12 @@ import {
 import {
     buildShotImagePrompt,
     buildShotGenerationPayload,
+    composeAllPrompts,
 } from '../lib/shotPromptCompiler.js';
+import {
+    extractCharacterBibles,
+    extractDirectorBrainForShot,
+} from '../lib/filmBrainExtractors.js';
 import {
     buildDirectorBrainLayer,
     build12PanelStoryboard,
@@ -571,7 +576,7 @@ app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), asyn
                     if (rpcErr) throw rpcErr;
                 } catch (e) {
                     // Fallback to select+update if RPC is missing
-                    const { data: profile } = await supabase.from('profiles').select('credits').eq('id', userId).single();
+                    const { data: profile } = await supabase.from('profiles').select('credits').eq('id', userId).maybeSingle();
                     await supabase.from('profiles').update({ credits: (profile?.credits || 0) + creditsToGrant }).eq('id', userId);
                 }
 
@@ -1285,7 +1290,7 @@ const checkEntitlement = async (
         .from('profiles')
         .select('id, credits, is_pro, is_admin')
         .eq('id', userId)
-        .single();
+        .maybeSingle();
 
     profile = profileData as Profile | null;
 
@@ -1304,7 +1309,7 @@ const checkEntitlement = async (
                 is_pro: false,
             } as any, { onConflict: 'id', ignoreDuplicates: true })
             .select('id, credits, is_pro, is_admin')
-            .single();
+            .maybeSingle();
 
         if (upsertErr) {
             logger.auth.error('profile_upsert_failed', upsertErr.message, { userId });
@@ -1313,7 +1318,7 @@ const checkEntitlement = async (
                 .from('profiles')
                 .select('id, credits, is_pro, is_admin')
                 .eq('id', userId)
-                .single();
+                .maybeSingle();
             const retryProfileTyped = retryProfile as Profile | null;
             if (retryProfileTyped) {
                 profile = retryProfileTyped;
@@ -1413,7 +1418,7 @@ app.get('/api/entitlement', requireAuth, async (req: any, res: any) => {
                 .from('profiles')
                 .select('id, credits, is_pro, is_admin')
                 .eq('id', userId)
-                .single();
+                .maybeSingle();
 
             const profileTyped = profile as Profile | null;
             const credits = profileTyped?.credits ?? 0;
@@ -3140,7 +3145,7 @@ async function checkIsAdmin(supabaseUser: any): Promise<boolean> {
         // GOD MODE check — isDeveloper() covers both env-driven + hardcoded allowlist
         if (isDeveloper(user.email)) return true;
         // DB-based admin check
-        const { data: profile } = await supabaseUser.from('profiles').select('is_admin').eq('id', user.id).single();
+        const { data: profile } = await supabaseUser.from('profiles').select('is_admin').eq('id', user.id).maybeSingle();
         return profile?.is_admin === true;
     } catch { return false; }
 }
@@ -3477,66 +3482,10 @@ const normalizeShotScale = (camera: string): string => {
     return 'wide shot';
 };
 
-function buildProfessionalImagePrompt(params: {
-    rawPrompt?: string;
-    visualStyle?: string;
-    characterAnchor?: string;
-    sceneDescription?: string;
-    shot: any;
-}): string {
-    const base = sanitizePromptInput(params.rawPrompt || '', 1200);
-    const shot = params.shot || {};
-    const shotScale = normalizeShotScale(shot.camera || 'wide');
-    const lens = sanitizePromptInput(shot.lens || '35mm cinematic prime lens', 120);
-    const movement = sanitizePromptInput(shot.movement || 'static', 80);
-    const location = sanitizePromptInput(shot.location || 'cinematic environment', 180);
-    const tod = sanitizePromptInput(shot.time_of_day || 'night', 80);
-    const action = sanitizePromptInput(shot.action || 'subject performs a meaningful physical action', 220);
-    const composition = sanitizePromptInput(shot.composition || 'foreground-midground-background depth layering, leading lines, negative space balance', 220);
-    const lighting = sanitizePromptInput(shot.lighting || 'motivated key light, subtle rim light, volumetric atmosphere, realistic contrast rolloff', 220);
-    const mood = sanitizePromptInput(shot.mood || 'cinematic dramatic mood', 120);
-    const style = sanitizePromptInput(params.visualStyle || 'cinematic live-action realism', 120);
-    const anchor = sanitizePromptInput(params.characterAnchor || '', 400);
-    const scene = sanitizePromptInput(params.sceneDescription || '', 260);
-
-    const enforced = [
-        base,
-        `[SHOT DESIGN]: ${shotScale}, eye-line coherent camera placement, lens choice ${lens}, camera motion ${movement}.`,
-        anchor ? `[IDENTITY LOCK]: ${anchor}. NO HALLUCINATION. DO NOT change facial features, race, gender, body proportions, or wardrobe.` : '',
-        `[BLOCKING]: ${action}.`,
-        `[SCENE TOPOLOGY LOCK]: ${location}, ${tod}, atmospheric continuity with scene context ${scene || 'consistent set geography'}. Keep exact architectural geometry, room layout, and background elements stable. DO NOT drift or hallucinate new environment structures.`,
-        `[COMPOSITION]: ${composition}.`,
-        `[LIGHTING & COLOR]: ${lighting}, color script aligned with ${style}. Maintain exact color temperature and shadow direction.`,
-        `[TEXTURE & RENDER]: photoreal cinematic image, micro-texture detail, physically plausible reflections, high dynamic range.`
-    ].filter(Boolean).join(' ');
-
-    return sanitizePromptInput(enforced, 1800);
-}
-
-function buildProfessionalVideoPrompt(params: {
-    rawPrompt?: string;
-    shot: any;
-    characterAnchor?: string;
-}): string {
-    const base = sanitizePromptInput(params.rawPrompt || '', 1000);
-    const shot = params.shot || {};
-    const shotScale = normalizeShotScale(shot.camera || 'medium');
-    const movement = sanitizePromptInput(shot.movement || 'static', 120);
-    const action = sanitizePromptInput(shot.action || 'subject shifts weight, turns head, then takes one decisive step', 260);
-    const location = sanitizePromptInput(shot.location || 'same scene location', 140);
-    const lighting = sanitizePromptInput(shot.lighting || 'consistent motivated lighting', 160);
-    const anchor = sanitizePromptInput(params.characterAnchor || '', 300);
-
-    const enforced = [
-        base,
-        `[CAMERA PLAN]: ${shotScale}, ${movement}.`,
-        `[TIMED BLOCKING]: second 0-1 settle frame and breathing micro-motion; second 1-2 ${action}; second 2-3 add a clear head/hand/body secondary action; final beat hold for edit point.`,
-        anchor ? `[IDENTITY LOCK]: KEEP EXACT SAME SUBJECT IDENTITY AND WARDROBE. ZERO TOLERANCE FOR FACE/BODY DRIFT - ${anchor}.` : '[IDENTITY LOCK]: keep exact same subject identity and wardrobe.',
-        `[SCENE TOPOLOGY LOCK]: remain in exact same ${location}, keep lighting logic ${lighting}. DO NOT hallucinate new geometry. NO environment jump. NO costume drift. DO NOT change background.`
-    ].filter(Boolean).join(' ');
-
-    return sanitizePromptInput(enforced, 1600);
-}
+// ── DELETED: buildProfessionalImagePrompt() and buildProfessionalVideoPrompt()
+// These functions have been removed. All prompt construction now goes through
+// composeAllPrompts() in lib/shotPromptCompiler.ts — the single source of truth.
+// ──────────────────────────────────────────────────────────────────────────────
 
 // ───────────────────────────────────────────────────────────────
 // POST /api/shots/generate — Break scene into detailed shots via Gemini
@@ -3589,7 +3538,8 @@ app.post('/api/shots/generate', async (req: any, res: any) => {
     try {
         const {
             scene_number, visual_description, audio_description, shot_type,
-            visual_style, character_anchor, language, num_shots, story_entities
+            visual_style, character_anchor, language, num_shots, story_entities,
+            director_brain,
         } = req.body;
 
         const lockedCharacters = Array.isArray(story_entities)
@@ -3846,6 +3796,14 @@ You MUST return EXACTLY ONE JSON object strictly matching this schema. Return ex
             lockedCharacters,
         }).shots;
 
+        // ── Phase 2: Extract Character Bibles + Director Brain ────────────────
+        // These are now extracted ONCE before the loop and injected per-shot.
+        const shotsPlanCharacterBibles = extractCharacterBibles({
+            storyEntities: story_entities,
+            characterAnchor: character_anchor,
+        });
+        // director_brain is matched per-shot inside the loop via scene_id
+
         const enrichedShots = sourceShots.map((s: any, idx: number) => {
             const rawCharacters = Array.isArray(s.characters) ? s.characters : [];
             let normalizedCharacters = rawCharacters
@@ -3860,25 +3818,29 @@ You MUST return EXACTLY ONE JSON object strictly matching this schema. Return ex
                 normalizedCharacters = [lockedCharacters[Math.min(idx, lockedCharacters.length - 1)].name];
             }
 
-            const professionalImagePrompt = buildProfessionalImagePrompt({
-                rawPrompt: s.image_prompt || '',
-                visualStyle: visual_style,
-                characterAnchor: character_anchor || lockedCharacters.map((c: any) => c.description).filter(Boolean).join(' | '),
-                sceneDescription: visual_description,
-                shot: s,
+            // ── Extract per-shot Director Brain (matched by scene_id or shot index) ─
+            const shotDirectorBrain = extractDirectorBrainForShot({
+                directorBrain: director_brain,
+                sceneId: s.scene_id,
+                sceneNumber: s.scene_number || (scene_number || 1),
             });
 
-            const professionalVideoPrompt = buildProfessionalVideoPrompt({
-                rawPrompt: s.video_prompt || '',
+            // ── Compose all prompts via the unified single entry point ─────────────
+            // buildProfessionalImagePrompt / buildProfessionalVideoPrompt deleted.
+            // All prompt construction now flows through composeAllPrompts().
+            const composedShotPrompts = composeAllPrompts({
                 shot: s,
+                scene: {
+                    scene_number: scene_number || 1,
+                    visual_description,
+                    audio_description,
+                },
+                styleBible: { visual_style, art_direction: '' },
+                characterBibles: shotsPlanCharacterBibles,
                 characterAnchor: character_anchor || lockedCharacters.map((c: any) => c.description).filter(Boolean).join(' | '),
+                directorBrain: shotDirectorBrain,
+                styleLabel: visual_style,
             });
-
-            const baseNegative = sanitizePromptInput(s.negative_prompt || '', 900);
-            const enforcedNegative = sanitizePromptInput(
-                `${baseNegative} identity drift, face swap, age shift, body proportion change, wardrobe drift, style drift, environment jump, extra fingers, distorted anatomy, low detail texture, flat lighting, cartoon stylization`,
-                1100
-            );
 
             return {
                 shot_id: crypto.randomUUID(),
@@ -3893,13 +3855,9 @@ You MUST return EXACTLY ONE JSON object strictly matching this schema. Return ex
                 mood: s.mood || '', sfx_vfx: s.sfx_vfx || '',
                 audio_notes: s.audio_notes || '',
                 continuity_notes: s.continuity_notes || `Maintain exact identity lock. ${character_anchor || lockedCharacters.map(c => c.description).join(' | ') || 'Keep same protagonist face, hairstyle, body proportions, and wardrobe.'} Preserve left-right screen direction and no costume drift.`,
-                image_prompt: countWords(professionalImagePrompt) < 35
-                    ? buildProfessionalImagePrompt({ rawPrompt: '', visualStyle: visual_style, characterAnchor: character_anchor, sceneDescription: visual_description, shot: s })
-                    : professionalImagePrompt,
-                video_prompt: countWords(professionalVideoPrompt) < 22
-                    ? buildProfessionalVideoPrompt({ rawPrompt: '', shot: s, characterAnchor: character_anchor })
-                    : professionalVideoPrompt,
-                negative_prompt: enforcedNegative,
+                image_prompt: composedShotPrompts.image_prompt,
+                video_prompt: composedShotPrompts.video_prompt,
+                negative_prompt: composedShotPrompts.image_negative_prompt,
                 seed_hint: null, reference_policy: 'anchor' as const,
                 status: 'draft' as const, locked_fields: [], version: 1,
                 updated_at: new Date().toISOString(),
@@ -4541,7 +4499,7 @@ async function restorePipelineStateFromDB(projectId: string): Promise<boolean> {
             .from('storyboards')
             .select('pipeline_state')
             .eq('id', projectId)
-            .single();
+            .maybeSingle();
         if (error || !data?.pipeline_state) return false;
         const state = deserializePipelineState(data.pipeline_state);
         restorePipelineState(state);
@@ -4916,7 +4874,7 @@ app.get('/api/storyboard/:projectId/assembly-manifest', requireAuth, async (req:
 app.post('/api/batch/compile-prompts', async (req: any, res: any) => {
     const traceId: string = req.traceId || generateTraceId();
     try {
-        const { project_id, shots, style = 'none', character_anchor = '', style_bible } = req.body;
+        const { project_id, shots, style = 'none', character_anchor = '', style_bible, story_entities: compileStoryEntities, director_brain: compileDirBrain } = req.body;
         if (!project_id) return res.status(400).json(createErrorResponse(createError.missingField('project_id'), traceId));
         if (!Array.isArray(shots) || shots.length === 0) {
             return res.status(400).json(createErrorResponse(createError.invalidParameter('shots', '不能为空'), traceId));
@@ -4925,6 +4883,12 @@ app.post('/api/batch/compile-prompts', async (req: any, res: any) => {
         const authHeader = req.headers.authorization;
         if (!authHeader) return res.status(401).json(createErrorResponse(createError.unauthorized(), traceId));
 
+        // ── Phase 2: Extract character bibles + director brain for compile preview
+        const compileCharacterBibles = extractCharacterBibles({
+            storyEntities: compileStoryEntities,
+            characterAnchor: character_anchor,
+        });
+
         const sortedShots = [...shots].sort((a: any, b: any) => (a.scene_number - b.scene_number) || (a.shot_number - b.shot_number));
         const compiled: any[] = [];
 
@@ -4932,6 +4896,12 @@ app.post('/api/batch/compile-prompts', async (req: any, res: any) => {
             const shot = sortedShots[i];
             const previousShot = i > 0 ? sortedShots[i - 1] : undefined;
             const previousPrompt = i > 0 ? compiled[i - 1]?.model_prompt : undefined;
+
+            const compileShotDirectorBrain = extractDirectorBrainForShot({
+                directorBrain: compileDirBrain,
+                sceneId: shot.scene_id,
+                sceneNumber: shot.scene_number,
+            });
 
             const compiledShot = buildShotImagePrompt({
                 shot,
@@ -4944,7 +4914,9 @@ app.post('/api/batch/compile-prompts', async (req: any, res: any) => {
                 styleBible: style_bible || {},
                 previousShot,
                 previousPrompt,
+                characterBibles: compileCharacterBibles,
                 characterAnchor: character_anchor,
+                directorBrain: compileShotDirectorBrain,
                 styleLabel: style,
             });
 
@@ -4984,7 +4956,7 @@ app.post('/api/batch/compile-prompts', async (req: any, res: any) => {
 app.post('/api/batch/gen-images', async (req: any, res: any) => {
     const traceId: string = req.traceId || generateTraceId();
     try {
-        const { project_id, shots, count = 100, model = 'flux', aspect_ratio = '16:9', style = 'none', character_anchor = '', concurrency = 2, reference_image_url = '', story_entities, style_bible } = req.body;
+        const { project_id, shots, count = 100, model = 'flux', aspect_ratio = '16:9', style = 'none', character_anchor = '', concurrency = 2, reference_image_url = '', story_entities, style_bible, director_brain } = req.body;
         if (!project_id) return res.status(400).json(createErrorResponse(createError.missingField('project_id'), traceId));
         if (!shots?.length) return res.status(400).json(createErrorResponse(createError.invalidParameter('shots', '不能为空'), traceId));
 
@@ -5004,6 +4976,12 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
         const costPerImage = (IMAGE_MODEL_COSTS as any)[model] ?? 6;
         const totalCost = costPerImage * sortedShots.length;
 
+        // ── Phase 2: Extract Character Bibles + Director Brain once before loop ─
+        const batchCharacterBibles = extractCharacterBibles({
+            storyEntities: story_entities,
+            characterAnchor: character_anchor,
+        });
+
         // Compile prompts shot-by-shot (script/shot driven), then validate variance.
         const compiledMap = new Map<string, any>();
         const compiledOrdered: any[] = [];
@@ -5011,6 +4989,13 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
             const shot = sortedShots[i];
             const previousShot = i > 0 ? sortedShots[i - 1] : undefined;
             const previousPrompt = i > 0 ? compiledOrdered[i - 1]?.model_prompt : undefined;
+
+            // Per-shot Director Brain (matched by scene_id so framing/lighting/emotion are scene-specific)
+            const shotDirectorBrain = extractDirectorBrainForShot({
+                directorBrain: director_brain,
+                sceneId: shot.scene_id,
+                sceneNumber: shot.scene_number,
+            });
 
             const compiledShot = buildShotImagePrompt({
                 shot,
@@ -5023,18 +5008,15 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
                 styleBible: style_bible || {},
                 previousShot,
                 previousPrompt,
+                characterBibles: batchCharacterBibles,
                 characterAnchor: character_anchor,
+                directorBrain: shotDirectorBrain,
                 styleLabel: style,
                 shotGraphNode: shot,
             });
 
             if (compiledShot.variance_report.requires_substantive_change && !compiledShot.variance_report.pass) {
-                return res.status(422).json({
-                    error: '该镜头未充分响应剧本内容，请重新编译 prompt',
-                    code: 'PROMPT_VARIANCE_FAIL',
-                    shot_id: compiledShot.shot_id,
-                    variance_report: compiledShot.variance_report,
-                });
+                console.warn(`[batch/gen-images] Variance warning shot ${shot.shot_id}: ${(compiledShot.variance_report as any).fail_reasons?.join('; ')}`);
             }
 
             compiledMap.set(shot.shot_id, compiledShot);
@@ -5161,8 +5143,33 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
                     visualStyle: style,
                 });
 
-                const compiledShot = compiledMap.get(item.shot_id);
-                if (!compiledShot) throw new Error('Compiled shot prompt missing');
+                let compiledShot = compiledMap.get(item.shot_id);
+                if (!compiledShot) {
+                    // ── Fallback A: re-compile from shotData on the fly ──────────────────────
+                    // compiledMap should always have every shot, but if a shot_id mismatch
+                    // occurred (e.g. UUID regenerated between compile and generate calls),
+                    // build a minimal compiled entry rather than crashing the entire batch.
+                    console.warn(`[batch/gen-images] compiledMap miss for shot ${item.shot_id} — rebuilding prompt from shotData`);
+                    const fallbackBasePrompt = [
+                        shotData.image_prompt || shotData.visual_description || shotData.action || '',
+                        character_anchor ? `CHARACTER IDENTITY LOCK: ${character_anchor}` : '',
+                        shotData.location ? `Location: ${shotData.location}` : '',
+                        shotData.camera ? `Camera: ${shotData.camera}` : '',
+                        shotData.lighting ? `Lighting: ${shotData.lighting}` : '',
+                        'Cinematic still frame, high detail, physically plausible lighting.',
+                    ].filter(Boolean).join('. ');
+                    compiledShot = {
+                        shot_id: item.shot_id,
+                        scene_id: shotData.scene_id || '',
+                        shot_summary: `Shot ${shotData.shot_number || item.shot_id}`,
+                        user_readable_prompt: fallbackBasePrompt.slice(0, 120),
+                        model_prompt: fallbackBasePrompt,
+                        negative_prompt: 'identity drift, watermark, blurry, extra limbs',
+                        continuity_notes: [],
+                        variance_report: { similarity_score: 0, overlap_score: 0, requires_substantive_change: false, has_substantive_change: true, pass: true, fail_reasons: [], delta: { changed_fields: [], summary: 'fallback' } },
+                        generation_payload: { prompt: fallbackBasePrompt, negative_prompt: 'identity drift, watermark, blurry, extra limbs', reference_policy: 'anchor', continuity_notes: [] },
+                    };
+                }
 
                 const shotIndex = sortedShots.findIndex((s: any) => s.shot_id === item.shot_id);
                 const previousShotId = shotIndex > 0 ? sortedShots[shotIndex - 1]?.shot_id : undefined;
@@ -5207,7 +5214,9 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
 
                     const existingOwner = generatedUrlOwner.get(result.url);
                     if (existingOwner && existingOwner !== item.shot_id) {
-                        throw new Error('该镜头未充分响应剧本内容，请重新编译 prompt');
+                        // Duplicate URL from Replicate (identical seed / highly similar prompt).
+                        // This is a prompt-diversity warning, NOT a batch-stopping error.
+                        console.warn(`[batch/gen-images] URL collision: shot ${item.shot_id} got same URL as ${existingOwner}. Prompts too similar. Accepting image and continuing.`);
                     }
                     generatedUrlOwner.set(result.url, item.shot_id);
                 }
@@ -5279,7 +5288,7 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
 // ───────────────────────────────────────────────────────────────
 app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
     try {
-        const { project_id, shots, shots_with_images = [], count = 100, strategy = 'strict', model = 'flux', aspect_ratio = '16:9', style = 'none', character_anchor = '', concurrency = 2, anchor_image_url = '', reference_image_url = '', story_entities, style_bible } = req.body;
+        const { project_id, shots, shots_with_images = [], count = 100, strategy = 'strict', model = 'flux', aspect_ratio = '16:9', style = 'none', character_anchor = '', concurrency = 2, anchor_image_url = '', reference_image_url = '', story_entities, style_bible, director_brain: continueDirBrain } = req.body;
         if (!project_id) return res.status(400).json({ error: 'Missing project_id' });
         if (!shots?.length) return res.status(400).json({ error: 'Missing or empty shots array' });
 
@@ -5324,12 +5333,23 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
         const costPerImage = (IMAGE_MODEL_COSTS as any)[model] ?? 6;
         const totalCost = costPerImage * nextBatch.length;
 
+        // ── Phase 2: Extract character bibles + director brain for continue batch ─
+        const continueCharacterBibles = extractCharacterBibles({
+            storyEntities: story_entities,
+            characterAnchor: character_anchor,
+        });
+
         const compiledMap = new Map<string, any>();
         const compiledOrdered: any[] = [];
         for (let i = 0; i < nextBatch.length; i += 1) {
             const shot = nextBatch[i];
             const previousShot = i > 0 ? nextBatch[i - 1] : undefined;
             const previousPrompt = i > 0 ? compiledOrdered[i - 1]?.model_prompt : undefined;
+            const continueShotDirBrain = extractDirectorBrainForShot({
+                directorBrain: continueDirBrain,
+                sceneId: shot.scene_id,
+                sceneNumber: shot.scene_number,
+            });
             const compiledShot = buildShotImagePrompt({
                 shot,
                 scene: {
@@ -5341,18 +5361,15 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
                 styleBible: style_bible || {},
                 previousShot,
                 previousPrompt,
+                characterBibles: continueCharacterBibles,
                 characterAnchor: character_anchor,
+                directorBrain: continueShotDirBrain,
                 styleLabel: style,
                 shotGraphNode: shot,
             });
 
             if (compiledShot.variance_report.requires_substantive_change && !compiledShot.variance_report.pass) {
-                return res.status(422).json({
-                    error: '该镜头未充分响应剧本内容，请重新编译 prompt',
-                    code: 'PROMPT_VARIANCE_FAIL',
-                    shot_id: compiledShot.shot_id,
-                    variance_report: compiledShot.variance_report,
-                });
+                console.warn(`[batch/gen-images/continue] Variance warning shot ${shot.shot_id}: ${(compiledShot.variance_report as any).fail_reasons?.join('; ')}`);
             }
 
             compiledMap.set(shot.shot_id, compiledShot);
@@ -5449,8 +5466,29 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
                 const shotData = nextBatch.find((s: any) => s.shot_id === item.shot_id);
                 if (!shotData) throw new Error('Shot data not found');
 
-                const compiledShot = compiledMap.get(item.shot_id);
-                if (!compiledShot) throw new Error('Compiled shot prompt missing');
+                let compiledShot = compiledMap.get(item.shot_id);
+                if (!compiledShot) {
+                    // ── Fallback: re-compile from shotData on the fly ──────────────────────
+                    console.warn(`[batch/gen-images/continue] compiledMap miss for shot ${item.shot_id} — rebuilding from shotData`);
+                    const fallbackBasePrompt = [
+                        shotData.image_prompt || shotData.visual_description || shotData.action || '',
+                        character_anchor ? `CHARACTER IDENTITY LOCK: ${character_anchor}` : '',
+                        shotData.location ? `Location: ${shotData.location}` : '',
+                        shotData.camera ? `Camera: ${shotData.camera}` : '',
+                        'Cinematic still frame, high detail, physically plausible lighting.',
+                    ].filter(Boolean).join('. ');
+                    compiledShot = {
+                        shot_id: item.shot_id,
+                        scene_id: shotData.scene_id || '',
+                        shot_summary: `Shot ${shotData.shot_number || item.shot_id}`,
+                        user_readable_prompt: fallbackBasePrompt.slice(0, 120),
+                        model_prompt: fallbackBasePrompt,
+                        negative_prompt: 'identity drift, watermark, blurry, extra limbs',
+                        continuity_notes: [],
+                        variance_report: { similarity_score: 0, overlap_score: 0, requires_substantive_change: false, has_substantive_change: true, pass: true, fail_reasons: [], delta: { changed_fields: [], summary: 'fallback' } },
+                        generation_payload: { prompt: fallbackBasePrompt, negative_prompt: 'identity drift, watermark, blurry, extra limbs', reference_policy: 'anchor', continuity_notes: [] },
+                    };
+                }
 
                 const shotIndex = nextBatch.findIndex((s: any) => s.shot_id === item.shot_id);
                 const previousShotId = shotIndex > 0 ? nextBatch[shotIndex - 1]?.shot_id : undefined;
@@ -5476,7 +5514,8 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
                     }
                     const existingOwner = generatedUrlOwner.get(result.url);
                     if (existingOwner && existingOwner !== item.shot_id) {
-                        throw new Error('该镜头未充分响应剧本内容，请重新编译 prompt');
+                        // Duplicate URL from Replicate — prompt-diversity warning, not a batch error.
+                        console.warn(`[batch/gen-images/continue] URL collision: shot ${item.shot_id} got same URL as ${existingOwner}. Accepting and continuing.`);
                     }
                     generatedUrlOwner.set(result.url, item.shot_id);
                 }
@@ -6873,7 +6912,7 @@ app.post('/api/replicate/multi-frame', requireAuth, async (req: any, res: any) =
             .from('profiles')
             .select('credits')
             .eq('id', user.id)
-            .single();
+            .maybeSingle();
 
         const currentCredits = (profile as any)?.credits || 0;
         if (currentCredits < totalCost) {

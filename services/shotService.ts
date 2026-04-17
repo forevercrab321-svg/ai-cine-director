@@ -101,6 +101,8 @@ export async function generateShots(params: {
     visual_style: string;
     character_anchor: string;
     story_entities?: StoryEntity[];
+    /** ★ Director Brain — injected into composeAllPrompts() to shape per-shot prompts */
+    director_brain?: any;
     language: Language;
     num_shots?: number;
 }): Promise<{ scene_title: string; shots: Shot[] }> {

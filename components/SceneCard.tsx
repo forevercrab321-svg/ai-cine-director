@@ -165,7 +165,11 @@ const SceneCard: React.FC<SceneCardProps> = ({
 
     setIsImageLoading(true);
     try {
-      let prompt = `${scene.visual_description}, ${scene.shot_type}`;
+      // ── Use scene.image_prompt (set by Gemini shot planner via composeAllPrompts)
+      // Fallback: scene.visual_description + shot_type for legacy scenes without image_prompt
+      // Do NOT inline-build prompts here — that logic lives in lib/shotPromptCompiler.ts
+      let prompt = scene.image_prompt || scene.visual_description || scene.shot_type || '';
+      if (!prompt) prompt = `${scene.visual_description || ''}, ${scene.shot_type || ''}`.trim();
       if (videoStyle !== 'none') {
         const preset = STYLE_PRESETS.find(p => p.id === videoStyle);
         if (preset) prompt += preset.promptModifier;

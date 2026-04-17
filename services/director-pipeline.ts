@@ -283,15 +283,21 @@ export const generateSceneChain = async (
       console.log(`🎥 [阶段 2] 发送视频生成请求 (Attempt ${videoAttempts}/${maxVideoAttempts})`);
       if (onProgress) onProgress({ index: i, stage: "video_starting" });
 
-      // ★ CRITICAL: Combine full visual context with the specific motion
-      const rawVideoPrompt = shot.video_motion_prompt || shot.video_prompt || shot.shot_type || `Cinematic motion, scene ${i + 1}`;
-      const richContext = shot.image_prompt ? `Visual Context: ${shot.image_prompt}. ` : '';
+      // ── Use video_prompt set by composeAllPrompts() during shot planning.
+      // All prompt construction lives in lib/shotPromptCompiler.ts.
+      // Only append runtime context (cast lock, identity continuity) here —
+      // these cannot be known at planning time.
+      const baseVideoPrompt = shot.video_prompt || shot.video_motion_prompt || shot.shot_type || `Cinematic motion, scene ${i + 1}`;
 
       const castLockRule = lockedCastLine
         ? `[CAST LOCK - MUST FOLLOW EXACTLY] Start Cast Bible: ${lockedCastLine}.`
         : '';
 
-      let lockedVideoPrompt = `${richContext}Cinematic Action: ${rawVideoPrompt}. [IDENTITY CONTINUITY] Keep the exact same protagonist identity and costume as the provided first frame image. ${castLockRule}`.trim();
+      let lockedVideoPrompt = [
+        baseVideoPrompt,
+        '[IDENTITY CONTINUITY] Keep the exact same protagonist identity and costume as the provided first frame image.',
+        castLockRule,
+      ].filter(Boolean).join(' ').trim();
 
       if (retryFeedbackPrompt) {
         lockedVideoPrompt += `\nCRITICAL FIX NEEDED: ${retryFeedbackPrompt}`;

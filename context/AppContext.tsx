@@ -313,14 +313,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       console.log(`[PROFILE] Fetching profile for user: ${userId}, email: ${userEmail}`);
 
+      // maybeSingle() returns null (not 406) when no row exists — avoids red console errors
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
-        .single();
+        .maybeSingle();
 
-      if (error) {
-        const noRow = error?.code === 'PGRST116';
+      if (error || !data) {
+        const noRow = !data || error?.code === 'PGRST116';
         if (noRow) {
           const { error: createErr } = await supabase
             .from('profiles')
@@ -533,11 +534,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     try {
+      // maybeSingle() avoids HTTP 406 when no row exists
       const { data, error } = await supabase
         .from('profiles')
         .select('credits')
         .eq('id', session.user.id)
-        .single();
+        .maybeSingle();
       if (!error && data) {
         const dbBalance = data.credits ?? 0; // ★ NO CLAMPING — show real value from DB
         balanceRef.current = dbBalance;

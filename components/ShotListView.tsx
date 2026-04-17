@@ -303,7 +303,12 @@ const SceneSection: React.FC<{
                     lockedCastLine ? `Locked Cast: ${lockedCastLine}` : '',
                     'Hard Rules: no face drift, no wardrobe change, no age/gender swap, keep hairstyle/body proportions, preserve left-right screen direction and camera axis continuity.'
                 ].filter(Boolean).join(' ');
-                const richVideoPrompt = `Shot ${shot.shot_number} of Scene ${scene.scene_number}. Visual Context: ${shot.image_prompt || scene.visual_description || 'Cinematic scene'}. Cinematic Action: ${motionCore || fallbackMotion}. Continuity: ${hardContinuityRules}`;
+                // Use shot.video_prompt set by composeAllPrompts() during shot planning.
+                // Only append runtime continuity context here (cannot be known at plan time).
+                const richVideoPrompt = [
+                    shot.video_prompt || `${motionCore || fallbackMotion}`,
+                    `Continuity: ${hardContinuityRules}`,
+                ].filter(Boolean).join(' ');
                 const videoRes = await startVideoTask(
                     richVideoPrompt,
                     currentStartImage,
@@ -569,8 +574,9 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                 visual_style: project.visual_style,
                 character_anchor: project.character_anchor,
                 story_entities: project.story_entities,
+                director_brain: project.director_brain,
                 language: settings.lang,
-                num_shots: shotCount, // ★ 改为使用用户选择的shotCount，而不是硬编码的5
+                num_shots: shotCount,
             });
 
             setShotsByScene(prev => ({ ...prev, [sNum]: result.shots }));
@@ -875,7 +881,12 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                         lockedCastLine ? `Locked Cast: ${lockedCastLine}` : '',
                         'Hard Rules: no face drift, no wardrobe change, no age/gender swap, keep hairstyle/body proportions, preserve left-right screen direction and camera axis continuity.'
                     ].filter(Boolean).join(' ');
-                    const richVideoPrompt = `Shot ${shot.shot_number} of Scene ${scene.scene_number}. Visual Context: ${shot.image_prompt || scene.visual_description || 'Cinematic scene'}. Cinematic Action: ${motionCore || fallbackMotion}. Continuity: ${hardContinuityRules}`;
+                    // Use shot.video_prompt set by composeAllPrompts() during shot planning.
+                // Only append runtime continuity context here (cannot be known at plan time).
+                const richVideoPrompt = [
+                    shot.video_prompt || `${motionCore || fallbackMotion}`,
+                    `Continuity: ${hardContinuityRules}`,
+                ].filter(Boolean).join(' ');
                     // 发送视频请求
                     const videoRes = await startVideoTask(
                         richVideoPrompt,
@@ -1083,6 +1094,7 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                     referenceImageDataUrl={referenceImageDataUrl}
                     storyEntities={project.story_entities}
                     styleBible={project.style_bible}
+                    directorBrain={project.director_brain}
                     imagesByShot={imagesByShot}
                     onSetGlobalAnchor={onSetGlobalAnchor} // ★ Proxy to batch panel
                     onImagesGenerated={(results) => {

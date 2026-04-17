@@ -159,6 +159,7 @@ async function readSSEStream(
 export async function startBatchGenImagesSSE(params: {
     project_id: string;
     shots: ShotForBatch[];
+    director_brain?: any;
     count?: number;
     model?: ImageModel;
     aspect_ratio?: AspectRatio;
@@ -187,6 +188,7 @@ export async function startBatchGenImagesSSE(params: {
             reference_image_url: params.reference_image_url ?? '',  // ★ 修复：传递参考图片URL
             story_entities: params.story_entities,
             style_bible: params.style_bible,
+            director_brain: params.director_brain,
         }),
         signal: abortController.signal,
     });
@@ -217,6 +219,8 @@ export async function compileBatchPrompts(params: {
     style?: VideoStyle;
     character_anchor?: string;
     style_bible?: any;
+    story_entities?: any[];
+    director_brain?: any;
 }): Promise<{ compiled_shots: CompiledShotPromptPreview[]; duplicate_warnings: Array<{ code: string; shot_id: string; message: string }> }> {
     const headers = await getAuthHeaders();
     const response = await fetch(`${API_BASE}/compile-prompts`, {
@@ -228,6 +232,8 @@ export async function compileBatchPrompts(params: {
             style: params.style ?? 'none',
             character_anchor: params.character_anchor ?? '',
             style_bible: params.style_bible,
+            story_entities: params.story_entities,
+            director_brain: params.director_brain,
         }),
     });
 
@@ -347,6 +353,7 @@ export async function continueBatchGenImagesSSE(params: {
     reference_image_url?: string;  // ★ User's reference photo for Flux Redux
     story_entities?: any[];
     style_bible?: any;
+    director_brain?: any;
 }, onProgress: (data: BatchProgressResult) => void): Promise<BatchProgressResult & { range_label?: string; remaining_count?: number; all_done?: boolean }> {
     const headers = await getAuthHeaders();
 
@@ -368,6 +375,7 @@ export async function continueBatchGenImagesSSE(params: {
             reference_image_url: params.reference_image_url ?? '',
             story_entities: params.story_entities,
             style_bible: params.style_bible,
+            director_brain: params.director_brain,
         }),
     });
 
