@@ -128,11 +128,12 @@ export async function createVideoEditJob(
 }
 
 export async function getVideoEditJob(jobId: string): Promise<VideoEditJob | null> {
+  // ★ maybeSingle() avoids 406 "Not Acceptable" when job row is missing
   const { data, error } = await supabase
     .from('video_edit_jobs')
     .select('*')
     .eq('id', jobId)
-    .single();
+    .maybeSingle();
 
   if (error) {
     console.error('[VideoEditor] Failed to get job:', error);

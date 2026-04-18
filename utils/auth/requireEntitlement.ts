@@ -83,11 +83,12 @@ export async function requireEntitlement(req: EntitlementRequest): Promise<Entit
   // ═══════════════════════════════════════════════════════════════
   const supabase = req.supabaseClient || createSupabaseAdmin();
   
+  // ★ maybeSingle() avoids HTTP 406 "Not Acceptable" when profile row doesn't exist yet
   const { data: profile, error: profileError } = await supabase
     .from('profiles')
     .select('id, name, credits, plan, is_paid, is_admin')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
   
   if (profileError || !profile) {
     return {

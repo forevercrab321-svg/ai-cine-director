@@ -134,7 +134,10 @@ export const saveStoryboard = async (
         };
 
         const isColumnMissing = (e: any) =>
-            e?.code === '42703' || e?.message?.includes('column') && e?.message?.includes('does not exist');
+            e?.code === '42703'     // PostgreSQL native error
+            || e?.code === 'PGRST204'  // PostgREST schema-cache miss ("Could not find column")
+            || (e?.message?.includes('column') && e?.message?.includes('does not exist'))
+            || e?.message?.includes('Could not find');
 
         const tryUpsert = async (payload: any, isInsert: boolean, id?: string) => {
             if (isInsert) {

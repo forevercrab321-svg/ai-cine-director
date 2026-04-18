@@ -2122,19 +2122,34 @@ const getGeminiTextCompletion = async (promptContent: any, options: {
         requestConfig.systemInstruction = options.systemInstruction;
     }
 
-    // @ts-ignore
-    const model = ai.models;
-    // @ts-ignore
-    const result = await ai.models.generateContent({
-        model: modelName,
-        contents: typeof promptContent === 'string'
-            ? [{ role: 'user', parts: [{ text: promptContent }] }]
-            : promptContent,
-        ...requestConfig,
-    });
+    // ★ Retry with exponential backoff on Gemini 429 / resource_exhausted
+    const MAX_GEMINI_RETRIES = 3;
+    const isGeminiRateLimit = (err: any) =>
+        /resource.?exhausted|quota|rate.?limit|too.?many|429/i.test(String(err?.message || err?.status || ''));
 
-    // @ts-ignore
-    return result?.candidates?.[0]?.content?.parts?.[0]?.text ?? result?.text ?? '';
+    for (let attempt = 0; attempt <= MAX_GEMINI_RETRIES; attempt++) {
+        try {
+            // @ts-ignore
+            const result = await ai.models.generateContent({
+                model: modelName,
+                contents: typeof promptContent === 'string'
+                    ? [{ role: 'user', parts: [{ text: promptContent }] }]
+                    : promptContent,
+                ...requestConfig,
+            });
+            // @ts-ignore
+            return result?.candidates?.[0]?.content?.parts?.[0]?.text ?? result?.text ?? '';
+        } catch (err: any) {
+            if (isGeminiRateLimit(err) && attempt < MAX_GEMINI_RETRIES) {
+                const delayMs = Math.pow(3, attempt) * 2000; // 2s, 6s, 18s
+                console.warn(`[Gemini] 429 rate-limit, retry ${attempt + 1}/${MAX_GEMINI_RETRIES} after ${delayMs}ms`);
+                await new Promise(r => setTimeout(r, delayMs));
+                continue;
+            }
+            throw err;
+        }
+    }
+    return ''; // unreachable but satisfies TS
 };
 
 const storyBrainSchema = {
@@ -3304,6 +3319,7 @@ async function callReplicateImage(params: {
     referenceImageDataUrl?: string; // ★ Base64 of user photo for Face Cloning
     disableFaceCloning?: boolean; // ★ For animals / non-human characters: avoid human-only face alignment
     allowReferenceFallback?: boolean; // ★ Retry with image-guided/text mode if face alignment fails
+    _nsfwRetried?: boolean; // ★ Internal: prevents infinite NSFW retry loop
 }): Promise<{ url: string; predictionId: string }> {
     const token = getReplicateToken();
     const normalizedReference = String(params.referenceImageDataUrl || '').trim() || undefined;
@@ -3417,6 +3433,21 @@ async function callReplicateImage(params: {
                 });
             }
             throw new Error('FACE_ALIGN_FAIL');
+        }
+        // ★ NSFW detected — sanitize prompt and retry once with flux_schnell
+        if (isNsfwError(errorMsg) && !params._nsfwRetried) {
+            console.warn('[Replicate] NSFW detected in image output, retrying with sanitized prompt');
+            const safePrompt = sanitizePromptForSafety(params.prompt);
+            return await callReplicateImage({
+                ...params,
+                prompt: safePrompt,
+                // Switch to safer model for retry
+                model: 'black-forest-labs/flux-schnell',
+                disableFaceCloning: true,
+                referenceImageDataUrl: undefined,
+                imagePrompt: undefined,
+                _nsfwRetried: true,
+            });
         }
         throw new Error(errorMsg || 'Image generation failed');
     }
