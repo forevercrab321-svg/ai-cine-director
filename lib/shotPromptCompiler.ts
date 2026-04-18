@@ -334,16 +334,20 @@ export function validateShotPromptVariance(
     };
   }
 
-  // ── Strip shared preamble before comparing ────────────────────────────────
-  // Phase 2 injects an identical CHARACTER IDENTITY LOCK + DIRECTOR MANDATE
-  // block at the top of every prompt. Comparing full prompts inflates
-  // similarity scores and causes false positives on the variance check.
-  // Only the shot-specific portion (starting at "Scene context:") is
-  // meaningful for variance detection.
+  // ── Extract the shot-specific variable portion for comparison ────────────
+  // The prompt now opens with: [Shot label]. [camera framing]. [emotion]. [primary visual]. ...
+  // The unique per-shot content (framing, emotion) lives at the FRONT.
+  // We compare the first 500 chars (captures shot label + camera + emotion)
+  // AND the portion after "Location:" (captures scene/action context).
+  // Concatenating both avoids the old bug where stripping to "Scene context:"
+  // discarded all unique framing information.
   const extractShotVariable = (p: string): string => {
-    const marker = 'Scene context:';
-    const idx = p.indexOf(marker);
-    return idx > 0 ? p.slice(idx) : p;
+    // Front portion: shot label + camera framing + emotion (positions ①–③)
+    const frontSlice = p.slice(0, 500);
+    // Back portion: from "Location:" onwards (location, action, lighting — shared context)
+    const locIdx = p.indexOf('Location:');
+    const backSlice = locIdx > 0 ? p.slice(locIdx, locIdx + 400) : '';
+    return `${frontSlice} ${backSlice}`.trim();
   };
   const varCurrent = extractShotVariable(currentPrompt);
   const varPrevious = extractShotVariable(previousPrompt);
