@@ -190,35 +190,47 @@ function parseSubjectPosition(blocking: string, cameraFraming: string): string {
 }
 
 function compactLocation(location: string, timeOfDay: string): string {
-  // First sentence only, max 70 chars
-  const first = location.split(/[.!?\n]/)[0].trim();
+  const loc = location != null ? String(location) : '';
+  const first = loc.split(/[.!?\n]/)[0].trim();
   const short = first.length > 70 ? first.slice(0, 67) + '…' : first;
-  return timeOfDay ? `${short}, ${timeOfDay}` : short;
+  const tod = timeOfDay != null ? String(timeOfDay) : '';
+  return tod ? `${short}, ${tod}` : short;
 }
 
 function compactLightingTag(lightingSetup: string, styleLighting: string): string {
   // Prefer per-shot lighting_setup (shot planner generates these per shot)
   // over the global style bible paragraph (same for every shot in the film)
-  const src = (lightingSetup || '').trim() || (styleLighting || '').trim();
+  const a = lightingSetup != null ? String(lightingSetup).trim() : '';
+  const b = styleLighting  != null ? String(styleLighting).trim()  : '';
+  const src = a || b;
   if (!src) return 'motivated cinematic lighting';
   return clamp(src.split(/[.;]/)[0].trim(), 90);
 }
 
 function compactStyleTags(styleBible: any): string {
+  if (!styleBible) return '';
   const tags: string[] = [];
-  // Art direction: first clause only
-  if (styleBible?.art_direction) {
-    const artShort = styleBible.art_direction.split(/[.;,]/)[0].trim().slice(0, 55);
+  // Art direction: first clause only — always coerce to string
+  const artDir = styleBible.art_direction != null ? String(styleBible.art_direction) : '';
+  if (artDir) {
+    const artShort = artDir.split(/[.;,]/)[0].trim().slice(0, 55);
     if (artShort) tags.push(artShort);
   }
-  // Colour: hex codes only (no prose)
-  if (styleBible?.color_palette) {
-    const hexes = (styleBible.color_palette.match(/#[0-9A-Fa-f]{3,6}/g) || []).slice(0, 4);
+  // Colour: hex codes only — always coerce to string before .match()
+  const palette = styleBible.color_palette != null ? String(styleBible.color_palette) : '';
+  if (palette) {
+    const hexes = (palette.match(/#[0-9A-Fa-f]{3,6}/g) || []).slice(0, 4);
     if (hexes.length) tags.push(hexes.join('/'));
+    else {
+      // No hex codes — take first clause of prose as a tag
+      const paletteShort = palette.split(/[.;,]/)[0].trim().slice(0, 50);
+      if (paletteShort) tags.push(paletteShort);
+    }
   }
-  // Lens: first clause only
-  if (styleBible?.lens_language) {
-    const lensShort = styleBible.lens_language.split(/[,;]/)[0].trim().slice(0, 40);
+  // Lens: first clause only — always coerce to string
+  const lens = styleBible.lens_language != null ? String(styleBible.lens_language) : '';
+  if (lens) {
+    const lensShort = lens.split(/[,;]/)[0].trim().slice(0, 40);
     if (lensShort) tags.push(lensShort);
   }
   return tags.filter(Boolean).join(' | ');
