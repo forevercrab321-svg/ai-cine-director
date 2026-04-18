@@ -200,10 +200,24 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
     const estimatedCost = getBatchCost(Math.min(count, imageStatus.shotsMissing.length || count), model);
     const allDone = imageStatus.allDone;
 
-    // Sort shots for consistent ordering — preserves script sequence for the storyboard grid
-    const sortedShots = [...allShots].sort((a, b) =>
-        (a.scene_id === b.scene_id ? a.shot_number - b.shot_number : a.scene_id.localeCompare(b.scene_id))
-    );
+    // ─── SCREENPLAY ORDER — canonical ascending sort ─────────────────────────────
+    // CRITICAL: scene_id is String(sceneNum) from ShotListView. Using localeCompare()
+    // gives LEXICOGRAPHIC order: "10" < "2", so S10 sorts before S2 → grid corruption.
+    // Fix: parse scene_id as Number for strict numeric comparison.
+    const sortedShots = React.useMemo(() => {
+        const ordered = [...allShots].sort((a, b) => {
+            const sceneA = Number(a.scene_id) || 0;
+            const sceneB = Number(b.scene_id) || 0;
+            if (sceneA !== sceneB) return sceneA - sceneB;
+            return (a.shot_number || 0) - (b.shot_number || 0);
+        });
+        // [DEBUG] Verify canonical order is correct — remove after confirmation
+        console.log(
+            '[BATCH_ORDER] CANONICAL_SORTED_SHOTS (first 10):',
+            ordered.slice(0, 10).map(s => `S${s.scene_id}.${s.shot_number}`).join(', ')
+        );
+        return ordered;
+    }, [allShots]);
 
     // Live status lookup keyed by shot_id — drives storyboard grid overlays during generation
     const itemsByShot = React.useMemo(() => {
@@ -333,6 +347,15 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
             setAnchorImageUrl((data as any).anchor_image_url);
         }
 
+        // [DEBUG] Log each newly succeeded shot so we can verify async completion order
+        data.items.forEach(item => {
+            if (item.status === 'succeeded' && item.image_url) {
+                console.log(
+                    `[BATCH_ORDER] JOB_FINISHED shot_id=${item.shot_id.slice(-6)} scene=${(item as any).scene_number ?? '?'} shot=${(item as any).shot_number ?? '?'} url=${item.image_url.slice(-20)}`
+                );
+            }
+        });
+
         // Emit partial results immediately as images complete
         if (data.job.status === 'completed' || data.job.status === 'failed' || data.job.status === 'cancelled') {
             const results = data.items
@@ -431,6 +454,12 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
         setError(null);
         setRangeLabel(null);
         setJobId('streaming');
+
+        // [DEBUG] Verify shots are dispatched in screenplay order
+        console.log(
+            '[BATCH_ORDER] BATCH_START — dispatching shots in order:',
+            sortedShots.map(s => `S${s.scene_id}.${s.shot_number}(${s.shot_id.slice(-4)})`).join(', ')
+        );
 
         // Auto-scroll storyboard grid to show the first shots being generated
         const firstMissingIdx = sortedShots.findIndex(s => !(imagesByShot[s.shot_id]?.length));
@@ -875,6 +904,14 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
 
                     {/* 4×3 grid */}
                     <div className="grid grid-cols-4 gap-2">
+                        {(() => {
+                            // [DEBUG] Log render order so we can verify grid slot ↔ screenplay alignment
+                            console.log(
+                                '[BATCH_ORDER] GRID_RENDER_ORDER (first 10):',
+                                gridShots.slice(0, 10).map((s, i) => `[${gridOffset + i + 1}]S${s.scene_id}.${s.shot_number}`).join(', ')
+                            );
+                            return null;
+                        })()}
                         {gridShots.map((shot, cellIdx) => {
                             const absIdx = gridOffset + cellIdx;
                             const existingImages = imagesByShot[shot.shot_id] || [];

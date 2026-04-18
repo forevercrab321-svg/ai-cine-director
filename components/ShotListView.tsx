@@ -1260,9 +1260,13 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
             {/* ★ Batch Image Generation Panel — only show when shots exist */}
             {totalShots > 0 && (
                 <BatchImagePanel
-                    allShots={(Object.entries(shotsByScene) as [string, Shot[]][]).flatMap(([sceneNum, shots]) =>
-                        shots.map(s => ({ ...s, scene_id: String(sceneNum) }))
-                    )}
+                    allShots={(Object.entries(shotsByScene) as [string, Shot[]][])
+                        // Belt-and-suspenders: sort by numeric scene key so allShots is always in
+                        // scene_number ASC order before BatchImagePanel receives it.
+                        .sort(([a], [b]) => Number(a) - Number(b))
+                        .flatMap(([sceneNum, shots]) =>
+                            shots.map(s => ({ ...s, scene_id: String(sceneNum) }))
+                        )}
                     projectId={effectiveProjectId}
                     characterAnchor={project.character_anchor}
                     visualStyle={project.visual_style}
@@ -1273,6 +1277,10 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                     imagesByShot={imagesByShot}
                     onSetGlobalAnchor={onSetGlobalAnchor} // ★ Proxy to batch panel
                     onImagesGenerated={(results) => {
+                        // [DEBUG] Log writeback targets so we can verify image → correct shot slot
+                        results.forEach(r => {
+                            console.log(`[BATCH_ORDER] WRITEBACK_TARGET shot_id=${r.shot_id.slice(-6)} image_id=${r.image_id.slice(-6)}`);
+                        });
                         // Update imagesByShot with newly generated images
                         setImagesByShot(prev => {
                             const updated = { ...prev };
