@@ -576,11 +576,17 @@ function buildImagePromptFromComposer(params: {
   // ── Character identity locks (compact — appear at END as a constraint) ────
   // Placed LAST so screenplay content dominates. The model still enforces
   // identity; it just doesn't let the lock crowd out the story beat.
+  // ★ Guard: if perShotImagePrompt already starts with "[... LOCK]", skip the
+  //   secondary lock to avoid doubling up (the stored image_prompt from the
+  //   pipeline already has the character lock prepended at generation time).
+  const imagePromptAlreadyHasLock = /^\[.*\s+LOCK\]/.test(perShotImagePrompt);
   const identityLocks: string[] = [];
-  if (resolvedBibles.length > 0) {
-    resolvedBibles.forEach(b => identityLocks.push(characterToIdentityLock(b)));
-  } else if (characterAnchor) {
-    identityLocks.push(`IDENTITY LOCK: ${clamp(characterAnchor, 200)}`);
+  if (!imagePromptAlreadyHasLock) {
+    if (resolvedBibles.length > 0) {
+      resolvedBibles.forEach(b => identityLocks.push(characterToIdentityLock(b)));
+    } else if (characterAnchor) {
+      identityLocks.push(`IDENTITY LOCK: ${clamp(characterAnchor, 200)}`);
+    }
   }
 
   // ── Director mandate (brief — rules guide tone, not replace the shot) ─────
@@ -628,7 +634,8 @@ function buildImagePromptFromComposer(params: {
   //
   const prompt = [
     // ① Shot identifier + screenplay visual directive (most unique content)
-    `${shotLabel} ${clamp(primaryVisual, 350)}`.trim(),
+    // ★ 600 chars (≈100 words) — enough to preserve full Gemini image_prompt without truncation
+    `${shotLabel} ${clamp(primaryVisual, 600)}`.trim(),
     // ② Scene context — the story beat this shot serves
     sceneSummary ? `Scene context: ${clamp(sceneSummary, 220)}` : '',
     // ③ Action — what is physically happening in this frame

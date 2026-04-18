@@ -5278,13 +5278,17 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
                 const shotData = sortedShots.find((s: any) => s.shot_id === item.shot_id);
                 if (!shotData) throw new Error('Shot data not found');
 
+                // ★ BATCH CONTINUITY STRATEGY (redesigned):
+                // - lockScene: FALSE — different scenes MUST look different
+                // - strictness: 'medium' — character/costume locked but composition free
+                // - usePreviousApprovedAsReference: FALSE — prevents all shots converging on first
                 const continuityProfile = buildContinuityProfile({
-                    strictness: 'high',
+                    strictness: 'medium',
                     lockCharacter: true,
                     lockStyle: true,
                     lockCostume: true,
-                    lockScene: true,
-                    usePreviousApprovedAsReference: true,
+                    lockScene: false,   // ★ allow location/environment to change between scenes
+                    usePreviousApprovedAsReference: false,
                     scene_memory: {
                         scene_id: shotData.scene_id,
                         scene_number: shotData.scene_number,
@@ -5307,9 +5311,6 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
                 let compiledShot = compiledMap.get(item.shot_id);
                 if (!compiledShot) {
                     // ── Fallback A: re-compile from shotData on the fly ──────────────────────
-                    // compiledMap should always have every shot, but if a shot_id mismatch
-                    // occurred (e.g. UUID regenerated between compile and generate calls),
-                    // build a minimal compiled entry rather than crashing the entire batch.
                     console.warn(`[batch/gen-images] compiledMap miss for shot ${item.shot_id} — rebuilding prompt from shotData`);
                     const fallbackBasePrompt = [
                         shotData.image_prompt || shotData.visual_description || shotData.action || '',
@@ -5328,44 +5329,43 @@ app.post('/api/batch/gen-images', async (req: any, res: any) => {
                         negative_prompt: 'identity drift, watermark, blurry, extra limbs',
                         continuity_notes: [],
                         variance_report: { similarity_score: 0, overlap_score: 0, requires_substantive_change: false, has_substantive_change: true, pass: true, fail_reasons: [], delta: { changed_fields: [], summary: 'fallback' } },
-                        generation_payload: { prompt: fallbackBasePrompt, negative_prompt: 'identity drift, watermark, blurry, extra limbs', reference_policy: 'anchor', continuity_notes: [] },
+                        generation_payload: { prompt: fallbackBasePrompt, negative_prompt: 'identity drift, watermark, blurry, extra limbs', reference_policy: 'none', continuity_notes: [] },
                     };
                 }
 
-                const shotIndex = sortedShots.findIndex((s: any) => s.shot_id === item.shot_id);
-                const previousShotId = shotIndex > 0 ? sortedShots[shotIndex - 1]?.shot_id : undefined;
+                // ★ SMART REDUX REFERENCE SELECTION (fixes identical-image problem):
+                // ① Raw user anchor photo (base64) → NEVER used as Flux Redux in batch.
+                //    The character description is already embedded in the text prompt via
+                //    identity-lock blocks. Using Redux on top makes every shot look identical.
+                // ② For the 2nd+ shot within the SAME scene: use the first generated frame
+                //    of that scene as Redux — maintains scene location/mood consistency
+                //    without forcing character pose/composition to repeat.
+                // ③ First shot of any scene (or no prior frame) → text-only generation.
+                const sceneIdKey = String(shotData.scene_id || shotData.scene_number || '');
+                const sceneFirstFrame = firstFrameByScene.get(sceneIdKey);
+                const isFirstShotOfScene = !sceneFirstFrame;
+                // Use generated scene-frame as Redux reference only for same-scene follow-up shots
+                const reduxReference = isFirstShotOfScene ? undefined : sceneFirstFrame;
+
                 const payload = buildShotGenerationPayload(compiledShot, {
-                    anchorImage: anchorImageUrl || undefined,
-                    previousFrame: previousShotId ? generatedByShot.get(previousShotId) : undefined,
-                    firstFrameInScene: firstFrameByScene.get(String(shotData.scene_id || '')),
+                    anchorImage: undefined,          // ★ never inject raw anchor as Redux
+                    previousFrame: undefined,         // ★ don't lock to previous shot
+                    firstFrameInScene: reduxReference, // ★ only for same-scene follow-ups
                 });
 
                 let finalPrompt = applyContinuityLocks(payload.prompt, continuityProfile);
                 const continuityNegative = buildContinuityNegativePrompt(payload.negative_prompt || '', continuityProfile);
 
-                const maxAttempts = 2;
-                const threshold = continuityThreshold('high');
+                // ★ Single attempt in batch mode (retrying doubles cost; variance already handled by prompt compiler)
                 let result: { url: string; predictionId: string } | null = null;
-                let candidate = finalPrompt;
-                for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-                    const scored = scoreContinuityPrompt(candidate, continuityProfile);
-                    if (scored.overall < threshold) {
-                        candidate = strengthenPromptForRetry(candidate, continuityProfile, attempt, scored.failures);
-                    }
-                    // ★ Replicate image generation (provider: Replicate, env: REPLICATE_API_TOKEN)
-                    result = await callReplicateImage({
-                        prompt: candidate,
-                        negativePrompt: continuityNegative,
-                        model: replicatePath,
-                        aspectRatio: aspect_ratio,
-                        seed: shotData.seed_hint ?? computeDeterministicShotSeed(projectSeed, shotData.shot_id, shotData.shot_number),
-                        imagePrompt: payload.reference_image_url,
-                    });
-                    if (scored.overall >= threshold || attempt === maxAttempts) {
-                        finalPrompt = candidate;
-                        break;
-                    }
-                }
+                result = await callReplicateImage({
+                    prompt: finalPrompt,
+                    negativePrompt: continuityNegative,
+                    model: replicatePath,
+                    aspectRatio: aspect_ratio,
+                    seed: shotData.seed_hint ?? computeDeterministicShotSeed(projectSeed, shotData.shot_id, shotData.shot_number),
+                    imagePrompt: reduxReference,  // ★ only set for same-scene follow-up shots
+                });
 
                 if (result?.url) {
                     generatedByShot.set(item.shot_id, result.url);
@@ -5647,16 +5647,20 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
                         negative_prompt: 'identity drift, watermark, blurry, extra limbs',
                         continuity_notes: [],
                         variance_report: { similarity_score: 0, overlap_score: 0, requires_substantive_change: false, has_substantive_change: true, pass: true, fail_reasons: [], delta: { changed_fields: [], summary: 'fallback' } },
-                        generation_payload: { prompt: fallbackBasePrompt, negative_prompt: 'identity drift, watermark, blurry, extra limbs', reference_policy: 'anchor', continuity_notes: [] },
+                        generation_payload: { prompt: fallbackBasePrompt, negative_prompt: 'identity drift, watermark, blurry, extra limbs', reference_policy: 'none', continuity_notes: [] },
                     };
                 }
 
-                const shotIndex = nextBatch.findIndex((s: any) => s.shot_id === item.shot_id);
-                const previousShotId = shotIndex > 0 ? nextBatch[shotIndex - 1]?.shot_id : undefined;
+                // ★ Same smart Redux reference logic as gen-images:
+                // Only use a scene-internal frame as Redux for follow-up shots in the same scene.
+                const continueSceneKey = String(shotData.scene_id || shotData.scene_number || '');
+                const continueSceneFirst = firstFrameByScene.get(continueSceneKey);
+                const continueRedux = continueSceneFirst || undefined; // first frame or nothing
+
                 const payload = buildShotGenerationPayload(compiledShot, {
-                    anchorImage: anchorImageUrl || undefined,
-                    previousFrame: previousShotId ? generatedByShot.get(previousShotId) : undefined,
-                    firstFrameInScene: firstFrameByScene.get(String(shotData.scene_id || '')),
+                    anchorImage: undefined,
+                    previousFrame: undefined,
+                    firstFrameInScene: continueRedux,
                 });
 
                 // ★ Replicate image generation (provider: Replicate, env: REPLICATE_API_TOKEN)
@@ -5666,12 +5670,12 @@ app.post('/api/batch/gen-images/continue', async (req: any, res: any) => {
                     model: replicatePath,
                     aspectRatio: aspect_ratio,
                     seed: shotData.seed_hint ?? computeDeterministicShotSeed(projectSeed, shotData.shot_id, shotData.shot_number),
-                    imagePrompt: payload.reference_image_url,
+                    imagePrompt: continueRedux,
                 });
                 if (result.url) {
                     generatedByShot.set(item.shot_id, result.url);
-                    if (!firstFrameByScene.has(String(shotData.scene_id || ''))) {
-                        firstFrameByScene.set(String(shotData.scene_id || ''), result.url);
+                    if (!firstFrameByScene.has(continueSceneKey)) {
+                        firstFrameByScene.set(continueSceneKey, result.url);
                     }
                     const existingOwner = generatedUrlOwner.get(result.url);
                     if (existingOwner && existingOwner !== item.shot_id) {
