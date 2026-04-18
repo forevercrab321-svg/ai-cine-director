@@ -334,20 +334,42 @@ DO NOT humanise faces. Cartoon/anime/animal anatomy must be preserved exactly.
    • EYELINE MATCHING: if character A looks right, character B must look left
    • ${cameraRule}
 
-② FOCAL LENGTH PRECISION (not just "close-up" — specify the LENS)
+② SHOT SIZE VARIETY LAW — HARD CONSTRAINT — MANDATORY ENFORCEMENT:
+   Every shot must declare one of these shot_size codes:
+     ECU (extreme close-up — eyes/hands/object)
+     CU  (close-up — head and shoulders)
+     MCU (medium close-up — chest up)
+     MS  (medium shot — waist up)
+     WS  (wide shot — full body + environment)
+     EWS (extreme wide — establishing, epic scale)
+
+   FORBIDDEN: 3 or more consecutive shots with the SAME shot_size code.
+   If all your shots are "MS", you have failed this law.
+
+   REQUIRED CINEMATIC PROGRESSION — pick one pattern per scene:
+     Pattern A — Scale Reveal:    EWS → MS → CU → ECU
+     Pattern B — Human Response:  WS → MS → CU (establish danger → human reaction → micro-detail)
+     Pattern C — Coverage:        MS → CU → OTS → Insert
+     Pattern D — Monster/Scale:   EWS (creature) → WS (human vs creature) → MS (human) → ECU (eyes)
+
+   CAMERA ANGLE must vary across shots in a scene:
+     Use at minimum 2 different angles: low-angle / eye-level / high-angle / OTS / POV / dutch
+
+③ FOCAL LENGTH PRECISION (not just "close-up" — specify the LENS)
    • Wide shot: 24mm or 35mm (specify which and why — more distortion = more tension)
    • Medium shot: 50mm (the most "human" neutral lens)
    • Close-up: 85mm (flattering compression, emotional intimacy)
    • Extreme close-up: 135mm+ (maximum compression, micro-expression isolation)
    • Use zoom only if it carries narrative meaning (rarely)
 
-③ BLOCKING & CHARACTER POSITIONING
+④ BLOCKING & CHARACTER POSITIONING
    For each shot, state where characters are in the frame:
    • Foreground / midground / background positioning
    • Power dynamics expressed through height and proximity
    • Physical distance between characters = emotional distance
+   • SUBJECT POSITION must vary across shots: right-third / centered / left-third / background / split
 
-④ CAMERA MOVEMENT MOTIVATION
+⑤ CAMERA MOVEMENT MOTIVATION
    Every camera move must be motivated:
    • STATIC: character has control of the scene / tension is internalised
    • PUSH-IN: realisation, mounting dread, intimate revelation
@@ -356,31 +378,44 @@ DO NOT humanise faces. Cartoon/anime/animal anatomy must be preserved exactly.
    • HANDHELD: instability, urgency, subjective anxiety
    • CRANE/DUTCH: god's-eye view, disorientation, power shift
 
-⑤ LIGHTING SETUP (per shot — do NOT just repeat style bible globally)
-   Specify the PRACTICAL LIGHT SOURCE that motivates the shot:
-   e.g. "Window at screen-left at 3/4 angle, harsh Rembrandt shadow on face"
-   e.g. "Overhead practical bulb, underlit — threat implied"
-   e.g. "Candle at foreground-right, everything beyond falls to darkness"
+⑥ LIGHTING SETUP (per shot — do NOT repeat the style bible paragraph globally)
+   Each shot must have its OWN lighting_setup — different from the previous shot.
+   Specify the PRACTICAL LIGHT SOURCE that motivates this specific shot:
+   e.g. "Window at screen-left, 3/4 Rembrandt angle, harsh shadow jaw-side"
+   e.g. "Overhead practical bulb only, underlit — threat implied by darkness"
+   e.g. "Neon sign at screen-right, cyan rimlight, deep magenta fill from billboard"
+   ✗ WRONG: repeating the same lighting paragraph for every shot in the scene
 
-⑥ PHYSICAL ACTION — BODY MECHANICS PRECISION
+⑦ PHYSICAL ACTION — BODY MECHANICS PRECISION
    action field must be specific enough to direct an actor:
    ✗ WRONG: "She walks to the window"
    ✓ CORRECT: "She crosses frame left to right in three deliberate steps, pauses
      at the window with her back to camera, one hand rising to touch the glass"
 
-⑦ DIALOGUE STANDARD: ${dialogueRule}
+⑧ DIALOGUE STANDARD: ${dialogueRule}
    SUBTEXT STANDARD: ${subtextRule}
    Every dialogue line must pass this test: could it be cut without losing
    plot? If yes — cut it. Only keep lines that are irreplaceable.
 
-⑧ IMAGE PROMPT — MINIMUM 80 WORDS
-   The image_prompt must be a professional Flux/Midjourney-level prompt:
-   • Lead with subject + specific action + micro-expression
-   • State focal length and depth of field explicitly
-   • Name the specific light source and its direction
-   • Describe foreground/midground/background depth staging
-   • Include colour grading note (e.g. "desaturated teal shadow, warm amber highlight")
-   • Include film stock or rendering feel (e.g. "35mm grain, Kodak Vision3 250D")
+⑨ IMAGE PROMPT — VISUAL DELTA FIRST, CHARACTER DESCRIPTION LAST:
+   MANDATORY FORMAT — first line must be:
+     "[SHOT_SIZE | ANGLE | subject_position] unique physical action + micro-expression"
+   Example (correct):
+     "[WS | LOW-ANGLE | subject-right] Spider-Man perched on traffic signal, head craned
+      back, Godzilla's silhouette towering in the upper-left background. The crowd below
+      frozen mid-stride in awe. 85mm, shallow focus on Spider-Man face, city blurred.
+      Neon-pink billboard light from above, deep cyan street shadow below.
+      [SPIDER-MAN LOCK: expressive brown eyes, high-gloss red/blue suit]"
+
+   ✗ WRONG — DO NOT lead with character description:
+     "Round face, large expressive brown eyes, [100 words of face description]..."
+
+   The image_prompt MUST:
+   • FIRST LINE: shot_size code + angle + subject position + unique physical action
+   • Include the specific lighting_setup for THIS shot (not a global paragraph)
+   • Describe depth staging (foreground/midground/background layers)
+   • End with a COMPACT character lock [NAME LOCK: 3-5 identifiers only]
+   • Minimum 60 words, maximum 150 words — be concise but specific
 
 ⑨ VIDEO PROMPT — PHYSICAL CHOREOGRAPHY PRECISION
    The video_prompt must describe motion that a video diffusion model can execute:
@@ -400,18 +435,20 @@ DO NOT humanise faces. Cartoon/anime/animal anatomy must be preserved exactly.
     {
       "shot_id": "shot_[scene_number]_[shot_number]",
       "shot_number": 1,
+      "shot_size": "ECU|CU|MCU|MS|WS|EWS",
       "shot_type": "establishing|master|single|two-shot|over-shoulder|insert|cutaway|pov|reaction",
       "characters": ["exact character_id array from LOCKED CAST above"],
-      "blocking": "Where characters are positioned in frame relative to each other and the camera",
+      "blocking": "Where characters are positioned in frame relative to each other and camera — specify left/center/right/foreground/background",
       "action": "Precise body-mechanics description of what happens (minimum 2 sentences)",
-      "camera_angle": "wide|medium|close|ecu|over-shoulder|pov|dutch|high-angle|low-angle",
+      "camera_angle": "eye-level|low-angle|high-angle|over-shoulder|pov|dutch|bird-eye|profile",
+      "subject_position": "frame-left|centered|frame-right|background|foreground|split",
       "focal_length": "24mm|35mm|50mm|85mm|135mm|zoom",
       "camera_movement": "static|push-in|pull-out|pan-left|pan-right|tilt-up|tilt-down|dolly|tracking|handheld|crane",
       "movement_motivation": "Why this camera move is the only correct choice here",
-      "composition": "Specific rule-of-thirds/symmetry/lead-room description with depth staging",
-      "lighting_setup": "Named light source + direction + shadow quality + fill ratio",
+      "composition": "Specific rule-of-thirds/symmetry/lead-room description with depth staging — must differ from adjacent shots",
+      "lighting_setup": "THIS SHOT ONLY — named light source + direction + shadow quality. Must differ from previous shot. Example: 'Neon sign screen-right, cyan rimlight, deep magenta fill, no fill on shadow side'",
       "duration_sec": 4,
-      "emotional_beat": "The micro-psychological state of the POV character in this exact frame",
+      "emotional_beat": "The micro-psychological state of the POV character in this exact frame — must differ from adjacent shots",
       "dialogue": {
         "speaker_id": "character_id or null",
         "speaker_name": "Character name or null",

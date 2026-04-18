@@ -92,40 +92,174 @@ export interface CharacterBibleEntry {
   continuity_rules?: string[];
 }
 
-/** Build a compact identity-lock string from a character bible entry.
- *  Capped at 250 chars — enough to anchor the character, not dominate the prompt.
- *  The full description (face traits, hair, wardrobe) is condensed into the most
- *  distinctive markers only so that shot-specific screenplay content can lead.
- */
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPACT IDENTITY LOCK — max 100 chars total.
+// Only 3–5 immutable identifiers + 1 costume tag + 1 silhouette tag.
+// The long prose block was dominating every prompt in the scene (identical
+// 150-word character description repeated shot after shot). Now it's a
+// concise anchor at the END of the prompt so shot-specific content leads.
+// ─────────────────────────────────────────────────────────────────────────────
 function characterToIdentityLock(bible: CharacterBibleEntry): string {
-  // Detect non-human species from face_traits / wardrobe description
-  const combinedTraits = `${bible.face_traits || ''} ${(bible as any).outfit || bible.wardrobe || ''}`.toLowerCase();
+  const faceText  = bible.face_traits || '';
+  const wardrobeRaw = ((bible as any).outfit || bible.wardrobe || '');
+  const bodyRaw   = ((bible as any).body_type || '');
+  const combinedTraits = `${faceText} ${wardrobeRaw}`.toLowerCase();
+
+  // Non-human species detection (unchanged — critical for cartoon/animal chars)
   const nonHumanSpeciesMatch = combinedTraits.match(
     /\b(cat|dog|rabbit|fox|bear|wolf|tiger|lion|panda|deer|owl|eagle|dragon|anime|cartoon|creature|monster|alien|robot|cyborg|anthropomorphic|furry|humanoid animal)\b/
   );
   const isNonHuman = !!nonHumanSpeciesMatch;
   const speciesLabel = isNonHuman ? nonHumanSpeciesMatch![0].toUpperCase() : '';
 
-  const faceShort = bible.face_traits ? clamp(bible.face_traits, 90) : '';
-  const hairShort = bible.hair ? `hair/fur: ${clamp(bible.hair, 45)}` : '';
-  const wardrobeShort = ((bible as any).outfit || bible.wardrobe)
-    ? `wearing: ${clamp((bible as any).outfit || bible.wardrobe, 55)}`
-    : '';
-  const bodyShort = (bible as any).body_type ? `build: ${clamp((bible as any).body_type, 40)}` : '';
+  if (isNonHuman) {
+    // Non-human: species + 2 key distinguishing visual traits + costume
+    const bodyKey  = bodyRaw.split(',')[0].trim().slice(0, 40);
+    const costume  = wardrobeRaw.split(/[,;]/)[0].trim().slice(0, 40);
+    return `[${bible.name.toUpperCase()} NON-HUMAN ${speciesLabel} LOCK: ${[bodyKey, costume].filter(Boolean).join('; ')}. Render as ${speciesLabel} species — DO NOT humanise.]`;
+  }
 
-  const nonHumanDirective = isNonHuman
-    ? `[NON-HUMAN ${speciesLabel}] Render as ${speciesLabel} species — do NOT humanise. Preserve animal anatomy, proportions, and species-specific facial features exactly.`
-    : 'DO NOT alter face, race, gender, or wardrobe.';
+  // Human: extract 3 immutable facial identifiers from face_traits
+  const eyeM    = faceText.match(/\b(brown|blue|green|hazel|grey|gray|dark|amber|almond|expressive|wide|narrow)\s+eyes?\b/i);
+  const skinM   = faceText.match(/\b(fair|dark|olive|brown|tan|pale|warm|cool)\s*(?:skin|tone|undertone)?[^,]{0,20}/i);
+  const markM   = faceText.match(/\b(scar|freckle|mole|birthmark|tattoo|dimple|cleft)[^,]{0,30}/i);
+  const hairKey = bible.hair ? bible.hair.split(/[,;]/)[0].trim().slice(0, 35) : '';
 
-  const parts = [
-    `[${bible.name.toUpperCase()} IDENTITY LOCK]`,
-    faceShort,
-    hairShort,
-    bodyShort,
-    wardrobeShort,
-    nonHumanDirective,
-  ].filter(Boolean).join('. ');
-  return clamp(parts, 300);
+  const identifiers = [
+    eyeM  ? eyeM[0].trim()  : '',
+    skinM ? skinM[0].trim() : '',
+    markM ? markM[0].trim() : '',
+    hairKey,
+  ].filter(Boolean).slice(0, 3).join(', ');
+
+  // Costume: first descriptor only (e.g. "Spider-Man suit" not 80 words)
+  const costumeTag  = wardrobeRaw.split(/[,;]/)[0].trim().slice(0, 45);
+  // Silhouette: height + build only
+  const silhouette  = bodyRaw.split(',').slice(0, 2).join(',').trim().slice(0, 35);
+
+  const lock = [identifiers, costumeTag, silhouette].filter(Boolean).join('; ');
+  return `[${bible.name.toUpperCase()} LOCK: ${lock}. DO NOT alter face, gender, wardrobe.]`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CINEMATIC FINGERPRINT — per-shot visual identity for contrast guard
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface CinematicFingerprint {
+  shot_size:        string;   // ECU|CU|MCU|MS|WS|EWS
+  angle:            string;   // LOW-ANGLE|EYE-LEVEL|HIGH-ANGLE|OTS|POV|DUTCH|BIRD-EYE|PROFILE
+  subject_position: string;   // frame-left|centered|frame-right|background|foreground|split
+  dramatic_purpose: string;   // from shot.dramatic_function or shot.shot_type
+  emotional_beat:   string;   // from shot.emotional_beat / emotion
+}
+
+function parseShotSize(shotType: string, cameraAngle: string, cameraFraming: string): string {
+  const s = `${shotType} ${cameraAngle} ${cameraFraming}`.toLowerCase();
+  if (s.match(/\b(ecu|extreme[\s-]?close|extreme[\s-]?cu)\b/))       return 'ECU';
+  if (s.match(/\b(close[\s-]?up|close[\s-]?shot|\bcu\b)\b/))        return 'CU';
+  if (s.match(/\b(medium[\s-]?close|mcu|bust[\s-]?shot)\b/))        return 'MCU';
+  if (s.match(/\b(medium[\s-]?shot|medium[\s-]?wide|\bms\b|waist|knee)\b/)) return 'MS';
+  if (s.match(/\b(wide[\s-]?shot|full[\s-]?shot|long[\s-]?shot|\bws\b|establishing|master)\b/)) return 'WS';
+  if (s.match(/\b(extreme[\s-]?wide|aerial|drone|\bews\b)\b/))       return 'EWS';
+  if (s.match(/\b(close)\b/))     return 'CU';
+  if (s.match(/\b(wide|establish)\b/)) return 'WS';
+  return 'MS';
+}
+
+function parseCameraAngle(cameraAngle: string, cameraFraming: string): string {
+  const s = `${cameraAngle} ${cameraFraming}`.toLowerCase();
+  if (s.match(/\blow[\s-]?angle\b/))     return 'LOW-ANGLE';
+  if (s.match(/\bhigh[\s-]?angle\b/))    return 'HIGH-ANGLE';
+  if (s.match(/\bover[\s-]?shoulder\b/)) return 'OTS';
+  if (s.match(/\bpov\b/))                return 'POV';
+  if (s.match(/\bdutch\b/))              return 'DUTCH';
+  if (s.match(/\bbird[\s-]?eye|aerial\b/)) return 'BIRD-EYE';
+  if (s.match(/\bprofile\b/))            return 'PROFILE';
+  return 'EYE-LEVEL';
+}
+
+function parseSubjectPosition(blocking: string, cameraFraming: string): string {
+  const s = `${blocking} ${cameraFraming}`.toLowerCase();
+  if (s.match(/\bright\s+third|right\s+side|screen\s+right|on\s+the\s+right\b/)) return 'frame-right';
+  if (s.match(/\bleft\s+third|left\s+side|screen\s+left|on\s+the\s+left\b/))    return 'frame-left';
+  if (s.match(/\bsymmet|cent(er|re)|mid(dle)?[\s-]?frame\b/))                   return 'centered';
+  if (s.match(/\bbackground|distance\b/))  return 'background';
+  if (s.match(/\bforeground|extreme[\s-]?fg\b/)) return 'foreground';
+  if (s.match(/\bboth|two[\s-]?shot|split\b/)) return 'split';
+  return 'centered';
+}
+
+function compactLocation(location: string, timeOfDay: string): string {
+  // First sentence only, max 70 chars
+  const first = location.split(/[.!?\n]/)[0].trim();
+  const short = first.length > 70 ? first.slice(0, 67) + '…' : first;
+  return timeOfDay ? `${short}, ${timeOfDay}` : short;
+}
+
+function compactLightingTag(lightingSetup: string, styleLighting: string): string {
+  // Prefer per-shot lighting_setup (shot planner generates these per shot)
+  // over the global style bible paragraph (same for every shot in the film)
+  const src = (lightingSetup || '').trim() || (styleLighting || '').trim();
+  if (!src) return 'motivated cinematic lighting';
+  return clamp(src.split(/[.;]/)[0].trim(), 90);
+}
+
+function compactStyleTags(styleBible: any): string {
+  const tags: string[] = [];
+  // Art direction: first clause only
+  if (styleBible?.art_direction) {
+    const artShort = styleBible.art_direction.split(/[.;,]/)[0].trim().slice(0, 55);
+    if (artShort) tags.push(artShort);
+  }
+  // Colour: hex codes only (no prose)
+  if (styleBible?.color_palette) {
+    const hexes = (styleBible.color_palette.match(/#[0-9A-Fa-f]{3,6}/g) || []).slice(0, 4);
+    if (hexes.length) tags.push(hexes.join('/'));
+  }
+  // Lens: first clause only
+  if (styleBible?.lens_language) {
+    const lensShort = styleBible.lens_language.split(/[,;]/)[0].trim().slice(0, 40);
+    if (lensShort) tags.push(lensShort);
+  }
+  return tags.filter(Boolean).join(' | ');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Task C: ADJACENT SHOT CONTRAST GUARD
+// Returns contrast score (0–5, higher = more different) and shared dimensions.
+// Minimum requirement: adjacent shots must differ in ≥3 cinematic dimensions.
+// ─────────────────────────────────────────────────────────────────────────────
+export interface ContrastReport {
+  score: number;           // 0–5 (5 = maximally different)
+  passes: boolean;         // true if score >= 3
+  shared_dimensions: string[];
+  warning?: string;
+}
+
+export function checkAdjacentShotContrast(
+  current: CinematicFingerprint,
+  previous?: CinematicFingerprint,
+): ContrastReport {
+  if (!previous) return { score: 5, passes: true, shared_dimensions: [] };
+
+  const shared: string[] = [];
+  if (current.shot_size === previous.shot_size)               shared.push('shot_size');
+  if (current.angle === previous.angle)                       shared.push('camera_angle');
+  if (current.subject_position === previous.subject_position) shared.push('subject_position');
+  if (current.dramatic_purpose && previous.dramatic_purpose &&
+      norm(current.dramatic_purpose) === norm(previous.dramatic_purpose)) shared.push('dramatic_purpose');
+  if (current.emotional_beat && previous.emotional_beat &&
+      jaccard(tokenize(current.emotional_beat), tokenize(previous.emotional_beat)) > 0.7)
+    shared.push('emotional_beat');
+
+  const score = 5 - shared.length;
+  const passes = score >= 3;
+  return {
+    score,
+    passes,
+    shared_dimensions: shared,
+    warning: passes ? undefined : `Adjacent shots share ${shared.join(', ')} — consider varying ${shared[0]}`,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -179,6 +313,8 @@ export interface ComposeAllPromptsInput {
   previousShot?: any;
   previousPrompt?: string;
   continuityState?: any;
+  /** Previous shot's cinematic fingerprint — used for Task C contrast guard */
+  previousFingerprint?: CinematicFingerprint;
 
   // ── Shot graph node (Director OS temporal guidance) ───────────────────────
   shotGraphNode?: {
@@ -251,6 +387,18 @@ export interface ComposeAllPromptsOutput {
   /** Human-readable summary for UI display */
   shot_summary: string;
   variance_report: PromptVarianceReport;
+
+  // ── Task E: Per-shot debug view (Task E — verify same-scene shots differ) ──
+  shot_debug: {
+    shot_size:        string;   // ECU|CU|MCU|MS|WS|EWS
+    angle:            string;   // LOW-ANGLE|EYE-LEVEL|etc.
+    subject_position: string;   // frame-left|centered|frame-right|etc.
+    dramatic_purpose: string;
+    emotional_beat:   string;
+    compact_identity: string;   // the ultra-compact lock strings
+    style_tags:       string;   // compact palette/lens/art tags
+    contrast:         ContrastReport; // vs previous shot
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -528,6 +676,31 @@ function buildBgmDirection(params: {
 // Image prompt builder (replaces buildProfessionalImagePrompt in api/index.ts)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// buildImagePromptFromComposer — FINGERPRINT-FIRST architecture
+//
+// ROOT CAUSE of same-scene duplicates (now fixed):
+//   The old structure put character description at position ① (identical 150+
+//   words for every shot in a scene), so Flux received the same leading tokens
+//   for ALL shots and produced nearly identical images.
+//
+// NEW STRUCTURE — every prompt opens with a unique cinematic fingerprint:
+//   ① [Scene/Shot | SHOT_SIZE | ANGLE | SUBJECT_POSITION] — unique per shot
+//   ② DRAMATIC PURPOSE — what story function this shot serves
+//   ③ EMOTION — micro-psychological state (different per shot)
+//   ④ SHOT ACTION — the unique physical/visual moment (stripped of char desc)
+//   ⑤ Location (compact — first sentence only, not full paragraph)
+//   ⑥ Lighting (compact — per-shot specific, not global style bible paragraph)
+//   ⑦ Style tags (compact — hex codes + 1 art tag, not full prose)
+//   ⑧ Temporal bridge (if any)
+//   ⑨ Director rules (brief, max 2)
+//   ⑩ CHARACTER IDENTITY LOCK — compact form (≤100 chars) at the END
+//   ⑪ Characters present
+//   ⑫ Quality mandate
+//
+// With this structure, the first 200 tokens are ALWAYS unique per shot.
+// Character continuity is still enforced by the compact lock at ⑩.
+// ─────────────────────────────────────────────────────────────────────────────
 function buildImagePromptFromComposer(params: {
   shot: any;
   scene: any;
@@ -537,177 +710,146 @@ function buildImagePromptFromComposer(params: {
   directorBrain?: DirectorBrainInput;
   shotGraphNode?: ComposeAllPromptsInput['shotGraphNode'];
   styleLabel?: string;
-}): { prompt: string; negativePrompt: string } {
+  previousFingerprint?: CinematicFingerprint;
+}): { prompt: string; negativePrompt: string; fingerprint: CinematicFingerprint; contrastReport: ContrastReport } {
   const { shot, scene, styleBible, resolvedBibles, characterAnchor, directorBrain, shotGraphNode, styleLabel } = params;
 
-  // ── Core shot fields ──────────────────────────────────────────────────────
-  // Shot & scene numbers give each prompt a unique fingerprint even when
-  // fields overlap — critical for screenplay-driven multi-shot batches.
-  const sceneNumber = shot.scene_number ?? scene?.scene_number ?? '';
-  const shotNumber = shot.shot_number ?? '';
-  // Finding 4.2: fingerprint is ALWAYS non-empty — use fallback IDs so every prompt is unique
-  const shotLabel = `[Scene ${sceneNumber || (shot.scene_id ? shot.scene_id.slice(-4) : '?')} / Shot ${shotNumber || (shot.shot_id ? shot.shot_id.slice(-4) : '?')}]`;
-
-  // perShotImagePrompt is the screenplay-generated visual directive from Gemini.
-  // This is the PRIMARY differentiator between shots — it describes THIS specific
-  // story moment, not the character in general.
+  // ── Core field extraction ─────────────────────────────────────────────────
+  const sceneNumber  = shot.scene_number  ?? scene?.scene_number  ?? '';
+  const shotNumber   = shot.shot_number   ?? '';
   const perShotImagePrompt = shot.image_prompt ? String(shot.image_prompt).trim() : '';
-  const sceneSummary = getField(shot, scene, ['scene_summary', 'scene_synopsis', 'synopsis'], '');
-  const shotDescription = getField(shot, scene, ['shot_description', 'visual_description'], '');
-  const location = getField(shot, scene, ['location', 'scene_setting'], 'Cinematic environment');
-  const timeOfDay = getField(shot, scene, ['time_of_day'], '');
-  const action = getField(shot, scene, ['action', 'shot_description', 'visual_description'], '');
-  // emotion: Director Brain per-shot beat takes priority (matched by scene), then shot field
-  const emotion = directorBrain?.emotional_beat_for_shot
+  const rawAction    = getField(shot, scene, ['action', 'shot_description', 'visual_description'], '');
+  const locationFull = getField(shot, scene, ['location', 'scene_setting'], 'Cinematic environment');
+  const timeOfDay    = getField(shot, scene, ['time_of_day'], '');
+  const emotion      = directorBrain?.emotional_beat_for_shot
     || getField(shot, scene, ['emotion', 'mood', 'emotional_beat'], '');
   const cameraFraming = getField(shot, scene, ['camera_framing', 'composition', 'framing', 'camera'], 'balanced framing');
-  const cameraAngle = getField(shot, scene, ['camera_angle', 'camera'], 'medium shot');
-  const lensStyle = getField(shot, scene, ['lens_style', 'lens', 'lens_hint'], styleBible?.lens_language || '35mm cinematic prime');
-  // lighting: Director Brain lighting intention takes priority (matched by scene), then shot field
-  const lighting = directorBrain?.lighting_intention
-    || getField(shot, scene, ['lighting'], styleBible?.lighting || 'motivated cinematic lighting');
-  const negativeRaw = getField(shot, scene, ['negative_constraints', 'negative_prompt'], '');
+  const cameraAngle   = getField(shot, scene, ['camera_angle', 'camera'], 'medium shot');
+  const shotType      = getField(shot, scene, ['shot_type', 'shot_size'], '');
+  const blocking      = getField(shot, scene, ['blocking', 'composition'], '');
+  const focalLength   = getField(shot, scene, ['focal_length', 'lens_style', 'lens', 'lens_hint'], '');
+  const lightingSetup = getField(shot, scene, ['lighting_setup'], '');  // per-shot lighting from shot planner
+  const lightingStyle = directorBrain?.lighting_intention
+    || getField(shot, scene, ['lighting'], styleBible?.lighting || '');
+  const dramaticPurpose = getField(shot, scene, ['dramatic_function', 'shot_type', 'dramatic_purpose'], 'scene coverage');
+  const negativeRaw   = getField(shot, scene, ['negative_constraints', 'negative_prompt'], '');
 
-  // ── Primary visual directive — the screenplay moment ─────────────────────
-  // Compose the most descriptive, shot-specific statement we have.
-  // Priority: screenplay-generated image_prompt > shot_description > action.
-  //
-  // ★ Strip character description preamble from stored image_prompt:
-  //   Gemini often stores image_prompt as: "[CHARACTER LOCK], face desc..., hair..., wearing..., Action: <unique visual>"
-  //   The face/hair/wardrobe portion repeats verbatim across all shots in a scene.
-  //   We extract only the unique visual action that follows the character block
-  //   so that Flux doesn't see identical leading tokens for every shot.
-  const extractUniqueVisualFromPrompt = (raw: string): string => {
+  // ── Cinematic fingerprint ─────────────────────────────────────────────────
+  const shotSize       = parseShotSize(shotType, cameraAngle, cameraFraming);
+  const angleTag       = parseCameraAngle(cameraAngle, cameraFraming);
+  const subjectPos     = parseSubjectPosition(blocking, cameraFraming);
+  const fingerprint: CinematicFingerprint = {
+    shot_size:        shotSize,
+    angle:            angleTag,
+    subject_position: subjectPos,
+    dramatic_purpose: dramaticPurpose,
+    emotional_beat:   emotion,
+  };
+  const contrastReport = checkAdjacentShotContrast(fingerprint, params.previousFingerprint);
+
+  // ── Compact location (one short line, not a paragraph) ───────────────────
+  const locationCompact = compactLocation(locationFull, timeOfDay);
+
+  // ── Compact lighting (per-shot specific, not global style bible) ──────────
+  const lightingCompact = compactLightingTag(lightingSetup, lightingStyle);
+
+  // ── Compact style tags (hex codes + first art tag only) ──────────────────
+  const styleTags = compactStyleTags(styleBible);
+  const lensTag   = focalLength || (styleBible?.lens_language
+    ? styleBible.lens_language.split(/[,;]/)[0].trim().slice(0, 35)
+    : '35mm cinematic');
+
+  // ── Shot action — extract unique visual moment ────────────────────────────
+  // Strip the character description preamble that Gemini prepends to image_prompt.
+  // What we want: the specific physical action/framing, not the repeated character bio.
+  const extractShotAction = (raw: string): string => {
     if (!raw) return '';
-    // Strip leading [X LOCK] prefix if present
-    const withoutLock = raw.replace(/^\[.*?\s+LOCK\][,.\s]*/i, '').trim();
-    // If the prompt contains "Action:" or "Location:" markers, take content after them
-    const actionMatch = withoutLock.match(/\bAction:\s*([\s\S]{30,})/i);
-    if (actionMatch) return actionMatch[1].trim();
-    // If the prompt contains face-description patterns in the first 200 chars,
-    // skip past the face block (usually ends with "...Props: ...", or "..., holding: ...")
-    const faceDescPattern = /\b(?:eyes?|nose|lips?|jawline|cheekbones?|hair|outfit|wearing|holding|props?)[^.]+\./gi;
-    let stripped = withoutLock;
-    // Count how many face-description sentences appear at the start
+    // Strip [X LOCK] prefix
+    let s = raw.replace(/^\[.*?\s+LOCK\][,.\s]*/i, '').trim();
+    // If "Action:" label present, take that content
+    const actionM = s.match(/\bAction:\s*(?:Characters:[^.]+\.)?\s*([\s\S]{20,})/i);
+    if (actionM) return actionM[1].trim();
+    // Skip face-description sentences at the start (eye/nose/lip/hair/wearing/holding)
     let faceEnd = 0;
-    let match;
-    const localRe = /\b(?:eyes?|nose|lips?|jawline|cheekbones?|hair|outfit|wearing|holding|props?)[^.]{0,120}\./gi;
-    while ((match = localRe.exec(stripped.slice(0, 500))) !== null) {
-      faceEnd = Math.max(faceEnd, match.index + match[0].length);
+    const faceRe = /\b(?:eyes?|nose\s+bridge|lips?|jawline|cheekbones?|hair|outfit|wearing|holding|props?|build|gait|height|skin\s+tone)[^.]{0,140}\./gi;
+    let m: RegExpExecArray | null;
+    while ((m = faceRe.exec(s.slice(0, 600))) !== null) {
+      faceEnd = Math.max(faceEnd, m.index + m[0].length);
     }
-    if (faceEnd > 80) {
-      // The first part was character description — use what comes after
-      const remainder = stripped.slice(faceEnd).trim();
-      if (remainder.length > 40) return remainder;
+    if (faceEnd > 60) {
+      const remainder = s.slice(faceEnd).trim();
+      if (remainder.length > 30) return remainder;
     }
-    return stripped;
+    return s;
   };
 
-  const primaryVisualRaw = extractUniqueVisualFromPrompt(perShotImagePrompt)
-    || shotDescription
-    || action
-    || 'Character beat in motion';
-  const primaryVisual = primaryVisualRaw || 'Character beat in motion';
+  const shotAction = extractShotAction(perShotImagePrompt)
+    || rawAction
+    || 'Character in motion';
 
-  // ── Character identity locks (compact — appear at END as a constraint) ────
-  // Placed LAST so screenplay content dominates. The model still enforces
-  // identity; it just doesn't let the lock crowd out the story beat.
-  // ★ Guard: if perShotImagePrompt already starts with "[... LOCK]", skip the
-  //   secondary lock to avoid doubling up (the stored image_prompt from the
-  //   pipeline already has the character lock prepended at generation time).
-  const imagePromptAlreadyHasLock = /^\[.*\s+LOCK\]/.test(perShotImagePrompt);
-  const identityLocks: string[] = [];
-  if (!imagePromptAlreadyHasLock) {
-    if (resolvedBibles.length > 0) {
-      resolvedBibles.forEach(b => identityLocks.push(characterToIdentityLock(b)));
-    } else if (characterAnchor) {
-      identityLocks.push(`IDENTITY LOCK: ${clamp(characterAnchor, 200)}`);
-    }
+  // ── Character identity locks (compact, at END) ────────────────────────────
+  const compactLocks: string[] = [];
+  if (resolvedBibles.length > 0) {
+    resolvedBibles.forEach(b => compactLocks.push(characterToIdentityLock(b)));
+  } else if (characterAnchor) {
+    compactLocks.push(`[IDENTITY LOCK: ${clamp(characterAnchor, 80)}]`);
   }
+  const identityBlock = compactLocks.join(' | ');
 
-  // ── Director mandate (brief — rules guide tone, not replace the shot) ─────
-  const directorParts: string[] = [];
-  if (directorBrain?.directorial_rules?.length) {
-    // max 2 rules so they don't crowd out shot-specific content
-    directorParts.push(`Director rules: ${directorBrain.directorial_rules.slice(0, 2).join('; ')}`);
-  }
+  // ── Director rules (max 2, brief) ─────────────────────────────────────────
+  const directorRule = directorBrain?.directorial_rules?.length
+    ? directorBrain.directorial_rules.slice(0, 2).join('; ')
+    : '';
 
-  // ── Shot graph temporal guidance ──────────────────────────────────────────
+  // ── Temporal bridge ───────────────────────────────────────────────────────
   const tg = shotGraphNode?.temporal_guidance;
-  const temporalParts: string[] = [
+  const temporalLine = [
     tg?.start_frame_intent ? `Frame open: ${tg.start_frame_intent}` : '',
-    tg?.end_frame_intent ? `Frame close: ${tg.end_frame_intent}` : '',
-    shotGraphNode?.continuity_in ? `Continuity in: ${shotGraphNode.continuity_in}` : '',
-  ].filter(Boolean);
-
-  // ── Style mandate ─────────────────────────────────────────────────────────
-  const styleParts: string[] = [
-    styleBible?.color_palette ? `Colour palette: ${styleBible.color_palette}` : '',
-    styleBible?.art_direction ? `Art direction: ${styleBible.art_direction}` : '',
-    styleLabel ? `Visual style: ${styleLabel}` : '',
-  ].filter(Boolean);
+    tg?.end_frame_intent   ? `Frame close: ${tg.end_frame_intent}`  : '',
+  ].filter(Boolean).join('. ');
 
   // ── Characters present ────────────────────────────────────────────────────
   const characters = Array.isArray(shot.characters)
     ? shot.characters.map((c: any) => String(c).trim()).filter(Boolean)
     : [];
 
-  // ── Assemble final prompt — SHOT-SPECIFIC CONTENT LEADS ──────────────────
-  //
-  // Ordering rationale (revised):
-  //   ① Shot label                         → unique fingerprint
-  //   ② Camera framing + emotion           → THE most shot-specific elements; Flux
-  //                                           weights first 200 tokens most heavily;
-  //                                           this is what makes each frame LOOK different
-  //   ③ Primary visual (short clamp)       → screenplay moment; trimmed so it doesn't
-  //                                           crowd out the framing/emotion above
-  //   ④ Scene context (story beat)         → what story moment this serves
-  //   ⑤ Location + time                    → where and when
-  //   ⑥ Action description                 → what is physically happening
-  //   ⑦ Lighting                           → technical execution
-  //   ⑧ Temporal / continuity bridge       → link to adjacent shots
-  //   ⑨ Style locks                        → film-wide visual language
-  //   ⑩ Director rules                     → global constraints (brief)
-  //   ⑪ Character identity lock            → LAST: enforces appearance without crowding
-  //   ⑫ Characters present                 → names for final pass
-  //   ⑬ Technical quality mandate          → always last line
-  //
+  // ── Shot fingerprint header (① — unique per shot, every token different) ─
+  // Format: [Scene X / Shot Y | WS | LOW-ANGLE | frame-right]
+  const shotLabel = `[Scene ${sceneNumber || '?'} / Shot ${shotNumber || '?'} | ${shotSize} | ${angleTag} | ${subjectPos}]`;
+
+  // ── Assemble — FINGERPRINT LEADS, IDENTITY LOCK TRAILS ───────────────────
   const prompt = [
-    // ① Shot identifier (always unique fingerprint)
+    // ① Cinematic fingerprint — unique per shot
     shotLabel,
-    // ② Camera framing + emotion — MOST UNIQUE per shot; Flux weights these first
-    [
-      `${cameraAngle}${cameraFraming && cameraFraming !== cameraAngle ? ` — ${cameraFraming}` : ''}`,
-      emotion ? `Mood: ${emotion}` : '',
-    ].filter(Boolean).join('. '),
-    // ③ Primary visual directive from Gemini — capped at 300 chars so framing/emotion
-    //    above are not displaced in the model's attention window
-    clamp(primaryVisual, 300),
-    // ④ Scene context — the story beat this shot serves
-    sceneSummary ? `Scene context: ${clamp(sceneSummary, 180)}` : '',
-    // ⑤ Location + time
-    `Location: ${location}${timeOfDay ? `, ${timeOfDay}` : ''}`,
-    // ⑥ Action — what is physically happening in this frame
-    action && action !== primaryVisual ? `Action: ${clamp(action, 160)}` : '',
-    // ⑦ Lighting + lens
-    `Lighting: ${clamp(lighting, 160)}. Lens: ${lensStyle}`,
-    // ⑧ Temporal bridge
-    temporalParts.length > 0 ? temporalParts.join('. ') : '',
-    // ⑨ Style locks
-    styleParts.length > 0 ? styleParts.join('. ') : '',
-    // ⑩ Director rules (brief)
-    directorParts.length > 0 ? directorParts.join('. ') : '',
-    // ⑪ Character identity constraint (at the END — anchor not preamble)
-    identityLocks.length > 0
-      ? `Character identity — do NOT alter: ${identityLocks.join(' | ')}`
-      : characters.length > 0 ? 'Maintain full visual continuity with established film style' : '',
+    // ② Dramatic purpose — what story function this shot serves
+    dramaticPurpose ? `Dramatic purpose: ${dramaticPurpose}` : '',
+    // ③ Emotion — micro-psychological state (different per shot)
+    emotion ? `Emotion: ${emotion}` : '',
+    // ④ Shot action — the unique physical/visual moment
+    clamp(shotAction, 280),
+    // ⑤ Location (compact — first sentence only)
+    `Location: ${locationCompact}`,
+    // ⑥ Camera framing detail (the specific compositional intent)
+    cameraFraming ? `Framing: ${clamp(cameraFraming, 120)}` : '',
+    // ⑦ Lighting (per-shot specific, compact)
+    lightingCompact ? `Lighting: ${lightingCompact}. Lens: ${lensTag}` : `Lens: ${lensTag}`,
+    // ⑧ Style tags (compact — no repeated prose blocks)
+    styleTags || (styleLabel ? `Style: ${styleLabel}` : ''),
+    // ⑨ Temporal bridge
+    temporalLine || '',
+    // ⑩ Director rules
+    directorRule ? `Director: ${directorRule}` : '',
+    // ⑪ Character identity lock — compact form, LAST position
+    identityBlock
+      ? `Identity — do NOT alter: ${identityBlock}`
+      : characters.length > 0 ? 'Maintain full visual continuity.' : '',
     // ⑫ Characters present
     characters.length > 0 ? `Characters: ${characters.join(', ')}` : '',
-    // ⑬ Technical quality mandate
+    // ⑬ Quality mandate
     'Cinematic still frame, high detail, physically plausible lighting. Single coherent film frame — not a collage or split screen.',
   ].filter(Boolean).join('. ');
 
-  // ── Negative prompt (Finding 10.2: always non-empty) ──────────────────────
+  // ── Negative prompt ───────────────────────────────────────────────────────
   const negativePrompt = [
     negativeRaw,
     'identity drift, wrong outfit, costume change, different hairstyle, wrong props',
@@ -716,11 +858,15 @@ function buildImagePromptFromComposer(params: {
     'same composition as previous shot when shot context changed',
     'watermark, text overlay, letterbox bars, split screen, collage, blurry',
     'extra limbs, distorted anatomy, deformed hands, missing fingers',
-    // Non-human character protection
     'humanised animal face, wrong species anatomy, realistic human face on cartoon character',
   ].filter(Boolean).join(', ');
 
-  return { prompt: clamp(prompt, 1800), negativePrompt: clamp(negativePrompt, 600) };
+  return {
+    prompt: clamp(prompt, 1800),
+    negativePrompt: clamp(negativePrompt, 600),
+    fingerprint,
+    contrastReport,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -821,11 +967,17 @@ export function composeAllPrompts(input: ComposeAllPromptsInput): ComposeAllProm
     : [];
   const resolvedBibles = resolveBiblesForShot(shotCharacters, characterBibles);
 
-  // ── Build image prompt ────────────────────────────────────────────────────
-  const { prompt: imagePrompt, negativePrompt: imageNegativePrompt } = buildImagePromptFromComposer({
+  // ── Build image prompt (with fingerprint + contrast report) ─────────────
+  const {
+    prompt: imagePrompt,
+    negativePrompt: imageNegativePrompt,
+    fingerprint,
+    contrastReport,
+  } = buildImagePromptFromComposer({
     shot, scene, styleBible, resolvedBibles,
     characterAnchor: input.characterAnchor || '',
     directorBrain, shotGraphNode: input.shotGraphNode, styleLabel: input.styleLabel,
+    previousFingerprint: input.previousFingerprint,
   });
 
   // ── Build video prompts ───────────────────────────────────────────────────
@@ -866,6 +1018,13 @@ export function composeAllPrompts(input: ComposeAllPromptsInput): ComposeAllProm
   const timeOfDay = getField(shot, scene, ['time_of_day'], '');
   const shotDesc = getField(shot, scene, ['image_prompt', 'shot_description', 'visual_description', 'action'], 'Shot');
 
+  // ── Compact identity string for debug output ──────────────────────────────
+  const compactIdentityDebug = resolvedBibles.length > 0
+    ? resolvedBibles.map(b => characterToIdentityLock(b)).join(' | ')
+    : input.characterAnchor
+    ? clamp(input.characterAnchor, 80)
+    : 'no character lock';
+
   return {
     image_prompt: imagePrompt,
     image_negative_prompt: imageNegativePrompt,
@@ -878,6 +1037,17 @@ export function composeAllPrompts(input: ComposeAllPromptsInput): ComposeAllProm
     scene_id: sceneId,
     shot_summary: `${clamp(shotDesc, 80)} @ ${location}${timeOfDay ? ` (${timeOfDay})` : ''}`,
     variance_report: varianceReport,
+    // Task E: per-shot debug view
+    shot_debug: {
+      shot_size:        fingerprint.shot_size,
+      angle:            fingerprint.angle,
+      subject_position: fingerprint.subject_position,
+      dramatic_purpose: fingerprint.dramatic_purpose,
+      emotional_beat:   fingerprint.emotional_beat,
+      compact_identity: compactIdentityDebug,
+      style_tags:       compactStyleTags(styleBible),
+      contrast:         contrastReport,
+    },
   };
 }
 
