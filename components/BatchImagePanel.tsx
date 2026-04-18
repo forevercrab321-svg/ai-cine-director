@@ -11,7 +11,7 @@
  * - All-done indicator when every shot has a primary image
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Shot, ShotImage, BatchJob, BatchJobItem, ImageModel, ContinueStrategy } from '../types';
+import { Shot, ShotImage, BatchJob, BatchJobItem, ImageModel, ContinueStrategy, VideoModel } from '../types';
 import {
     startBatchGenImagesSSE,
     continueBatchGenImagesSSE,
@@ -24,6 +24,7 @@ import {
     type BatchProgressResult,
     type CompiledShotPromptPreview,
 } from '../services/batchService';
+import { startVideoTask, checkPredictionStatus } from '../services/replicateService';
 import { useAppContext } from '../context/AppContext';
 import { LoaderIcon } from './IconComponents';
 
@@ -44,6 +45,12 @@ interface BatchImagePanelProps {
     /** Called when images are generated — parent updates imagesByShot */
     onImagesGenerated: (results: Array<{ shot_id: string; image_id: string; image_url: string }>) => void;
     onSetGlobalAnchor?: (url: string) => void;
+    /** Video model to use for batch video generation */
+    videoModel?: VideoModel;
+    /** Called when a video is generated for a shot */
+    onVideoGenerated?: (shotId: string, videoUrl: string) => void;
+    /** Pre-existing videos keyed by shot_id */
+    videosByShot?: Record<string, string>;
 }
 
 const STATUS_LABELS: Record<string, { label: string; color: string; bg: string }> = {
@@ -147,7 +154,8 @@ const StrategyDialog: React.FC<{
 // Main BatchImagePanel
 // ═══════════════════════════════════════════════════════════════
 const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
-    allShots, projectId, characterAnchor, visualStyle, referenceImageDataUrl, storyEntities, styleBible, directorBrain, imagesByShot, onImagesGenerated, onSetGlobalAnchor
+    allShots, projectId, characterAnchor, visualStyle, referenceImageDataUrl, storyEntities, styleBible, directorBrain, imagesByShot, onImagesGenerated, onSetGlobalAnchor,
+    videoModel, onVideoGenerated, videosByShot: videosByShortProp,
 }) => {
     const { settings, isAuthenticated, hasEnoughCredits, openPricingModal, refreshBalance } = useAppContext();
 
@@ -175,6 +183,14 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
     // Storyboard grid: which 12-shot page is visible (0 = shots 1-12, 12 = shots 13-24, …)
     const [gridOffset, setGridOffset] = useState(0);
 
+    // ── Batch video generation state ─────────────────────────────────────────
+    const [videosByShot, setVideosByShot] = useState<Record<string, string>>(videosByShortProp || {});
+    const [batchVideoRunning, setBatchVideoRunning] = useState(false);
+    const [batchVideoLog, setBatchVideoLog] = useState('');
+    const [batchVideoDone, setBatchVideoDone] = useState(0);
+    const [batchVideoTotal, setBatchVideoTotal] = useState(0);
+    const batchVideoAbort = useRef(false);
+
     // Compute image status from props
     const imageStatus = computeShotImageStatus(
         allShots.map(s => ({ shot_id: s.shot_id, scene_id: s.scene_id, shot_number: s.shot_number })),
@@ -200,6 +216,112 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
     const gridShots = sortedShots.slice(gridOffset, gridOffset + 12);
     const totalPages = Math.max(1, Math.ceil(sortedShots.length / 12));
     const currentPage = Math.floor(gridOffset / 12) + 1;
+
+    // ── Batch video generation — for all shots that already have an image ────
+    const shotsWithImages = sortedShots.filter(s => !!(imagesByShot[s.shot_id]?.[0]?.url));
+    const shotsNeedingVideo = shotsWithImages.filter(s => !videosByShot[s.shot_id]);
+
+    const handleBatchGenerateVideos = useCallback(async () => {
+        if (shotsNeedingVideo.length === 0) return;
+        batchVideoAbort.current = false;
+        setBatchVideoRunning(true);
+        setBatchVideoDone(0);
+        setBatchVideoTotal(shotsNeedingVideo.length);
+        setBatchVideoLog(`🎬 准备生成 ${shotsNeedingVideo.length} 个视频...`);
+
+        for (let i = 0; i < shotsNeedingVideo.length; i++) {
+            if (batchVideoAbort.current) {
+                setBatchVideoLog('⏹ 已停止');
+                break;
+            }
+            const shot = shotsNeedingVideo[i];
+            const imageUrl = imagesByShot[shot.shot_id]?.[0]?.url;
+            if (!imageUrl) continue;
+
+            setBatchVideoLog(`🎬 [${i + 1}/${shotsNeedingVideo.length}] 生成视频: ${shot.scene_id}.${shot.shot_number}...`);
+            try {
+                const prompt = [
+                    shot.video_prompt || shot.video_motion_prompt || shot.action || 'cinematic motion',
+                    'Maintain exact character identity, costume, location, and screen direction.',
+                ].filter(Boolean).join(' ');
+
+                const activeVideoModel: VideoModel = videoModel || 'wan';
+                const videoRes = await startVideoTask(
+                    prompt,
+                    imageUrl,
+                    activeVideoModel,
+                    'none',
+                    'storyboard',
+                    'standard',
+                    6,
+                    24,
+                    '720p',
+                    characterAnchor,
+                    '16:9',
+                    { storyEntities, shot_id: shot.shot_id, project_id: projectId }
+                );
+
+                // Poll until done
+                let videoUrl = '';
+                let status = 'processing';
+                while (status === 'processing' || status === 'starting') {
+                    await new Promise(r => setTimeout(r, 3000));
+                    if (batchVideoAbort.current) break;
+                    const check = await checkPredictionStatus(videoRes.id);
+                    status = check.status;
+                    if (status === 'succeeded') {
+                        videoUrl = Array.isArray(check.output) ? check.output[0] : check.output;
+                    } else if (status === 'failed' || status === 'canceled') {
+                        throw new Error(`失败: ${check.error || '未知错误'}`);
+                    }
+                }
+
+                if (videoUrl) {
+                    setVideosByShot(prev => ({ ...prev, [shot.shot_id]: videoUrl }));
+                    onVideoGenerated?.(shot.shot_id, videoUrl);
+                    setBatchVideoDone(i + 1);
+                }
+            } catch (err: any) {
+                setBatchVideoLog(`⚠️ [${i + 1}] 失败: ${err.message || '视频生成错误'} — 继续下一个`);
+                await new Promise(r => setTimeout(r, 1000));
+            }
+        }
+
+        setBatchVideoRunning(false);
+        setBatchVideoLog(batchVideoAbort.current ? '⏹ 已停止' : `✅ 完成！${batchVideoDone} 个视频已生成`);
+        setTimeout(() => setBatchVideoLog(''), 6000);
+    }, [shotsNeedingVideo, imagesByShot, videoModel, characterAnchor, storyEntities, projectId, onVideoGenerated]);
+
+    // Single-shot video generation (per cell click)
+    const handleSingleVideoGenerate = useCallback(async (shot: Shot) => {
+        const imageUrl = imagesByShot[shot.shot_id]?.[0]?.url;
+        if (!imageUrl || batchVideoRunning) return;
+        setVideosByShot(prev => ({ ...prev, [shot.shot_id]: 'loading' }));
+        try {
+            const prompt = [
+                shot.video_prompt || shot.video_motion_prompt || shot.action || 'cinematic motion',
+                'Maintain exact character identity, costume, location, and screen direction.',
+            ].filter(Boolean).join(' ');
+            const activeVideoModel: VideoModel = videoModel || 'wan';
+            const videoRes = await startVideoTask(prompt, imageUrl, activeVideoModel, 'none', 'storyboard', 'standard', 6, 24, '720p', characterAnchor, '16:9', { storyEntities, shot_id: shot.shot_id, project_id: projectId });
+            let videoUrl = '';
+            let status = 'processing';
+            while (status === 'processing' || status === 'starting') {
+                await new Promise(r => setTimeout(r, 3000));
+                const check = await checkPredictionStatus(videoRes.id);
+                status = check.status;
+                if (status === 'succeeded') videoUrl = Array.isArray(check.output) ? check.output[0] : check.output;
+                else if (status === 'failed' || status === 'canceled') throw new Error(check.error || '视频生成失败');
+            }
+            if (videoUrl) {
+                setVideosByShot(prev => ({ ...prev, [shot.shot_id]: videoUrl }));
+                onVideoGenerated?.(shot.shot_id, videoUrl);
+            }
+        } catch (err: any) {
+            setVideosByShot(prev => { const n = { ...prev }; delete n[shot.shot_id]; return n; });
+            console.error('[BatchVideoPanel] single video error:', err.message);
+        }
+    }, [imagesByShot, videoModel, characterAnchor, storyEntities, projectId, onVideoGenerated, batchVideoRunning]);
 
     // ── SSE Progress handler ──
     const handleSSEProgress = useCallback((data: BatchProgressResult & { anchor_image_url?: string }) => {
@@ -682,16 +804,57 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
             {sortedShots.length > 0 && (
                 <div className="space-y-2">
                     {/* Grid header */}
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
                         <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                             <span>🎞</span>
                             分镜宫格 · 剧本顺序
                             <span className="text-[10px] text-slate-600 font-normal normal-case ml-1">
                                 {sortedShots.length} 个镜头
                                 {imageStatus.generatedCount > 0 && ` · ${imageStatus.generatedCount} 已生图`}
+                                {Object.values(videosByShot).filter(v => v && v !== 'loading').length > 0 &&
+                                    ` · ${Object.values(videosByShot).filter(v => v && v !== 'loading').length} 已生视频`
+                                }
                             </span>
                         </h4>
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-2 flex-wrap">
+                            {/* ── Batch video generation button ── */}
+                            {shotsWithImages.length > 0 && (
+                                <div className="flex items-center gap-2">
+                                    {batchVideoLog && (
+                                        <span className="text-[10px] font-mono text-amber-400 animate-pulse max-w-[200px] truncate">
+                                            {batchVideoLog}
+                                        </span>
+                                    )}
+                                    {batchVideoRunning ? (
+                                        <button
+                                            onClick={() => { batchVideoAbort.current = true; }}
+                                            className="px-3 py-1.5 rounded-lg text-[11px] font-bold bg-red-900/50 border border-red-500/40 text-red-300 hover:bg-red-900 transition-all flex items-center gap-1.5"
+                                        >
+                                            <LoaderIcon className="w-3 h-3 animate-spin" />
+                                            停止 ({batchVideoDone}/{batchVideoTotal})
+                                        </button>
+                                    ) : (
+                                        <button
+                                            onClick={handleBatchGenerateVideos}
+                                            disabled={shotsNeedingVideo.length === 0}
+                                            className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1.5 ${
+                                                shotsNeedingVideo.length === 0
+                                                    ? 'bg-slate-800 text-slate-600 cursor-not-allowed'
+                                                    : 'bg-purple-700 hover:bg-purple-600 text-white shadow-lg shadow-purple-500/20 border border-purple-500/30'
+                                            }`}
+                                            title={shotsNeedingVideo.length === 0 ? '所有有图镜头已生成视频' : `为 ${shotsNeedingVideo.length} 个镜头批量生成视频`}
+                                        >
+                                            🎬 批量生成视频
+                                            {shotsNeedingVideo.length > 0 && (
+                                                <span className="bg-purple-500/30 px-1.5 py-0.5 rounded-full text-[10px]">
+                                                    {shotsNeedingVideo.length}
+                                                </span>
+                                            )}
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+                            {/* Pagination */}
                             <span className="text-[10px] text-slate-600 tabular-nums">
                                 {currentPage}/{totalPages} 组
                             </span>
@@ -727,6 +890,10 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                             const sceneLabel = shot.scene_id && /^\d+$/.test(String(shot.scene_id))
                                 ? `S${shot.scene_id}.${shot.shot_number}`
                                 : `#${absIdx + 1}`;
+
+                            const cellVideoUrl = videosByShot[shot.shot_id];
+                            const isVideoLoading = cellVideoUrl === 'loading';
+                            const hasVideo = !!cellVideoUrl && cellVideoUrl !== 'loading';
 
                             return (
                                 <div
@@ -779,6 +946,32 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                                                 </button>
                                                 {/* Green dot: already generated */}
                                                 <div className="absolute top-1 right-1 w-2 h-2 rounded-full bg-green-400 border border-green-200/40 shadow" />
+
+                                                {/* Per-cell video overlay */}
+                                                {hasVideo ? (
+                                                    <a
+                                                        href={cellVideoUrl}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        onClick={e => e.stopPropagation()}
+                                                        className="absolute top-1 left-1 w-5 h-5 rounded-full bg-purple-500 border border-purple-300/40 shadow flex items-center justify-center"
+                                                        title="点击查看视频"
+                                                    >
+                                                        <span className="text-white text-[8px]">▶</span>
+                                                    </a>
+                                                ) : isVideoLoading ? (
+                                                    <div className="absolute top-1 left-1 w-5 h-5 rounded-full bg-purple-900/80 border border-purple-500/40 flex items-center justify-center">
+                                                        <LoaderIcon className="w-3 h-3 animate-spin text-purple-300" />
+                                                    </div>
+                                                ) : (
+                                                    <button
+                                                        onClick={e => { e.stopPropagation(); handleSingleVideoGenerate(shot); }}
+                                                        className="absolute top-1 left-1 opacity-0 group-hover/cell:opacity-100 transition-opacity w-6 h-6 rounded-full bg-purple-700/90 border border-purple-400/40 flex items-center justify-center hover:bg-purple-600"
+                                                        title="生成视频"
+                                                    >
+                                                        <span className="text-white text-[9px]">▶</span>
+                                                    </button>
+                                                )}
                                             </>
                                         ) : isGenerating ? (
                                             <div className="w-full h-full flex flex-col items-center justify-center gap-1.5 bg-indigo-950/50">

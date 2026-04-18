@@ -1307,6 +1307,22 @@ const ShotListView: React.FC<ShotListViewProps> = ({ project, referenceImageData
                             return updated;
                         });
                     }}
+                    videoModel={settings.videoModel}
+                    videosByShot={shotVideos}
+                    onVideoGenerated={(shotId, videoUrl) => {
+                        setShotVideos(prev => ({ ...prev, [shotId]: videoUrl }));
+                        // Persist to DB: find the scene number for this shot
+                        setShotsByScene(prev => {
+                            for (const [sceneNum, shots] of Object.entries(prev) as [string, Shot[]][]) {
+                                const idx = shots.findIndex(s => s.shot_id === shotId);
+                                if (idx >= 0) {
+                                    handleUpdateShot(Number(sceneNum), shotId, { video_url: videoUrl });
+                                    break;
+                                }
+                            }
+                            return prev; // state unchanged — side-effect only
+                        });
+                    }}
                 />
             )}
 
