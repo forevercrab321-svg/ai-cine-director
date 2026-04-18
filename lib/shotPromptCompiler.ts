@@ -567,11 +567,43 @@ function buildImagePromptFromComposer(params: {
   // ── Primary visual directive — the screenplay moment ─────────────────────
   // Compose the most descriptive, shot-specific statement we have.
   // Priority: screenplay-generated image_prompt > shot_description > action.
-  // This block goes FIRST in the prompt so the model weights it highest.
-  const primaryVisual = perShotImagePrompt
+  //
+  // ★ Strip character description preamble from stored image_prompt:
+  //   Gemini often stores image_prompt as: "[CHARACTER LOCK], face desc..., hair..., wearing..., Action: <unique visual>"
+  //   The face/hair/wardrobe portion repeats verbatim across all shots in a scene.
+  //   We extract only the unique visual action that follows the character block
+  //   so that Flux doesn't see identical leading tokens for every shot.
+  const extractUniqueVisualFromPrompt = (raw: string): string => {
+    if (!raw) return '';
+    // Strip leading [X LOCK] prefix if present
+    const withoutLock = raw.replace(/^\[.*?\s+LOCK\][,.\s]*/i, '').trim();
+    // If the prompt contains "Action:" or "Location:" markers, take content after them
+    const actionMatch = withoutLock.match(/\bAction:\s*([\s\S]{30,})/i);
+    if (actionMatch) return actionMatch[1].trim();
+    // If the prompt contains face-description patterns in the first 200 chars,
+    // skip past the face block (usually ends with "...Props: ...", or "..., holding: ...")
+    const faceDescPattern = /\b(?:eyes?|nose|lips?|jawline|cheekbones?|hair|outfit|wearing|holding|props?)[^.]+\./gi;
+    let stripped = withoutLock;
+    // Count how many face-description sentences appear at the start
+    let faceEnd = 0;
+    let match;
+    const localRe = /\b(?:eyes?|nose|lips?|jawline|cheekbones?|hair|outfit|wearing|holding|props?)[^.]{0,120}\./gi;
+    while ((match = localRe.exec(stripped.slice(0, 500))) !== null) {
+      faceEnd = Math.max(faceEnd, match.index + match[0].length);
+    }
+    if (faceEnd > 80) {
+      // The first part was character description — use what comes after
+      const remainder = stripped.slice(faceEnd).trim();
+      if (remainder.length > 40) return remainder;
+    }
+    return stripped;
+  };
+
+  const primaryVisualRaw = extractUniqueVisualFromPrompt(perShotImagePrompt)
     || shotDescription
     || action
     || 'Character beat in motion';
+  const primaryVisual = primaryVisualRaw || 'Character beat in motion';
 
   // ── Character identity locks (compact — appear at END as a constraint) ────
   // Placed LAST so screenplay content dominates. The model still enforces
@@ -616,50 +648,58 @@ function buildImagePromptFromComposer(params: {
     ? shot.characters.map((c: any) => String(c).trim()).filter(Boolean)
     : [];
 
-  // ── Assemble final prompt — SCREENPLAY CONTENT LEADS ─────────────────────
+  // ── Assemble final prompt — SHOT-SPECIFIC CONTENT LEADS ──────────────────
   //
-  // Ordering rationale:
-  //   ① Shot identifier + primary visual   → unique per shot, model weights first
-  //   ② Scene context (story beat)         → what story moment this serves
-  //   ③ Action description                 → what is physically happening
-  //   ④ Location + time                    → where and when
-  //   ⑤ Emotion / director beat            → how this shot feels
-  //   ⑥ Camera + lighting                  → technical execution
-  //   ⑦ Temporal / continuity bridge       → link to adjacent shots
-  //   ⑧ Style locks                        → film-wide visual language
-  //   ⑨ Director rules                     → global constraints (brief)
-  //   ⑩ Character identity lock            → LAST: enforces appearance without crowding screenplay
-  //   ⑪ Characters present                 → names for final pass
-  //   ⑫ Technical quality mandate          → always last line
+  // Ordering rationale (revised):
+  //   ① Shot label                         → unique fingerprint
+  //   ② Camera framing + emotion           → THE most shot-specific elements; Flux
+  //                                           weights first 200 tokens most heavily;
+  //                                           this is what makes each frame LOOK different
+  //   ③ Primary visual (short clamp)       → screenplay moment; trimmed so it doesn't
+  //                                           crowd out the framing/emotion above
+  //   ④ Scene context (story beat)         → what story moment this serves
+  //   ⑤ Location + time                    → where and when
+  //   ⑥ Action description                 → what is physically happening
+  //   ⑦ Lighting                           → technical execution
+  //   ⑧ Temporal / continuity bridge       → link to adjacent shots
+  //   ⑨ Style locks                        → film-wide visual language
+  //   ⑩ Director rules                     → global constraints (brief)
+  //   ⑪ Character identity lock            → LAST: enforces appearance without crowding
+  //   ⑫ Characters present                 → names for final pass
+  //   ⑬ Technical quality mandate          → always last line
   //
   const prompt = [
-    // ① Shot identifier + screenplay visual directive (most unique content)
-    // ★ 600 chars (≈100 words) — enough to preserve full Gemini image_prompt without truncation
-    `${shotLabel} ${clamp(primaryVisual, 600)}`.trim(),
-    // ② Scene context — the story beat this shot serves
-    sceneSummary ? `Scene context: ${clamp(sceneSummary, 220)}` : '',
-    // ③ Action — what is physically happening in this frame
-    action && action !== primaryVisual ? `Action: ${clamp(action, 180)}` : '',
-    // ④ Location + time
+    // ① Shot identifier (always unique fingerprint)
+    shotLabel,
+    // ② Camera framing + emotion — MOST UNIQUE per shot; Flux weights these first
+    [
+      `${cameraAngle}${cameraFraming && cameraFraming !== cameraAngle ? ` — ${cameraFraming}` : ''}`,
+      emotion ? `Mood: ${emotion}` : '',
+    ].filter(Boolean).join('. '),
+    // ③ Primary visual directive from Gemini — capped at 300 chars so framing/emotion
+    //    above are not displaced in the model's attention window
+    clamp(primaryVisual, 300),
+    // ④ Scene context — the story beat this shot serves
+    sceneSummary ? `Scene context: ${clamp(sceneSummary, 180)}` : '',
+    // ⑤ Location + time
     `Location: ${location}${timeOfDay ? `, ${timeOfDay}` : ''}`,
-    // ⑤ Emotion / director beat
-    emotion ? `Emotion: ${emotion}` : '',
-    // ⑥ Camera + lighting
-    `Camera: ${cameraAngle}, ${cameraFraming}. Lens: ${lensStyle}`,
-    `Lighting: ${clamp(lighting, 180)}`,
-    // ⑦ Temporal bridge
+    // ⑥ Action — what is physically happening in this frame
+    action && action !== primaryVisual ? `Action: ${clamp(action, 160)}` : '',
+    // ⑦ Lighting + lens
+    `Lighting: ${clamp(lighting, 160)}. Lens: ${lensStyle}`,
+    // ⑧ Temporal bridge
     temporalParts.length > 0 ? temporalParts.join('. ') : '',
-    // ⑧ Style locks
+    // ⑨ Style locks
     styleParts.length > 0 ? styleParts.join('. ') : '',
-    // ⑨ Director rules (brief)
+    // ⑩ Director rules (brief)
     directorParts.length > 0 ? directorParts.join('. ') : '',
-    // ⑩ Character identity constraint (at the END — anchor not preamble)
+    // ⑪ Character identity constraint (at the END — anchor not preamble)
     identityLocks.length > 0
       ? `Character identity — do NOT alter: ${identityLocks.join(' | ')}`
       : characters.length > 0 ? 'Maintain full visual continuity with established film style' : '',
-    // ⑪ Characters present
+    // ⑫ Characters present
     characters.length > 0 ? `Characters: ${characters.join(', ')}` : '',
-    // ⑫ Technical quality mandate
+    // ⑬ Technical quality mandate
     'Cinematic still frame, high detail, physically plausible lighting. Single coherent film frame — not a collage or split screen.',
   ].filter(Boolean).join('. ');
 
