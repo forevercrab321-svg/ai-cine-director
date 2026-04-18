@@ -327,49 +327,101 @@ DO NOT humanise faces. Cartoon/anime/animal anatomy must be preserved exactly.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━` : ''}
 ━━━ CINEMATOGRAPHY LAWS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-① COVERAGE STRATEGY
-   Shoot ${shotCount} shots. Sequence must provide logical editorial coverage:
-   • Establish → Cover → React → Insert (not all required, but use as toolkit)
-   • 180-DEGREE RULE: maintain consistent screen direction throughout scene
-   • EYELINE MATCHING: if character A looks right, character B must look left
-   • ${cameraRule}
+① SCENE OPENING STRUCTURAL MANDATE — NON-NEGOTIABLE FOR SHOTS 1–4
+   ═══════════════════════════════════════════════════════════════════
+   The first 4 shots of EVERY scene MUST follow this exact structural arc.
+   Deviating from this arc is a hard failure. There are no exceptions.
 
-② SHOT SIZE VARIETY LAW — HARD CONSTRAINT — MANDATORY ENFORCEMENT:
-   Every shot must declare one of these shot_size codes:
-     ECU (extreme close-up — eyes/hands/object)
-     CU  (close-up — head and shoulders)
-     MCU (medium close-up — chest up)
-     MS  (medium shot — waist up)
-     WS  (wide shot — full body + environment)
-     EWS (extreme wide — establishing, epic scale)
+   SHOT 1 — ENVIRONMENTAL DOMINANCE (shot_size: WS or EWS)
+   ─────────────────────────────────────────────────────────
+   • Character occupies ≤25% of the frame. Location/threat/scale IS the subject.
+   • Camera: ground-level or low-angle (character dwarfed by environment)
+   • Action: character exists IN the world — do NOT have them looking directly at camera
+   • Background: fully readable — city, landscape, threat, or scale must be clear
+   • FORBIDDEN HERE: half-body profile shots. Character must feel small.
+   • Dramatic function: ESTABLISH. The audience asks "where are we / what is at stake?"
 
-   FORBIDDEN: 3 or more consecutive shots with the SAME shot_size code.
-   If all your shots are "MS", you have failed this law.
+   SHOT 2 — CHARACTER INTRODUCTION / COVER (shot_size: MS or MCU)
+   ───────────────────────────────────────────────────────────────
+   • Character occupies 40–65% of frame. Environment recedes to background context.
+   • Camera: eye-level or slight high-angle (50mm lens — neutral, direct)
+   • Action: character's INTENT or MOOD becomes the primary information
+   • Subject position: DIFFERENT from Shot 1 (if Shot 1 was right-third → Shot 2 centered or left)
+   • FORBIDDEN HERE: character still "scanning the city" — they must REACT or ACT
+   • Dramatic function: COVER. The audience reads "who are they / what do they want?"
 
-   REQUIRED CINEMATIC PROGRESSION — pick one pattern per scene:
-     Pattern A — Scale Reveal:    EWS → MS → CU → ECU
-     Pattern B — Human Response:  WS → MS → CU (establish danger → human reaction → micro-detail)
-     Pattern C — Coverage:        MS → CU → OTS → Insert
-     Pattern D — Monster/Scale:   EWS (creature) → WS (human vs creature) → MS (human) → ECU (eyes)
+   SHOT 3 — PSYCHOLOGICAL FOCUS (shot_size: CU or MCU)
+   ────────────────────────────────────────────────────
+   • Face / mask / eye region DOMINATES the frame (85mm+, shallow DoF)
+   • Background: heavily blurred — environment almost invisible
+   • Camera: slight push-in, eye-level to slight low-angle
+   • Action: internal state. A micro-expression, a flinch, a held breath, a decision
+   • FORBIDDEN HERE: full-body shots. FORBIDDEN: "character stands and looks at..."
+   • Dramatic function: REACT. The audience feels the character's internal tension.
 
-   CAMERA ANGLE must vary across shots in a scene:
-     Use at minimum 2 different angles: low-angle / eye-level / high-angle / OTS / POV / dutch
+   SHOT 4 — DETAIL / INSERT / THREAT CUE (shot_size: ECU or CU — object/detail)
+   ──────────────────────────────────────────────────────────────────────────────
+   • An OBJECT, BODY PART, or ENVIRONMENTAL DETAIL fills the frame
+   • Examples: trembling hand on weapon, cracked phone screen, reflection in glass,
+     blinking warning indicator, enemy silhouette in background, suit damage detail,
+     newspaper headline, distant explosion, footprint in dust
+   • Characters may be absent or out of focus in background
+   • FORBIDDEN HERE: another standing profile shot of the character.
+   • FORBIDDEN HERE: character looking outward again (we did this in Shot 1).
+   • Dramatic function: INSERT. A punctuation mark. Raises a question or implies danger.
 
-③ FOCAL LENGTH PRECISION (not just "close-up" — specify the LENS)
+② SHOT SIZE VARIETY LAW — HARD CONSTRAINT
+   Every shot must declare one of: ECU | CU | MCU | MS | WS | EWS
+   FORBIDDEN: 2 or more consecutive shots with the SAME shot_size code.
+   FORBIDDEN: "MS" as the default for every shot — if all your shots are MS you have failed.
+
+   REQUIRED PROGRESSION PATTERNS — pick one per scene:
+     Pattern A — Scale Reveal:   EWS → MS → CU → ECU
+     Pattern B — Human Response: WS → MS → CU → ECU  (danger → human → internal → detail)
+     Pattern C — Intimacy:       MCU → CU → ECU → MS  (close to wide for release)
+     Pattern D — Monster/Scale:  EWS → WS → MS → ECU  (creature → human vs creature → human → eyes)
+
+③ FORBIDDEN PATTERNS — ANY SCENE CONTAINING THESE IS A FAILURE
+   ═════════════════════════════════════════════════════════════
+   ✗ 3 consecutive shots at the same camera height (all eye-level → FORBIDDEN)
+   ✗ 3 consecutive shots of "character looking outward / scanning / watching the city"
+   ✗ 3 consecutive half-body or 3/4-body profile shots of a standing character
+   ✗ Same emotional_beat description in 2 consecutive shots
+   ✗ Same subject_position (frame-left / centered / frame-right) in 3 consecutive shots
+   ✗ Same background dominance level (character-small vs character-fills-frame) in 3 shots
+   ✗ "scene coverage" or "coverage" as a dramatic_function — be specific
+
+④ MANDATORY SELF-CHECK (run this before outputting, fix any failures)
+   ══════════════════════════════════════════════════════════════════
+   For each consecutive pair of shots, count how many of these 8 dimensions differ:
+     1. shot_size code (ECU/CU/MCU/MS/WS/EWS)
+     2. camera_angle (low-angle / eye-level / high-angle / dutch / pov / bird-eye)
+     3. camera_height (ground / low / eye / high / aerial)
+     4. subject_position (frame-left / centered / frame-right / background / foreground)
+     5. background_dominance (dominant / balanced / minimal — how much environment is visible)
+     6. dramatic_function (establish / cover / react / insert — must rotate)
+     7. emotional_beat (the psychological state — must name a distinct emotion each shot)
+     8. action_category (static_profile / physical_action / reaction / detail_insert)
+
+   REQUIREMENT: Adjacent shots MUST differ in at least 4 of these 8 dimensions.
+   If any pair scores <4, you MUST regenerate the weaker shot before outputting.
+   Do not output a shot plan that fails this check.
+
+⑥ FOCAL LENGTH PRECISION (not just "close-up" — specify the LENS)
    • Wide shot: 24mm or 35mm (specify which and why — more distortion = more tension)
    • Medium shot: 50mm (the most "human" neutral lens)
    • Close-up: 85mm (flattering compression, emotional intimacy)
    • Extreme close-up: 135mm+ (maximum compression, micro-expression isolation)
    • Use zoom only if it carries narrative meaning (rarely)
 
-④ BLOCKING & CHARACTER POSITIONING
+⑦ BLOCKING & CHARACTER POSITIONING
    For each shot, state where characters are in the frame:
    • Foreground / midground / background positioning
    • Power dynamics expressed through height and proximity
    • Physical distance between characters = emotional distance
    • SUBJECT POSITION must vary across shots: right-third / centered / left-third / background / split
 
-⑤ CAMERA MOVEMENT MOTIVATION
+⑧ CAMERA MOVEMENT MOTIVATION
    Every camera move must be motivated:
    • STATIC: character has control of the scene / tension is internalised
    • PUSH-IN: realisation, mounting dread, intimate revelation
@@ -378,7 +430,7 @@ DO NOT humanise faces. Cartoon/anime/animal anatomy must be preserved exactly.
    • HANDHELD: instability, urgency, subjective anxiety
    • CRANE/DUTCH: god's-eye view, disorientation, power shift
 
-⑥ LIGHTING SETUP (per shot — do NOT repeat the style bible paragraph globally)
+⑨ LIGHTING SETUP (per shot — do NOT repeat the style bible paragraph globally)
    Each shot must have its OWN lighting_setup — different from the previous shot.
    Specify the PRACTICAL LIGHT SOURCE that motivates this specific shot:
    e.g. "Window at screen-left, 3/4 Rembrandt angle, harsh shadow jaw-side"
@@ -386,18 +438,18 @@ DO NOT humanise faces. Cartoon/anime/animal anatomy must be preserved exactly.
    e.g. "Neon sign at screen-right, cyan rimlight, deep magenta fill from billboard"
    ✗ WRONG: repeating the same lighting paragraph for every shot in the scene
 
-⑦ PHYSICAL ACTION — BODY MECHANICS PRECISION
+⑩ PHYSICAL ACTION — BODY MECHANICS PRECISION
    action field must be specific enough to direct an actor:
    ✗ WRONG: "She walks to the window"
    ✓ CORRECT: "She crosses frame left to right in three deliberate steps, pauses
      at the window with her back to camera, one hand rising to touch the glass"
 
-⑧ DIALOGUE STANDARD: ${dialogueRule}
+⑪ DIALOGUE STANDARD: ${dialogueRule}
    SUBTEXT STANDARD: ${subtextRule}
    Every dialogue line must pass this test: could it be cut without losing
    plot? If yes — cut it. Only keep lines that are irreplaceable.
 
-⑨ IMAGE PROMPT — VISUAL DELTA FIRST, CHARACTER DESCRIPTION LAST:
+⑫ IMAGE PROMPT — VISUAL DELTA FIRST, CHARACTER DESCRIPTION LAST:
    MANDATORY FORMAT — first line must be:
      "[SHOT_SIZE | ANGLE | subject_position] unique physical action + micro-expression"
    Example (correct):
@@ -417,7 +469,7 @@ DO NOT humanise faces. Cartoon/anime/animal anatomy must be preserved exactly.
    • End with a COMPACT character lock [NAME LOCK: 3-5 identifiers only]
    • Minimum 60 words, maximum 150 words — be concise but specific
 
-⑨ VIDEO PROMPT — PHYSICAL CHOREOGRAPHY PRECISION
+⑬ VIDEO PROMPT — PHYSICAL CHOREOGRAPHY PRECISION
    The video_prompt must describe motion that a video diffusion model can execute:
    • Lead with camera movement verb + direction + speed
    • Describe the exact body mechanics of every moving element
@@ -442,6 +494,9 @@ DO NOT humanise faces. Cartoon/anime/animal anatomy must be preserved exactly.
       "action": "Precise body-mechanics description of what happens (minimum 2 sentences)",
       "camera_angle": "eye-level|low-angle|high-angle|over-shoulder|pov|dutch|bird-eye|profile",
       "subject_position": "frame-left|centered|frame-right|background|foreground|split",
+      "camera_height": "ground-level|low|eye-level|high|aerial",
+      "background_dominance": "dominant|balanced|minimal",
+      "dramatic_function": "establish|cover|react|insert|cutaway|transition",
       "focal_length": "24mm|35mm|50mm|85mm|135mm|zoom",
       "camera_movement": "static|push-in|pull-out|pan-left|pan-right|tilt-up|tilt-down|dolly|tracking|handheld|crane",
       "movement_motivation": "Why this camera move is the only correct choice here",

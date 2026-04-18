@@ -2253,6 +2253,18 @@ const shotListSchema = {
                     shot_id: { type: Type.STRING },
                     // @ts-ignore
                     shot_number: { type: Type.INTEGER },
+                    // @ts-ignore
+                    shot_size: { type: Type.STRING },          // ECU|CU|MCU|MS|WS|EWS
+                    // @ts-ignore
+                    shot_type: { type: Type.STRING },          // establishing|single|insert|reaction|etc
+                    // @ts-ignore
+                    dramatic_function: { type: Type.STRING },  // establish|cover|react|insert
+                    // @ts-ignore
+                    camera_height: { type: Type.STRING },      // ground-level|low|eye-level|high|aerial
+                    // @ts-ignore
+                    background_dominance: { type: Type.STRING },// dominant|balanced|minimal
+                    // @ts-ignore
+                    subject_position: { type: Type.STRING },   // frame-left|centered|frame-right|etc
                     characters: {
                         // @ts-ignore
                         type: Type.ARRAY,
@@ -2267,6 +2279,8 @@ const shotListSchema = {
                     camera_movement: { type: Type.STRING },
                     // @ts-ignore
                     composition: { type: Type.STRING },
+                    // @ts-ignore
+                    lighting_setup: { type: Type.STRING },
                     // @ts-ignore
                     lighting: { type: Type.STRING },
                     // @ts-ignore
@@ -2288,7 +2302,7 @@ const shotListSchema = {
                         },
                     },
                 },
-                required: ['shot_id', 'shot_number', 'action', 'camera_movement', 'focal_length', 'emotional_beat', 'image_prompt', 'video_prompt'],
+                required: ['shot_id', 'shot_number', 'shot_size', 'dramatic_function', 'action', 'camera_angle', 'camera_height', 'subject_position', 'emotional_beat', 'image_prompt', 'video_prompt'],
             },
         },
     },
@@ -2695,9 +2709,112 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
                     s.image_prompt = `${s.action || 'cinematic shot'}. ${s.camera_angle || 'medium shot'}, ${s.focal_length || '50mm'}. ${s.lighting_setup || 'motivated cinematic lighting'}. ${s.emotional_beat || 'dramatic tension'}.`;
                 }
             });
+            // ── SCENE ARC ENFORCER ────────────────────────────────────────────────
+            // Mandate: shots 1-4 MUST follow ESTABLISH→COVER→REACT→INSERT arc.
+            // Repairs shot_size, camera_angle, camera_height, dramatic_function
+            // in-place so the image compiler sees structurally distinct shots.
+            const SCENE_ARC_MANDATES = [
+                { sizes: ['WS','EWS'],        angle: 'low-angle',  height: 'low',       fn: 'establish', bgDom: 'dominant' },
+                { sizes: ['MS','MCU'],         angle: 'eye-level',  height: 'eye-level', fn: 'cover',     bgDom: 'balanced' },
+                { sizes: ['CU','MCU'],         angle: 'eye-level',  height: 'eye-level', fn: 'react',     bgDom: 'minimal'  },
+                { sizes: ['ECU','CU','insert'],angle: 'eye-level',  height: 'high',      fn: 'insert',    bgDom: 'minimal'  },
+            ];
+            shots.slice(0, Math.min(4, shots.length)).forEach((shot: any, arcIdx: number) => {
+                const arc = SCENE_ARC_MANDATES[arcIdx];
+                if (!arc) return;
+
+                const currentSize = (shot.shot_size || '').toUpperCase();
+                if (!arc.sizes.map(s => s.toUpperCase()).includes(currentSize)) {
+                    const forced = arc.sizes[0];
+                    logger.gemini.warn('scene_arc_repair_size', {
+                        scene: i + 1, shot: arcIdx + 1,
+                        was: shot.shot_size, forced,
+                    }, traceId);
+                    shot.shot_size = forced;
+                }
+                // Force camera_height if missing or wrong for this arc position
+                if (!shot.camera_height || shot.camera_height === 'eye-level' && arcIdx === 0) {
+                    shot.camera_height = arc.height;
+                }
+                // Repair background_dominance
+                if (!shot.background_dominance) {
+                    shot.background_dominance = arc.bgDom;
+                }
+                // Repair dramatic_function if generic/missing
+                const badFns = ['scene coverage', 'coverage', 'scene_coverage', ''];
+                if (!shot.dramatic_function || badFns.includes(shot.dramatic_function.toLowerCase())) {
+                    shot.dramatic_function = arc.fn;
+                }
+            });
+
+            // ── ADJACENT CONTRAST VALIDATOR ───────────────────────────────────────
+            // For each adjacent pair: count how many of 8 dimensions differ.
+            // If score < 4, force-differentiate shot_size + camera_angle + subject_position.
+            const SHOT_SIZES_ORDERED = ['ECU','CU','MCU','MS','WS','EWS'];
+            const ANGLES_LIST        = ['low-angle','eye-level','high-angle','dutch','pov','bird-eye','over-shoulder'];
+            const POSITIONS_LIST     = ['frame-left','centered','frame-right','background','foreground','split'];
+            const HEIGHTS_LIST       = ['ground-level','low','eye-level','high','aerial'];
+            const BG_DOM_LIST        = ['dominant','balanced','minimal'];
+
+            const shotDiffScore = (a: any, b: any): number => {
+                let diff = 0;
+                const n = (v: any) => String(v || '').toLowerCase().trim();
+                if (n(a.shot_size)            !== n(b.shot_size))            diff++;
+                if (n(a.camera_angle)         !== n(b.camera_angle))         diff++;
+                if (n(a.camera_height)        !== n(b.camera_height))        diff++;
+                if (n(a.subject_position)     !== n(b.subject_position))     diff++;
+                if (n(a.background_dominance) !== n(b.background_dominance)) diff++;
+                if (n(a.dramatic_function)    !== n(b.dramatic_function))    diff++;
+                // emotional_beat: compare first 25 chars to avoid noise from slight rephrasing
+                if (n(a.emotional_beat).slice(0,25) !== n(b.emotional_beat).slice(0,25)) diff++;
+                // shot_type as action_category proxy
+                if (n(a.shot_type)            !== n(b.shot_type))            diff++;
+                return diff;
+            };
+
+            for (let k = 1; k < shots.length; k++) {
+                const prev = shots[k - 1];
+                const curr = shots[k];
+                const score = shotDiffScore(prev, curr);
+                if (score < 4) {
+                    // Force shot_size at least 2 positions away in the ordered list
+                    const prevSizeIdx = SHOT_SIZES_ORDERED.indexOf((prev.shot_size || 'MS').toUpperCase());
+                    const safeIdx = (prevSizeIdx >= 0)
+                        ? (prevSizeIdx + 2) % SHOT_SIZES_ORDERED.length
+                        : 2; // default MCU
+                    const newSize = SHOT_SIZES_ORDERED[safeIdx];
+
+                    // Force camera_angle different from prev
+                    const prevAngle = (prev.camera_angle || 'eye-level').toLowerCase();
+                    const newAngle  = ANGLES_LIST.find(a => a !== prevAngle) || 'high-angle';
+
+                    // Force subject_position different from prev
+                    const prevPos = (prev.subject_position || 'centered').toLowerCase();
+                    const newPos  = POSITIONS_LIST.find(p => p !== prevPos) || 'frame-right';
+
+                    // Force background_dominance different from prev
+                    const prevBg = (prev.background_dominance || 'balanced').toLowerCase();
+                    const newBg  = BG_DOM_LIST.find(b => b !== prevBg) || 'minimal';
+
+                    logger.gemini.warn('shot_contrast_repair', {
+                        scene: i + 1, shot: k + 1, score,
+                        prevSize: prev.shot_size, newSize,
+                        prevAngle, newAngle,
+                        prevPos, newPos,
+                    }, traceId);
+
+                    curr.shot_size            = newSize;
+                    curr.camera_angle         = newAngle;
+                    curr.subject_position     = newPos;
+                    curr.background_dominance = newBg;
+                }
+            }
+
             logger.gemini.debug('shot_planner_result', {
                 scene: i + 1,
                 shotsCount: shots.length,
+                shotSizes: shots.map((s: any) => s.shot_size || '?').join('/'),
+                arcChecked: true,
                 usedFallback: !shotResponse || !Array.isArray((parsedShots as any)?.shots) || false,
             }, traceId);
 
