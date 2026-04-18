@@ -72,6 +72,14 @@ function sceneToDbPayload(scene: Scene, storyboardId: string): any {
         verifier_pass:       raw.verifier_pass       ?? null,
         must_show_json:      Array.isArray(raw.must_show) ? JSON.stringify(raw.must_show) : null,
         screenplay_beat:     raw.screenplay_beat     || null,
+        // ★ Phase 4 — Shot Difference Contract (SDC)
+        narrative_function:         raw.narrative_function         || null,
+        new_information_introduced: raw.new_information_introduced || null,
+        required_visible_action:    raw.required_visible_action    || null,
+        forbidden_repetition_json:  Array.isArray(raw.forbidden_repetition_from_previous) ? JSON.stringify(raw.forbidden_repetition_from_previous) : null,
+        visual_delta_from_previous: raw.visual_delta_from_previous || null,
+        duplicate_risk_score:       raw.duplicate_risk_score       ?? null,
+        duplicate_fail_reason:      raw.duplicate_fail_reason      || null,
     };
     if (scene.id && scene.id.includes('-')) {
         payload.id = scene.id;
@@ -115,6 +123,14 @@ function dbRowToScene(row: any): Scene {
         verifier_pass:       row.verifier_pass       ?? undefined,
         must_show:           (() => { try { return row.must_show_json ? JSON.parse(row.must_show_json) : undefined; } catch { return undefined; } })(),
         screenplay_beat:     row.screenplay_beat     || undefined,
+        // ★ Phase 4 — Shot Difference Contract (SDC)
+        narrative_function:         row.narrative_function         || undefined,
+        new_information_introduced: row.new_information_introduced || undefined,
+        required_visible_action:    row.required_visible_action    || undefined,
+        forbidden_repetition_from_previous: (() => { try { return row.forbidden_repetition_json ? JSON.parse(row.forbidden_repetition_json) : undefined; } catch { return undefined; } })(),
+        visual_delta_from_previous: row.visual_delta_from_previous || undefined,
+        duplicate_risk_score:       row.duplicate_risk_score       ?? undefined,
+        duplicate_fail_reason:      row.duplicate_fail_reason      || undefined,
     };
     return scene as Scene;
 }
@@ -200,6 +216,10 @@ export const saveStoryboard = async (
             'shot_id','source_scene_id','camera_angle','camera_motion','characters_json',
             // Phase 3 verifier columns — strip on pre-migration DBs
             'canonical_prompt','verifier_score','verifier_pass','must_show_json','screenplay_beat',
+            // Phase 4 SDC columns — strip on pre-migration DBs
+            'narrative_function','new_information_introduced','required_visible_action',
+            'forbidden_repetition_json','visual_delta_from_previous',
+            'duplicate_risk_score','duplicate_fail_reason',
         ];
         const stripNewSceneColumns = (rows: any[]) => rows.map(r => {
             const clean = { ...r };

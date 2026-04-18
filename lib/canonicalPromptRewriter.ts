@@ -5,16 +5,21 @@
  *
  * Gemini raw image_prompt prose is UNTRUSTED INPUT.
  * This module:
- *   1. Builds a CANONICAL image_prompt from structured shot fields
- *   2. Verifies screenplay faithfulness (7 dimensions, 0-5 each = 35 max)
- *   3. Detects generic portrait collapse patterns
- *   4. Auto-rewrites if verifier score fails thresholds
- *   5. Produces traceability data for UI display
+ *   1. Computes Shot Difference Contract (SDC): narrative_function, new_information,
+ *      required_visible_action, visual_delta, forbidden_repetition
+ *   2. Runs anti-redundancy check (duplicate_risk_score) vs previous shot
+ *   3. Builds CANONICAL image_prompt with SDC fields as first lines (TASK 3 priority order)
+ *   4. Verifies screenplay faithfulness (8 dimensions, 0-5 each = 40 max)
+ *      — 8th dimension: screenplay removal value ("would scene lose info if removed?")
+ *   5. Detects generic portrait collapse patterns
+ *   6. Auto-rewrites if verifier score fails thresholds
+ *   7. Produces full traceability data for UI display
  *
  * PASS THRESHOLDS (all must be met):
- *   total score  ≥ 24 / 35
+ *   total score  ≥ 28 / 40
  *   beat_match   ≥ 4 / 5
  *   non_generic  ≥ 4 / 5
+ *   removal_val  ≥ 3 / 5  (shot must add unique value — not cosmetically redundant)
  */
 
 // ─── Public interfaces ────────────────────────────────────────────────────────
@@ -26,21 +31,33 @@ export interface VerifierDimension {
 }
 
 export interface VerifierResult {
-  total: number;                  // 0–35
+  total: number;                  // 0–40 (8 dims × 5)
   passes: boolean;
   dimensions: VerifierDimension[];
   fail_reasons: string[];
   generic_portrait_detected: boolean;
 }
 
+/** Shot Difference Contract — what makes THIS shot distinct from the previous */
+export interface ShotDifferenceContract {
+  narrative_function:                string;   // NarrativeFunction enum value
+  new_information_introduced:        string;   // What new story info this shot adds
+  required_visible_action:           string;   // Specific physical action that must be visible
+  forbidden_repetition_from_previous: string[]; // What must NOT re-appear from prev shot
+  visual_delta_from_previous:        string;   // How this shot differs visually from prev
+  duplicate_risk_score:              number;   // 0-100: ≥70 = cosmetic duplicate = HARD FAIL
+  duplicate_fail_reason?:            string;   // Populated if duplicate_risk_score ≥ 70
+}
+
 export interface CanonicalShotResult {
-  canonical_prompt: string;       // The approved prompt to send to the image model
-  screenplay_beat: string;        // One-line beat description for UI
-  must_show: string[];            // Checklist: concrete visible proof required
-  verifier: VerifierResult;
-  approved: boolean;
-  rewrite_count: number;          // How many rewrite iterations were needed
-  gemini_prose_discarded: boolean;// True when original Gemini image_prompt was replaced
+  canonical_prompt:        string;        // The approved prompt to send to the image model
+  screenplay_beat:         string;        // One-line beat description for UI
+  must_show:               string[];      // Checklist: concrete visible proof required
+  verifier:                VerifierResult;
+  approved:                boolean;
+  rewrite_count:           number;        // How many rewrite iterations were needed
+  gemini_prose_discarded:  boolean;       // True when original Gemini image_prompt was replaced
+  sdc:                     ShotDifferenceContract; // Shot Difference Contract data
 }
 
 // ─── Internal utilities ───────────────────────────────────────────────────────
@@ -79,6 +96,261 @@ const GENERIC_PORTRAIT_PATTERNS: RegExp[] = [
 ];
 
 const REQUIRED_ACTION_VERBS: RegExp = /\b(perch|crouches?|leaps?|grabs?|fires?|swings?|pulls?|yanks?|slams?|dives?|rolls?|spins?|lunges?|blocks?|deflects?|pivots?|tears?|rips?|holds?|clutches?|tightens?|reaches?|extends?|points?|throws?|catches?|strikes?|kicks?|punches?|stumbles?|falls?|rises?|lands?|crashes?|explodes?|erupts?|collapses?|staggers?|freezes?|flinches?|trembles?|shakes?|twists?|ducking?|vaulting?|sprinting?|climbing?)\b/i;
+
+// ─── NARRATIVE FUNCTION DERIVER ───────────────────────────────────────────────
+// Maps shot position + dramatic_function + shot_size to the canonical narrative function enum.
+
+function deriveNarrativeFunction(shot: any, scene: any, arcIdx: number, prevShot: any | null): string {
+  const fn      = n(shot.dramatic_function || shot.shot_type || '');
+  const size    = n(shot.shot_size);
+  const action  = n(shot.action || shot.visual_description || '');
+  const emotion = n(shot.emotional_beat || '');
+
+  // Scene arc position takes priority for first 4 shots
+  if (arcIdx === 0) {
+    return (size === 'ews' || size === 'ws') ? 'establishing' : 'scale';
+  }
+  if (arcIdx === 1) {
+    return fn === 'cover' || fn === 'character_intro' ? 'character_intro' : 'cover' in fn ? 'character_intro' : 'reaction';
+  }
+  if (arcIdx === 2) {
+    return 'reaction';
+  }
+  if (arcIdx === 3) {
+    return size === 'ecu' || fn === 'insert' ? 'insert' : 'reveal';
+  }
+
+  // Fallback: derive from fields
+  if (fn.includes('establish') || size === 'ews') return 'establishing';
+  if (fn.includes('insert') || size === 'ecu') return 'insert';
+  if (fn.includes('react') || fn.includes('reaction')) return 'reaction';
+  if (fn.includes('reveal') || fn.includes('disclosure')) return 'reveal';
+  if (fn.includes('confront') || fn.includes('conflict')) return 'confrontation';
+  if (fn.includes('transit')) return 'transition';
+  if (fn.includes('aftermath') || fn.includes('result')) return 'aftermath';
+  if (fn.includes('decision') || action.includes('decides') || action.includes('chooses')) return 'decision';
+  if (fn.includes('motion') || fn.includes('bridge')) return 'motion_bridge';
+  if (size === 'ws' || size === 'ews') return 'scale';
+  if (size === 'cu' || size === 'mcu') return 'reaction';
+
+  return 'character_intro';
+}
+
+// ─── NEW INFORMATION DERIVER ──────────────────────────────────────────────────
+// What story information does this shot add that didn't exist before?
+
+function deriveNewInformation(shot: any, scene: any, arcIdx: number, prevShot: any | null): string {
+  const size    = n(shot.shot_size);
+  const fn      = n(shot.dramatic_function || '');
+  const action  = s(shot.action || '').split(/[.!?]/)[0].trim().slice(0, 80);
+  const emotion = s(shot.emotional_beat || '').split(/[.;]/)[0].trim().slice(0, 50);
+  const loc     = s(scene?.location || '').split(/[,.\n]/)[0].trim();
+  const synopsis = s(scene?.synopsis || '').split(/[.]/)[0].trim().slice(0, 80);
+
+  if (arcIdx === 0) {
+    return `First view of ${loc || 'location'} — scale, threat presence, and spatial grammar of world established`;
+  }
+  if (arcIdx === 1) {
+    return `Character intent revealed — ${emotion || 'emotional state'} readable; scene obstacle becomes clear`;
+  }
+  if (arcIdx === 2) {
+    return `Internal psychological state exposed — micro-expression carries weight of: "${action.slice(0, 50)}"`;
+  }
+  if (arcIdx === 3) {
+    const chars   = Array.isArray(shot.characters) ? shot.characters : [];
+    return `Specific detail punctuates scene — ${chars.length ? `object linked to ${chars[0]}` : 'physical proof'} escalates or resolves tension`;
+  }
+
+  // General case
+  if (fn.includes('reveal') || size === 'ecu') return `New visual evidence: "${action.slice(0, 60)}"`;
+  if (fn.includes('react'))   return `Character response to prior event — emotion: "${emotion}"`;
+  if (fn.includes('confront')) return `Two forces meet — conflict made visible`;
+  if (fn.includes('transit')) return `Scene transition — location/time/tone bridge`;
+
+  return `Story beat advanced: "${synopsis.slice(0, 70)}"`;
+}
+
+// ─── REQUIRED VISIBLE ACTION DERIVER ─────────────────────────────────────────
+// What specific physical action MUST be visible in this frame?
+
+function deriveRequiredAction(shot: any, scene: any, arcIdx: number): string {
+  const raw    = s(shot.action || shot.visual_description || '').split(/[.!?]/)[0].trim().slice(0, 100);
+  const size   = n(shot.shot_size);
+  const fn     = n(shot.dramatic_function || '');
+  const chars  = Array.isArray(shot.characters) ? shot.characters.slice(0, 1) : [];
+  const charName = chars.length ? chars[0] : 'subject';
+
+  if (arcIdx === 0) {
+    return `${charName} physically present in environment — body ≤25% of frame — environment scale dominates`;
+  }
+  if (arcIdx === 1) {
+    return raw || `${charName} body language communicates intent — no passive standing`;
+  }
+  if (arcIdx === 2) {
+    return `${charName} face visible — micro-expression readable — ${raw.slice(0, 60) || 'internal reaction'}`;
+  }
+  if (arcIdx === 3) {
+    return `Object, hand, or environmental detail fills frame — ${raw.slice(0, 60) || 'specific prop or body part'}`;
+  }
+  return raw || `${charName} performs specific action`;
+}
+
+// ─── VISUAL DELTA FROM PREVIOUS ───────────────────────────────────────────────
+// How does this shot differ visually from the previous one?
+
+function deriveVisualDelta(shot: any, prevShot: any | null, arcIdx: number): string {
+  if (!prevShot) return 'Opens scene — no previous shot to compare';
+
+  const curSize    = (s(shot.shot_size) || 'MS').toUpperCase();
+  const prevSize   = (s(prevShot.shot_size) || 'MS').toUpperCase();
+  const curAngle   = (s(shot.camera_angle) || 'eye-level').toLowerCase();
+  const prevAngle  = (s(prevShot.camera_angle) || 'eye-level').toLowerCase();
+  const curHeight  = (s(shot.camera_height) || 'eye-level').toLowerCase();
+  const prevHeight = (s(prevShot.camera_height) || 'eye-level').toLowerCase();
+  const curBg      = (s(shot.background_dominance) || 'balanced').toLowerCase();
+  const prevBg     = (s(prevShot.background_dominance) || 'balanced').toLowerCase();
+  const curFn      = n(shot.dramatic_function || '');
+  const prevFn     = n(prevShot.dramatic_function || '');
+  const curPos     = n(shot.subject_position || '');
+  const prevPos    = n(prevShot.subject_position || '');
+  const curEmotion = n(shot.emotional_beat || '');
+  const prevEmotion= n(prevShot.emotional_beat || '');
+
+  const diffs: string[] = [];
+  if (curSize !== prevSize)    diffs.push(`size ${prevSize}→${curSize}`);
+  if (curAngle !== prevAngle)  diffs.push(`angle ${prevAngle}→${curAngle}`);
+  if (curHeight !== prevHeight) diffs.push(`height ${prevHeight}→${curHeight}`);
+  if (curBg !== prevBg)        diffs.push(`background ${prevBg}→${curBg}`);
+  if (curFn !== prevFn && curFn && prevFn) diffs.push(`function ${prevFn}→${curFn}`);
+  if (curPos !== prevPos && curPos && prevPos) diffs.push(`position ${prevPos}→${curPos}`);
+  if (curEmotion !== prevEmotion && curEmotion && prevEmotion) diffs.push(`emotion ${prevEmotion}→${curEmotion}`);
+
+  if (diffs.length === 0) {
+    return `⚠ MINIMAL VISUAL DELTA — same size/angle/height as previous shot`;
+  }
+  return diffs.join(', ');
+}
+
+// ─── FORBIDDEN REPETITIONS ────────────────────────────────────────────────────
+// What must NOT re-appear from the previous shot?
+
+function deriveForbiddenRepetitions(shot: any, prevShot: any | null, arcIdx: number): string[] {
+  if (!prevShot) return [];
+
+  const forbidden: string[] = [];
+  const prevSize   = (s(prevShot.shot_size) || '').toUpperCase();
+  const prevFn     = n(prevShot.dramatic_function || '');
+  const prevAngle  = n(prevShot.camera_angle || '');
+  const prevHeight = n(prevShot.camera_height || '');
+  const prevEmotion= n(prevShot.emotional_beat || '');
+  const prevPos    = n(prevShot.subject_position || '');
+  const prevAction = s(prevShot.action || '').split(/[.!?]/)[0].trim().slice(0, 50);
+
+  if (prevSize)    forbidden.push(`shot size ${prevSize} — must differ`);
+  if (prevFn && prevFn !== 'cover') forbidden.push(`dramatic function "${prevFn}"`);
+  if (prevAngle)   forbidden.push(`camera angle "${prevAngle}"`);
+  if (prevHeight)  forbidden.push(`camera height "${prevHeight}" — vary the camera plane`);
+  if (prevEmotion) forbidden.push(`emotional beat "${prevEmotion}" — character must feel differently`);
+  if (prevPos)     forbidden.push(`subject position "${prevPos}" — vary character's frame placement`);
+  if (prevAction)  forbidden.push(`action repeat: "${prevAction.slice(0, 40)}" — must advance, not repeat`);
+
+  return forbidden.slice(0, 5); // Cap at 5 most important
+}
+
+// ─── ANTI-REDUNDANCY CHECK (TASK 2) ──────────────────────────────────────────
+// Returns duplicate_risk_score (0-100) and fail reason if ≥70.
+// A shot is a cosmetic duplicate if ALL 5 key dimensions match the previous.
+
+export function checkDuplicateRisk(shot: any, prevShot: any | null): { duplicate_risk_score: number; duplicate_fail_reason?: string } {
+  if (!prevShot) return { duplicate_risk_score: 0 };
+
+  const n_v = (v: any) => (s(v) || '').toLowerCase().trim();
+
+  const checks: Array<{ dimension: string; same: boolean }> = [
+    {
+      dimension: 'subject',
+      same: (() => {
+        const curChars  = Array.isArray(shot.characters) ? shot.characters.join(',') : n_v(shot.characters);
+        const prevChars = Array.isArray(prevShot.characters) ? prevShot.characters.join(',') : n_v(prevShot.characters);
+        return curChars.length > 0 && curChars === prevChars;
+      })(),
+    },
+    {
+      dimension: 'shot_size',
+      same: n_v(shot.shot_size) !== '' && n_v(shot.shot_size) === n_v(prevShot.shot_size),
+    },
+    {
+      dimension: 'camera_angle',
+      same: n_v(shot.camera_angle) !== '' && n_v(shot.camera_angle) === n_v(prevShot.camera_angle),
+    },
+    {
+      dimension: 'location_block',
+      same: (() => {
+        // Same location block means same indoor/outdoor type AND same key location word
+        const curLoc  = n_v(shot.location || '').split(/[\s,]/)[0];
+        const prevLoc = n_v(prevShot.location || '').split(/[\s,]/)[0];
+        return curLoc.length > 2 && curLoc === prevLoc;
+      })(),
+    },
+    {
+      dimension: 'dramatic_function',
+      same: n_v(shot.dramatic_function) !== '' && n_v(shot.dramatic_function) === n_v(prevShot.dramatic_function),
+    },
+    {
+      dimension: 'new_information',
+      same: (() => {
+        // If emotional beat is identical AND action tokens heavily overlap → no new info
+        const sameEmotion = n_v(shot.emotional_beat) !== '' && n_v(shot.emotional_beat) === n_v(prevShot.emotional_beat);
+        const curAction   = n_v(shot.action || '').split(/\s+/).filter((t: string) => t.length > 3);
+        const prevAction  = new Set(n_v(prevShot.action || '').split(/\s+/).filter((t: string) => t.length > 3));
+        const overlap = curAction.length > 0
+          ? curAction.filter((t: string) => prevAction.has(t)).length / curAction.length
+          : 0;
+        return sameEmotion && overlap > 0.6;
+      })(),
+    },
+  ];
+
+  const matchCount   = checks.filter(c => c.same).length;
+  const matchedDims  = checks.filter(c => c.same).map(c => c.dimension);
+  // Risk score: 0 matches = 0, 3 matches = 50, 5 matches = 90, 6 = 100
+  const raw = Math.min(100, Math.round((matchCount / checks.length) * 100 + (matchCount >= 5 ? 20 : 0)));
+  const duplicate_risk_score = Math.min(100, raw);
+
+  if (duplicate_risk_score >= 70) {
+    return {
+      duplicate_risk_score,
+      duplicate_fail_reason: `Cosmetic duplicate: matches previous shot on [${matchedDims.join(', ')}] — no new screenplay information`,
+    };
+  }
+  return { duplicate_risk_score };
+}
+
+// ─── SHOT DIFFERENCE CONTRACT BUILDER (TASK 1) ───────────────────────────────
+
+export function buildSDC(
+  shot: any,
+  scene: any,
+  prevShot: any | null,
+  arcIdx: number,
+): ShotDifferenceContract {
+  const narrativeFn  = deriveNarrativeFunction(shot, scene, arcIdx, prevShot);
+  const newInfo      = deriveNewInformation(shot, scene, arcIdx, prevShot);
+  const reqAction    = deriveRequiredAction(shot, scene, arcIdx);
+  const forbidden    = deriveForbiddenRepetitions(shot, prevShot, arcIdx);
+  const visualDelta  = deriveVisualDelta(shot, prevShot, arcIdx);
+  const { duplicate_risk_score, duplicate_fail_reason } = checkDuplicateRisk(shot, prevShot);
+
+  return {
+    narrative_function:                narrativeFn,
+    new_information_introduced:        newInfo,
+    required_visible_action:           reqAction,
+    forbidden_repetition_from_previous: forbidden,
+    visual_delta_from_previous:        visualDelta,
+    duplicate_risk_score,
+    duplicate_fail_reason,
+  };
+}
 
 // ─── MUST-SHOW BUILDER ────────────────────────────────────────────────────────
 // Derives concrete visual proof requirements from shot position and type.
@@ -141,9 +413,23 @@ function buildMustShow(shot: any, scene: any, arcIdx: number): string[] {
   ];
 }
 
-// ─── CANONICAL PROMPT BUILDER ─────────────────────────────────────────────────
-// Builds the canonical prompt from structured fields. Gemini prose is NOT used
-// as a base. Only the `action` field (a short directive string) is preserved.
+// ─── CANONICAL PROMPT BUILDER (TASK 3 PRIORITY ORDER) ────────────────────────
+// MANDATORY PRIORITY ORDER:
+//   1. Scene/Shot fingerprint
+//   2. NARRATIVE FUNCTION (what role this shot plays)
+//   3. NEW INFORMATION INTRODUCED (what story info is added)
+//   4. REQUIRED VISIBLE ACTION (what physical action must be visible)
+//   5. VISUAL DELTA FROM PREVIOUS (how this shot differs)
+//   6. MUST SHOW (concrete checklist)
+//   7. SCREENPLAY BEAT (action from shot fields)
+//   --- identity/style/location come AFTER SDC, never before ---
+//   8. LOCATION EVIDENCE
+//   9. CONTINUITY
+//  10. SUBJECT PRIORITY
+//  11. BACKGROUND DOMINANCE
+//  12. STYLE SUPPORT ONLY
+//  13. IDENTITY LOCK
+//  14. REJECT IF
 
 function buildCanonicalPrompt(
   shot: any,
@@ -153,6 +439,7 @@ function buildCanonicalPrompt(
   styleBible: any,
   arcIdx: number,
   mustShow: string[],
+  sdc: ShotDifferenceContract,
 ): string {
   const sceneNum  = s(shot.scene_number ?? scene?.scene_number ?? '?');
   const shotNum   = s(shot.shot_number ?? '?');
@@ -166,7 +453,6 @@ function buildCanonicalPrompt(
   const dramaticFn    = s(shot.dramatic_function || shot.shot_type || 'cover').trim();
   const bgDom         = s(shot.background_dominance || (arcIdx === 0 ? 'dominant' : arcIdx >= 2 ? 'minimal' : 'balanced'));
   const focalLength   = s(shot.focal_length || (size === 'WS' || size === 'EWS' ? '24mm' : size === 'CU' || size === 'MCU' ? '85mm' : size === 'ECU' ? '135mm' : '50mm'));
-  const lighting      = s(shot.lighting_setup || shot.lighting || 'motivated cinematic lighting').split(/[.;]/)[0].trim().slice(0, 70);
 
   // Location evidence
   const locRaw    = s(scene?.location || shot.location || '').split(/[,.\n]/)[0].trim();
@@ -221,18 +507,34 @@ function buildCanonicalPrompt(
   if (arcIdx === 2) rejectIf.push('full body visible', 'background dominates', 'generic neutral expression');
   if (arcIdx === 3) rejectIf.push('standing profile portrait', 'character fills frame without object detail');
   rejectIf.push('generic man touching glasses', 'person on phone', 'blurred city portrait');
+  if (sdc.duplicate_fail_reason) rejectIf.push(`DUPLICATE: ${sdc.duplicate_fail_reason.slice(0, 60)}`);
 
+  // TASK 3 — PRIORITY ORDER: SDC fields first, style/identity last
+  // Shared scene style must never dominate the first 120 tokens.
   const lines: string[] = [
+    // ── GROUP 1: Shot fingerprint + screenplay contract (first 120 tokens) ──────
     `[Scene ${sceneNum} / Shot ${shotNum} | ${size} | ${angle} | ${height} | ${position}]`,
-    `SCREENPLAY BEAT: ${action || 'action not specified'}`,
+    `NARRATIVE FUNCTION: ${sdc.narrative_function.toUpperCase()} — ${dramaticFn}`,
+    `NEW INFORMATION: ${sdc.new_information_introduced}`,
+    `REQUIRED ACTION: ${sdc.required_visible_action}`,
+    `VISUAL DELTA: ${sdc.visual_delta_from_previous}`,
+    // ── GROUP 2: Proof checklist ─────────────────────────────────────────────────
     `MUST SHOW: ${mustShow.join(' · ')}`,
-    `ACTION NOW: ${action}${emotion ? ` — ${emotion}` : ''}`,
-    `LOCATION EVIDENCE: ${locLine || 'location context required'}`,
-    `CONTINUITY: ${continuity}`,
-    `SUBJECT PRIORITY: ${subjectLine}`,
-    `BACKGROUND DOMINANCE: ${bgDom}`,
-    `STYLE SUPPORT ONLY: ${styleLine || 'motivated cinematic lighting'}`,
+    `SCREENPLAY BEAT: ${action || 'action not specified'}${emotion ? ` — ${emotion}` : ''}`,
   ];
+
+  if (sdc.forbidden_repetition_from_previous.length > 0) {
+    lines.push(`FORBIDDEN REPEAT: ${sdc.forbidden_repetition_from_previous.slice(0, 3).join(' | ')}`);
+  }
+
+  // ── GROUP 3: Spatial + continuity context ────────────────────────────────────
+  lines.push(`LOCATION EVIDENCE: ${locLine || 'location context required'}`);
+  lines.push(`CONTINUITY: ${continuity}`);
+  lines.push(`SUBJECT PRIORITY: ${subjectLine}`);
+  lines.push(`BACKGROUND DOMINANCE: ${bgDom}`);
+
+  // ── GROUP 4: Style (LAST — must not dominate early tokens) ───────────────────
+  lines.push(`STYLE SUPPORT ONLY: ${styleLine || 'motivated cinematic lighting'}`);
   if (identityLine) lines.push(`IDENTITY LOCK: ${identityLine}`);
   lines.push(`REJECT IF: ${rejectIf.join('; ')}`);
 
@@ -240,6 +542,8 @@ function buildCanonicalPrompt(
 }
 
 // ─── VERIFIER ─────────────────────────────────────────────────────────────────
+// 8 dimensions (0–5 each = 40 max)
+// Pass: total ≥ 28, beat_match ≥ 4, non_generic ≥ 4, removal_value ≥ 3
 
 function scoreTokenOverlap(source: string, target: string): number {
   if (!source || !target) return 0;
@@ -255,6 +559,7 @@ export function verifyPrompt(
   shot: any,
   scene: any,
   mustShow: string[],
+  sdc?: ShotDifferenceContract,
 ): VerifierResult {
   const dims: VerifierDimension[] = [];
   const failReasons: string[] = [];
@@ -266,7 +571,7 @@ export function verifyPrompt(
   if (beatScore < 4) failReasons.push(`screenplay beat match too low (${beatScore}/5)`);
 
   // 2. Action visibility
-  const actionNowSection = prompt.match(/ACTION NOW:(.+)/)?.[1] || '';
+  const actionNowSection = prompt.match(/REQUIRED ACTION:(.+)/)?.[1] || prompt.match(/ACTION NOW:(.+)/)?.[1] || '';
   const hasStrongVerb = REQUIRED_ACTION_VERBS.test(actionNowSection);
   const hasGenericVerb = /\b(looks?|stands?|sits?|walks?|watches?|gazes?)\b/i.test(actionNowSection) && !hasStrongVerb;
   const actionScore = hasStrongVerb ? 5 : hasGenericVerb ? 2 : 3;
@@ -293,8 +598,7 @@ export function verifyPrompt(
   // 5. Threat/object correctness
   const size     = n(shot.shot_size);
   const fn       = n(shot.dramatic_function || shot.shot_type || '');
-  const synopsis = n(scene?.synopsis || '');
-  let threatScore = 3; // default neutral
+  let threatScore = 3;
   let threatReason = 'no specific object requirement for this shot type';
   if (size === 'ecu' || fn === 'insert') {
     const hasObjectDetail = /\b(hand|finger|glove|ring|key|phone|screen|weapon|gun|knife|token|seal|wound|scar|detail|device|button|trigger|dial|wire|cable|crack|chip|symbol|sign|label|badge|stamp|mark)\b/i.test(prompt);
@@ -321,21 +625,58 @@ export function verifyPrompt(
   dims.push({ name: 'non_genericity', score: nonGenericScore, reason: genericDetected ? 'GENERIC PORTRAIT COLLAPSE DETECTED — prompt describes banned visual pattern' : 'no banned generic patterns found' });
   if (genericDetected) failReasons.push('generic portrait collapse pattern detected');
 
+  // 8. ── SCREENPLAY REMOVAL VALUE (TASK 6) ─────────────────────────────────────
+  // "If this shot were removed, would the scene lose information, emotion, or transition value?"
+  // Score 5 = clearly yes, shot is uniquely irreplaceable
+  // Score 0 = clearly no, shot is cosmetic duplicate — FAIL
+  let removalScore = 3;
+  let removalReason = 'shot contributes standard scene value';
+  if (sdc) {
+    const hasNewInfo    = sdc.new_information_introduced && sdc.new_information_introduced.length > 20
+      && !sdc.new_information_introduced.includes('standard')
+      && !sdc.new_information_introduced.includes('general');
+    const hasDelta      = sdc.visual_delta_from_previous && !sdc.visual_delta_from_previous.includes('MINIMAL VISUAL DELTA')
+      && !sdc.visual_delta_from_previous.includes('Opens scene');
+    const isDuplicate   = sdc.duplicate_risk_score >= 70;
+    const isMinimalDelta = sdc.visual_delta_from_previous?.includes('MINIMAL VISUAL DELTA');
+
+    if (isDuplicate) {
+      removalScore  = 0;
+      removalReason = `COSMETIC DUPLICATE — ${sdc.duplicate_fail_reason || 'no new screenplay value added'}`;
+      failReasons.push(`shot removal value = 0: ${sdc.duplicate_fail_reason || 'cosmetic duplicate of previous shot'}`);
+    } else if (isMinimalDelta && !hasNewInfo) {
+      removalScore  = 1;
+      removalReason = 'minimal visual and narrative delta from previous shot — nearly redundant';
+      failReasons.push('shot adds minimal unique value (nearly redundant with previous shot)');
+    } else if (hasNewInfo && hasDelta) {
+      removalScore  = 5;
+      removalReason = `shot introduces: "${sdc.new_information_introduced.slice(0, 60)}" — scene would lose this information if removed`;
+    } else if (hasNewInfo || hasDelta) {
+      removalScore  = 4;
+      removalReason = hasNewInfo ? 'shot introduces new narrative information' : 'shot has clear visual delta from previous';
+    } else {
+      removalScore  = 2;
+      removalReason = 'unclear if shot adds unique value — verify narrative_function vs previous shot';
+    }
+  }
+  dims.push({ name: 'screenplay_removal_value', score: removalScore, reason: removalReason });
+
   const total = dims.reduce((acc, d) => acc + d.score, 0);
-  const beatMatch = dims.find(d => d.name === 'screenplay_beat_match')?.score ?? 0;
+  const beatMatch  = dims.find(d => d.name === 'screenplay_beat_match')?.score ?? 0;
   const nonGeneric = dims.find(d => d.name === 'non_genericity')?.score ?? 0;
-  const passes = total >= 24 && beatMatch >= 4 && nonGeneric >= 4;
+  const removal    = dims.find(d => d.name === 'screenplay_removal_value')?.score ?? 0;
+
+  // Pass requires: total ≥ 28/40, beat_match ≥ 4, non_generic ≥ 4, removal ≥ 3
+  const passes = total >= 28 && beatMatch >= 4 && nonGeneric >= 4 && removal >= 3;
 
   if (!passes && failReasons.length === 0) {
-    failReasons.push(`total score ${total}/35 below threshold 24`);
+    failReasons.push(`total score ${total}/40 below threshold 28`);
   }
 
   return { total, passes, dimensions: dims, fail_reasons: failReasons, generic_portrait_detected: genericDetected };
 }
 
 // ─── VIDEO GROUNDING ──────────────────────────────────────────────────────────
-// Builds a grounded video prompt from structured fields + canonical prompt data.
-// Used to replace Gemini's raw video_prompt when it is generic.
 
 export function buildGroundedVideoPrompt(
   shot: any,
@@ -381,9 +722,12 @@ export function buildGroundedVideoPrompt(
 /**
  * rewriteShot — the primary export.
  * Call this AFTER the arc enforcer has repaired structured fields.
- * It rebuilds image_prompt and video_prompt from structured truth,
- * verifies the result, and if it fails, tries once more with explicit
- * failure context injected into the prompt.
+ * It:
+ *   1. Computes the Shot Difference Contract (SDC)
+ *   2. Checks anti-redundancy (duplicate_risk_score)
+ *   3. Builds canonical prompt with SDC fields as first tokens (Task 3 priority order)
+ *   4. Verifies with 8-dimension verifier including screenplay removal value (Task 6)
+ *   5. Auto-rewrites once if score fails
  */
 export function rewriteShot(
   shot: any,
@@ -396,15 +740,17 @@ export function rewriteShot(
   const geminiProse = s(shot.image_prompt || '');
   const mustShow    = buildMustShow(shot, scene, arcIdx);
 
-  // ── Build canonical prompt (pass 1) ────────────────────────────────────────
-  let canonical = buildCanonicalPrompt(shot, scene, prevShot, characters, styleBible, arcIdx, mustShow);
-  let verifier  = verifyPrompt(canonical, shot, scene, mustShow);
+  // ── Compute Shot Difference Contract (TASK 1) ──────────────────────────────
+  const sdc = buildSDC(shot, scene, prevShot, arcIdx);
+
+  // ── Build canonical prompt (pass 1) — SDC fields FIRST (TASK 3) ────────────
+  let canonical = buildCanonicalPrompt(shot, scene, prevShot, characters, styleBible, arcIdx, mustShow, sdc);
+  let verifier  = verifyPrompt(canonical, shot, scene, mustShow, sdc);
   let rewrites  = 0;
 
   // ── Auto-rewrite if fails (pass 2) ─────────────────────────────────────────
   if (!verifier.passes) {
     rewrites = 1;
-    // Inject explicit failure context to make the second pass more targeted
     const failContext = verifier.fail_reasons.join('; ');
     const fixInstructions: string[] = [];
 
@@ -424,21 +770,24 @@ export function rewriteShot(
     if (objDim && objDim.score < 3) {
       fixInstructions.push('OBJECT MISSING — ECU/INSERT shot must name a specific physical object, body part, or detail');
     }
+    const removeDim = verifier.dimensions.find(d => d.name === 'screenplay_removal_value');
+    if (removeDim && removeDim.score < 3) {
+      fixInstructions.push(`REMOVAL VALUE LOW — this shot is near-duplicate of previous; must introduce: "${sdc.new_information_introduced.slice(0, 60)}"`);
+    }
 
-    // Rebuild with override action that strips generic language
+    // Rebuild with refined action
     const refinedAction = s(shot.action || '').replace(
       /\b(looks?\s+at|watches?|stands?\s+and\s+looks?|gazes?\s+at|scans?\s+the)\b[^.!?]*/gi,
       (match) => match.replace(/looks?\s+at|watches?|gazes?\s+at|scans?\s+the/, 'observes threat in').slice(0, 60)
     );
     const shotOverride = { ...shot, action: refinedAction };
 
-    canonical = buildCanonicalPrompt(shotOverride, scene, prevShot, characters, styleBible, arcIdx, mustShow);
+    canonical = buildCanonicalPrompt(shotOverride, scene, prevShot, characters, styleBible, arcIdx, mustShow, sdc);
     canonical += `\n\nREWRITE NOTE: ${fixInstructions.join(' | ')}`;
-    verifier = verifyPrompt(canonical, shotOverride, scene, mustShow);
+    verifier = verifyPrompt(canonical, shotOverride, scene, mustShow, sdc);
   }
 
   // ── Video grounding ─────────────────────────────────────────────────────────
-  // Only replace video_prompt if it's blank or generic
   const rawVideoPrompt = s(shot.video_prompt || shot.video_motion_prompt || '');
   const videoIsGeneric = !rawVideoPrompt || rawVideoPrompt.length < 40
     || /^(camera moves?|static shot|character (moves?|walks?|stands?))/i.test(rawVideoPrompt.trim());
@@ -461,5 +810,6 @@ export function rewriteShot(
     approved:              verifier.passes,
     rewrite_count:         rewrites,
     gemini_prose_discarded: geminiProseDifferent,
+    sdc,
   };
 }

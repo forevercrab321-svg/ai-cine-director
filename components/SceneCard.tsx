@@ -62,9 +62,24 @@ const ExpandIcon = () => (
 
 
 
-// ─── Shot Inspector Panel (Task 5 — Canonical Prompt Traceability) ────────────
-// Displayed below each shot card when verifier data is available.
-// Shows: screenplay beat · must-show checklist · verifier score · approved prompt.
+// ─── Narrative function badge colours ────────────────────────────────────────
+const NARRATIVE_FN_COLORS: Record<string, string> = {
+  establishing:    'bg-sky-900/40 text-sky-300 border-sky-500/30',
+  character_intro: 'bg-violet-900/40 text-violet-300 border-violet-500/30',
+  reaction:        'bg-amber-900/40 text-amber-300 border-amber-500/30',
+  reveal:          'bg-orange-900/40 text-orange-300 border-orange-500/30',
+  insert:          'bg-emerald-900/40 text-emerald-300 border-emerald-500/30',
+  confrontation:   'bg-red-900/40 text-red-300 border-red-500/30',
+  transition:      'bg-slate-700/40 text-slate-300 border-slate-500/30',
+  scale:           'bg-cyan-900/40 text-cyan-300 border-cyan-500/30',
+  aftermath:       'bg-rose-900/40 text-rose-300 border-rose-500/30',
+  decision:        'bg-yellow-900/40 text-yellow-300 border-yellow-500/30',
+  motion_bridge:   'bg-teal-900/40 text-teal-300 border-teal-500/30',
+};
+
+// ─── Shot Inspector Panel (Tasks 5 + SDC) ────────────────────────────────────
+// Displayed below each shot card when verifier / SDC data is available.
+// Shows: SDC contract · screenplay beat · must-show · verifier scores · prompt.
 const ShotInspectorPanel = ({ scene }: { scene: any }) => {
   const [expanded, setExpanded] = useState(false);
   const score    = scene.verifier_score ?? null;
@@ -76,11 +91,29 @@ const ShotInspectorPanel = ({ scene }: { scene: any }) => {
   const canonical   = scene.canonical_prompt || scene.image_prompt || '';
   const rewrites    = scene.rewrite_count ?? 0;
 
-  if (!beat && score == null) return null;
+  // SDC fields
+  const narrativeFn   = scene.narrative_function || '';
+  const newInfo       = scene.new_information_introduced || '';
+  const visualDelta   = scene.visual_delta_from_previous || '';
+  const dupRisk       = scene.duplicate_risk_score ?? null;
+  const dupFail       = scene.duplicate_fail_reason || '';
+  const isDuplicate   = dupRisk != null && dupRisk >= 70;
 
+  const hasSdc = !!(narrativeFn || newInfo || visualDelta || dupRisk != null);
+  if (!beat && score == null && !hasSdc) return null;
+
+  const scoreMax   = 40; // upgraded from 35 to 40 (8 dims × 5)
   const scoreColor = passes === true  ? 'text-emerald-400 border-emerald-500/40'
                    : passes === false ? 'text-red-400 border-red-500/40'
                    : 'text-slate-400 border-slate-600/40';
+
+  const dupColor = isDuplicate ? 'bg-red-900/40 border-red-500/40 text-red-300'
+                 : dupRisk != null && dupRisk >= 40 ? 'bg-amber-900/40 border-amber-500/30 text-amber-300'
+                 : 'bg-slate-800/40 border-slate-600/30 text-slate-400';
+
+  const fnColors = narrativeFn && NARRATIVE_FN_COLORS[narrativeFn]
+    ? NARRATIVE_FN_COLORS[narrativeFn]
+    : 'bg-slate-700/40 text-slate-300 border-slate-500/30';
 
   return (
     <div className="mt-3 border-t border-slate-800/40 pt-3">
@@ -88,16 +121,29 @@ const ShotInspectorPanel = ({ scene }: { scene: any }) => {
         onClick={() => setExpanded(v => !v)}
         className="flex items-center justify-between w-full text-left group"
       >
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-widest">
             Shot Inspector
           </span>
-          {score != null && (
-            <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border ${scoreColor}`}>
-              {score}/35 {passes === true ? '✓' : passes === false ? '✗' : ''}
+          {/* Narrative function badge */}
+          {narrativeFn && (
+            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase tracking-wider ${fnColors}`}>
+              {narrativeFn.replace(/_/g,' ')}
             </span>
           )}
-          {passes === false && (
+          {/* Verifier score */}
+          {score != null && (
+            <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border ${scoreColor}`}>
+              {score}/{scoreMax} {passes === true ? '✓' : passes === false ? '✗' : ''}
+            </span>
+          )}
+          {/* Duplicate risk badge */}
+          {dupRisk != null && (
+            <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded border ${dupColor}`}>
+              {isDuplicate ? '⚠ DUP' : `dup ${dupRisk}%`}
+            </span>
+          )}
+          {passes === false && !isDuplicate && (
             <span className="text-[10px] text-red-400 font-mono">FAILED</span>
           )}
           {rewrites > 0 && (
@@ -109,6 +155,68 @@ const ShotInspectorPanel = ({ scene }: { scene: any }) => {
 
       {expanded && (
         <div className="mt-2 space-y-2">
+
+          {/* ── SHOT DIFFERENCE CONTRACT (Task 1) ──────────────────────────── */}
+          {hasSdc && (
+            <div className="bg-slate-950/60 border border-slate-700/30 rounded p-2 space-y-1.5">
+              <p className="text-[9px] text-slate-500 font-mono uppercase tracking-widest">Shot Difference Contract</p>
+
+              {/* Narrative function */}
+              {narrativeFn && (
+                <div className="flex items-start gap-2">
+                  <span className="text-[9px] text-slate-500 font-mono w-20 shrink-0">FUNCTION</span>
+                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase ${fnColors}`}>
+                    {narrativeFn.replace(/_/g,' ')}
+                  </span>
+                </div>
+              )}
+
+              {/* New information introduced */}
+              {newInfo && (
+                <div className="flex items-start gap-2">
+                  <span className="text-[9px] text-slate-500 font-mono w-20 shrink-0 mt-0.5">NEW INFO</span>
+                  <p className="text-[10px] text-emerald-300/90 leading-snug">{newInfo}</p>
+                </div>
+              )}
+
+              {/* Visual delta from previous */}
+              {visualDelta && (
+                <div className="flex items-start gap-2">
+                  <span className={`text-[9px] font-mono w-20 shrink-0 mt-0.5 ${visualDelta.includes('MINIMAL') ? 'text-amber-500' : 'text-slate-500'}`}>
+                    Δ VISUAL
+                  </span>
+                  <p className={`text-[10px] leading-snug ${visualDelta.includes('MINIMAL') ? 'text-amber-300' : 'text-slate-300'}`}>
+                    {visualDelta}
+                  </p>
+                </div>
+              )}
+
+              {/* Duplicate risk score */}
+              {dupRisk != null && (
+                <div className="flex items-center gap-2">
+                  <span className="text-[9px] text-slate-500 font-mono w-20 shrink-0">DUP RISK</span>
+                  <div className="flex-1 bg-slate-800 rounded-full h-1.5 max-w-[120px]">
+                    <div
+                      className={`h-1.5 rounded-full transition-all ${isDuplicate ? 'bg-red-500' : dupRisk >= 40 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                      style={{ width: `${dupRisk}%` }}
+                    />
+                  </div>
+                  <span className={`text-[9px] font-mono ${isDuplicate ? 'text-red-400' : dupRisk >= 40 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                    {dupRisk}%
+                  </span>
+                  {isDuplicate && <span className="text-[9px] text-red-400 font-bold uppercase">COSMETIC DUPLICATE</span>}
+                </div>
+              )}
+
+              {/* Duplicate fail reason */}
+              {isDuplicate && dupFail && (
+                <div className="bg-red-950/40 border border-red-500/20 rounded p-1.5 mt-1">
+                  <p className="text-[9px] text-red-300">⚠ {dupFail}</p>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Screenplay Beat */}
           {beat && (
             <div className="bg-indigo-950/30 border border-indigo-500/20 rounded p-2">
@@ -135,17 +243,17 @@ const ShotInspectorPanel = ({ scene }: { scene: any }) => {
           {/* Verifier dimension scores */}
           {dims.length > 0 && (
             <div className="bg-slate-900/50 border border-slate-700/30 rounded p-2">
-              <p className="text-[9px] text-slate-500 font-mono uppercase tracking-widest mb-1.5">Verifier Scores</p>
+              <p className="text-[9px] text-slate-500 font-mono uppercase tracking-widest mb-1.5">Verifier Scores (8 dims / 40)</p>
               <div className="space-y-1">
                 {dims.map((d: any) => (
                   <div key={d.name} className="flex items-center gap-2">
                     <div className="flex gap-0.5">
-                      {[1,2,3,4,5].map(n => (
-                        <div key={n} className={`w-2 h-2 rounded-sm ${n <= d.score ? (d.score >= 4 ? 'bg-emerald-500' : d.score >= 2 ? 'bg-amber-500' : 'bg-red-500') : 'bg-slate-700'}`} />
+                      {[1,2,3,4,5].map(pip => (
+                        <div key={pip} className={`w-2 h-2 rounded-sm ${pip <= d.score ? (d.score >= 4 ? 'bg-emerald-500' : d.score >= 2 ? 'bg-amber-500' : 'bg-red-500') : 'bg-slate-700'}`} />
                       ))}
                     </div>
-                    <span className={`text-[9px] font-mono ${d.score >= 4 ? 'text-emerald-400' : d.score >= 2 ? 'text-amber-400' : 'text-red-400'}`}>
-                      {d.name.replace(/_/g,' ')}
+                    <span className={`text-[9px] font-mono ${d.score >= 4 ? 'text-emerald-400' : d.score >= 2 ? 'text-amber-400' : 'text-red-400'} ${d.name === 'screenplay_removal_value' ? 'font-bold' : ''}`}>
+                      {d.name === 'screenplay_removal_value' ? '★ ' : ''}{d.name.replace(/_/g,' ')}
                     </span>
                     {d.score < 4 && (
                       <span className="text-[9px] text-slate-500 italic truncate max-w-[180px]">{d.reason}</span>
@@ -170,7 +278,7 @@ const ShotInspectorPanel = ({ scene }: { scene: any }) => {
           {canonical && (
             <div className="bg-slate-950/60 border border-slate-700/20 rounded p-2">
               <p className="text-[9px] text-slate-500 font-mono uppercase tracking-widest mb-1">
-                Approved Prompt Sent to Model
+                Canonical Prompt (SDC-Priority Order)
               </p>
               <pre className="text-[9px] text-slate-400 font-mono whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto">
                 {canonical}
@@ -616,8 +724,8 @@ const SceneCard: React.FC<SceneCardProps> = ({
         </p>
       </div>
 
-      {/* ── Shot Inspector (Task 5: Canonical Prompt Traceability) ─────────── */}
-      {(scene.screenplay_beat || scene.verifier_score != null) && (
+      {/* ── Shot Inspector (Tasks 5 + SDC: Traceability + Shot Difference Contract) ─ */}
+      {(scene.screenplay_beat || scene.verifier_score != null || scene.narrative_function || scene.duplicate_risk_score != null) && (
         <ShotInspectorPanel scene={scene} />
       )}
     </div>

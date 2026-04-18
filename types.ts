@@ -13,6 +13,20 @@ export type AnchorMode = 'off' | 'optional' | 'required';
 export type RealismMode = 'stylized' | 'cinematic' | 'photoreal';
 
 export type ShotStatus = 'draft' | 'generated' | 'locked';
+
+// ── Shot Difference Contract narrative function enum ──────────────────────────
+export type NarrativeFunction =
+  | 'establishing'    // Reveals world/location/scale — audience asks "where are we?"
+  | 'character_intro' // Introduces or re-introduces a character's intent/state
+  | 'reaction'        // Shows a character's internal response to a prior event
+  | 'reveal'          // Discloses new information the audience didn't have before
+  | 'insert'          // Close detail that punctuates, proves, or escalates
+  | 'confrontation'   // Two or more forces directly oppose each other
+  | 'transition'      // Bridges location/time/tone between beats
+  | 'scale'           // Establishes size relationship (character vs. world/threat)
+  | 'aftermath'       // Shows result or consequence of a prior action
+  | 'decision'        // Character at a fork — choice visible in body language
+  | 'motion_bridge';  // Connects motion states (running→stopping, falling→landing)
 export type CameraType = 'wide' | 'medium' | 'close' | 'ecu' | 'over-shoulder' | 'pov' | 'aerial' | 'two-shot';
 export type CameraMovement = 'static' | 'push-in' | 'pull-out' | 'pan-left' | 'pan-right' | 'tilt-up' | 'tilt-down' | 'dolly' | 'tracking' | 'crane' | 'handheld' | 'steadicam' | 'whip-pan' | 'zoom';
 export type TimeOfDay = 'dawn' | 'morning' | 'noon' | 'afternoon' | 'golden-hour' | 'dusk' | 'night' | 'blue-hour';
@@ -111,13 +125,24 @@ export interface Shot {
   canonical_prompt?:      string;    // The approved prompt actually sent to image model
   screenplay_beat?:       string;    // One-line beat: what must be visible in this frame
   must_show?:             string[];  // Checklist: concrete visible proof required
-  verifier_score?:        number;    // 0-35 faithfulness score
-  verifier_pass?:         boolean;   // true if score ≥ 24 AND beat_match ≥ 4 AND non_generic ≥ 4
+  verifier_score?:        number;    // 0-40 faithfulness score (7 dims × 5 + removal value)
+  verifier_pass?:         boolean;   // true if score ≥ 28 AND beat_match ≥ 4 AND non_generic ≥ 4
   verifier_fail_reasons?: string[];  // Human-readable fail reasons for UI
   verifier_dimensions?:   Array<{ name: string; score: number; reason: string }>;
   rewrite_count?:         number;    // How many rewrite passes were needed (0 or 1)
   // Video grounding fields
   video_approved?:        boolean;   // false = block batch video gen for this shot
+
+  // ── Shot Difference Contract (SDC) — distinct screenplay-unit enforcement ────
+  // Computed by lib/canonicalPromptRewriter.ts, persisted to DB.
+  narrative_function?:                NarrativeFunction; // Enum: role this shot plays
+  new_information_introduced?:        string;  // What new story info this shot adds
+  required_visible_action?:           string;  // Specific physical action that must be visible
+  forbidden_repetition_from_previous?: string[]; // What must NOT re-appear from prev shot
+  visual_delta_from_previous?:        string;  // How this shot differs visually from prev
+  // ── Anti-redundancy (Task 2) ─────────────────────────────────────────────────
+  duplicate_risk_score?:              number;  // 0-100: ≥70 = cosmetic duplicate = FAIL
+  duplicate_fail_reason?:             string;  // Human-readable reason if duplicate
 
   // Backward-compatible aliases used by existing components/routes
   scene_setting?: string;

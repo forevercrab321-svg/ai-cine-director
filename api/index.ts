@@ -2841,17 +2841,40 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
 
                         // Replace image_prompt with the approved canonical version
                         shot.image_prompt        = result.canonical_prompt;
-                        shot.video_prompt        = shot.video_prompt; // video_prompt already updated by rewriteShot if generic
+                        // video_prompt already updated by rewriteShot if generic
 
                         // Attach traceability fields (stored in shot, flow through to Scene)
-                        shot.canonical_prompt    = result.canonical_prompt;
-                        shot.screenplay_beat     = result.screenplay_beat;
-                        shot.must_show           = result.must_show;
-                        shot.verifier_score      = result.verifier.total;
-                        shot.verifier_pass       = result.approved;
-                        shot.verifier_dimensions = result.verifier.dimensions;
+                        shot.canonical_prompt      = result.canonical_prompt;
+                        shot.screenplay_beat       = result.screenplay_beat;
+                        shot.must_show             = result.must_show;
+                        shot.verifier_score        = result.verifier.total;
+                        shot.verifier_pass         = result.approved;
+                        shot.verifier_dimensions   = result.verifier.dimensions;
                         shot.verifier_fail_reasons = result.verifier.fail_reasons;
-                        shot.rewrite_count       = result.rewrite_count;
+                        shot.rewrite_count         = result.rewrite_count;
+
+                        // ── SDC fields (TASK 1) — Shot Difference Contract ──────────────
+                        shot.narrative_function                = result.sdc.narrative_function;
+                        shot.new_information_introduced        = result.sdc.new_information_introduced;
+                        shot.required_visible_action           = result.sdc.required_visible_action;
+                        shot.forbidden_repetition_from_previous = result.sdc.forbidden_repetition_from_previous;
+                        shot.visual_delta_from_previous        = result.sdc.visual_delta_from_previous;
+                        shot.duplicate_risk_score              = result.sdc.duplicate_risk_score;
+                        shot.duplicate_fail_reason             = result.sdc.duplicate_fail_reason;
+
+                        // ── Anti-redundancy hard gate (TASK 2) ───────────────────────────
+                        if (result.sdc.duplicate_risk_score >= 70) {
+                            shot.verifier_pass = false;
+                            shot.verifier_fail_reasons = [
+                                ...(shot.verifier_fail_reasons || []),
+                                `DUPLICATE SHOT [risk=${result.sdc.duplicate_risk_score}]: ${result.sdc.duplicate_fail_reason}`,
+                            ];
+                            logger.gemini.warn('duplicate_shot_blocked', {
+                                scene: i + 1, shot: sIdx + 1,
+                                risk: result.sdc.duplicate_risk_score,
+                                reason: result.sdc.duplicate_fail_reason,
+                            }, traceId);
+                        }
 
                         if (!result.approved) {
                             logger.gemini.warn('canonical_verify_fail', {
@@ -2859,6 +2882,7 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
                                 score: result.verifier.total,
                                 fails: result.verifier.fail_reasons,
                                 rewrites: result.rewrite_count,
+                                duplicateRisk: result.sdc.duplicate_risk_score,
                             }, traceId);
                         }
                         if (result.gemini_prose_discarded) {
@@ -5430,14 +5454,29 @@ app.post('/api/shots/rewrite-canonical', requireAuth, async (req: any, res: any)
                     return;
                 }
 
+                // Hard anti-redundancy gate
+                const isDuplicate = result.sdc?.duplicate_risk_score >= 70;
+                const retrofitPass = result.approved && !isDuplicate;
+                const allFailReasons = isDuplicate
+                    ? [...result.verifier.fail_reasons, `DUPLICATE SHOT [risk=${result.sdc.duplicate_risk_score}]: ${result.sdc.duplicate_fail_reason}`]
+                    : result.verifier.fail_reasons;
+
                 updates.push({
                     id:               rawShot.id,
                     image_prompt:     result.canonical_prompt,
                     canonical_prompt: result.canonical_prompt,
                     verifier_score:   result.verifier.total,
-                    verifier_pass:    result.approved,
+                    verifier_pass:    retrofitPass,
                     must_show_json:   JSON.stringify(result.must_show),
                     screenplay_beat:  result.screenplay_beat,
+                    // SDC fields
+                    narrative_function:         result.sdc?.narrative_function         || null,
+                    new_information_introduced: result.sdc?.new_information_introduced || null,
+                    required_visible_action:    result.sdc?.required_visible_action    || null,
+                    forbidden_repetition_json:  result.sdc ? JSON.stringify(result.sdc.forbidden_repetition_from_previous) : null,
+                    visual_delta_from_previous: result.sdc?.visual_delta_from_previous || null,
+                    duplicate_risk_score:       result.sdc?.duplicate_risk_score       ?? null,
+                    duplicate_fail_reason:      result.sdc?.duplicate_fail_reason      || null,
                 });
 
                 auditRows.push({
@@ -5448,11 +5487,16 @@ app.post('/api/shots/rewrite-canonical', requireAuth, async (req: any, res: any)
                     old_prompt_summary:     oldPromptSummary,
                     new_canonical_prompt:   result.canonical_prompt.slice(0, 200),
                     verifier_score:         result.verifier.total,
-                    pass:                   result.approved,
-                    fail_reasons:           result.verifier.fail_reasons,
+                    pass:                   retrofitPass,
+                    fail_reasons:           allFailReasons,
                     rewrite_count:          result.rewrite_count,
-                    regenerate_required:    !result.approved,
-                    status:                 result.approved ? 'PASS' : 'FAIL',
+                    duplicate_risk_score:   result.sdc?.duplicate_risk_score,
+                    duplicate_fail_reason:  result.sdc?.duplicate_fail_reason,
+                    narrative_function:     result.sdc?.narrative_function,
+                    new_information:        result.sdc?.new_information_introduced?.slice(0, 100),
+                    visual_delta:           result.sdc?.visual_delta_from_previous?.slice(0, 80),
+                    regenerate_required:    !retrofitPass,
+                    status:                 retrofitPass ? 'PASS' : 'FAIL',
                 });
             });
         }

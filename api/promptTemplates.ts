@@ -449,7 +449,43 @@ DO NOT humanise faces. Cartoon/anime/animal anatomy must be preserved exactly.
    Every dialogue line must pass this test: could it be cut without losing
    plot? If yes — cut it. Only keep lines that are irreplaceable.
 
-⑫ IMAGE PROMPT — VISUAL DELTA FIRST, CHARACTER DESCRIPTION LAST:
+⑫ SHOT DIFFERENCE CONTRACT — MANDATORY FOR EVERY SHOT
+   ═══════════════════════════════════════════════════════════════════
+   Every shot MUST answer these 5 questions differently from the previous shot.
+   Shots that cannot answer all 5 uniquely are FAILURES and must be regenerated.
+
+   REQUIRED narrative_function enum (pick exactly one per shot):
+     establishing    — reveals world/location/scale
+     character_intro — shows character intent/state
+     reaction        — character internal response to prior event
+     reveal          — discloses new information to audience
+     insert          — close detail that proves or escalates
+     confrontation   — two or more forces directly oppose
+     transition      — bridges location/time/tone
+     scale           — character-vs-world size relationship
+     aftermath       — shows result of prior action
+     decision        — character at a choice fork
+     motion_bridge   — connects motion states
+
+   For each shot you MUST provide:
+   • narrative_function: one of the enum values above
+   • new_information_introduced: ONE specific sentence — what story information does this
+     shot add that was NOT present in any previous shot? Must be concrete.
+     ✗ WRONG: "continues the scene"
+     ✓ CORRECT: "Reveals Godzilla's shadow over the eastern district for the first time"
+   • required_visible_action: what SPECIFIC physical action must be visible in the frame?
+     ✗ WRONG: "character in shot"
+     ✓ CORRECT: "Spider-Man's left hand gripping traffic light pole, knuckles whitening"
+   • forbidden_repetition_from_previous_shot: list of 2-3 things that must NOT repeat
+     from the immediately preceding shot (shot_size, angle, emotional_beat, subject_position)
+   • visual_delta_from_previous_shot: how does this shot LOOK different? Name the specific
+     dimensions: size change, angle change, height change, background change, etc.
+
+   MANDATORY SELF-CHECK before outputting:
+   "If this shot were removed, would the scene lose information, emotion, or transition value?"
+   If the honest answer is "no" → you MUST redesign the shot. Cosmetic variants are failures.
+
+⑬ IMAGE PROMPT — VISUAL DELTA FIRST, CHARACTER DESCRIPTION LAST:
    MANDATORY FORMAT — first line must be:
      "[SHOT_SIZE | ANGLE | subject_position] unique physical action + micro-expression"
    Example (correct):
@@ -516,7 +552,12 @@ DO NOT humanise faces. Cartoon/anime/animal anatomy must be preserved exactly.
       "audio_notes": "Diegetic sound design for this shot (footsteps on surface type, ambient room tone, practical sounds, music swell if applicable)",
       "transition": "cut|dissolve|fade|match_cut|smash_cut|wipe",
       "transition_rationale": "Why this transition is the right edit choice here",
-      "continuity_notes": "What must be preserved from the previous shot into this one"
+      "continuity_notes": "What must be preserved from the previous shot into this one",
+      "narrative_function": "establishing|character_intro|reaction|reveal|insert|confrontation|transition|scale|aftermath|decision|motion_bridge",
+      "new_information_introduced": "One concrete sentence: what story information does this shot add that was absent from all previous shots?",
+      "required_visible_action": "Specific physical action or detail that MUST be visible — not generic presence",
+      "forbidden_repetition_from_previous_shot": ["shot dimension that must NOT repeat from previous shot", "..."],
+      "visual_delta_from_previous_shot": "Specific description of how this shot looks different: size/angle/height/position/background changes named explicitly"
     }
   ]
 }`;
