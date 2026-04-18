@@ -2810,11 +2810,81 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
                 }
             }
 
+            // ── CANONICAL PROMPT REWRITER ─────────────────────────────────────────
+            // Runs AFTER arc enforcer + contrast validator.
+            // Discards Gemini's raw image_prompt prose (untrusted).
+            // Builds canonical prompt from structured fields and verifies it.
+            // On fail: auto-rewrites once with explicit failure context.
+            // Attaches canonical_prompt, screenplay_beat, must_show, verifier_score
+            // to each shot object so it flows to storyboardService and the UI.
+            let rewriterModule: any;
+            try {
+                rewriterModule = await import('../lib/canonicalPromptRewriter.js');
+            } catch (rwErr: any) {
+                logger.gemini.warn('canonical_rewriter_import_failed', { err: String(rwErr.message) }, traceId);
+            }
+
+            if (rewriterModule?.rewriteShot) {
+                const { rewriteShot } = rewriterModule;
+                const characterBible: any[] = parsedBrain.character_bible || [];
+                const styleBible: any       = parsedBrain.style_bible     || {};
+
+                shots.forEach((shot: any, sIdx: number) => {
+                    const prevShot  = sIdx > 0 ? shots[sIdx - 1] : null;
+                    const arcIdx    = Math.min(sIdx, 3); // arc position 0-3
+                    const shotChars = Array.isArray(shot.characters)
+                        ? shot.characters.map((cid: string) => characterBible.find((c: any) => c.character_id === cid || c.name === cid)).filter(Boolean)
+                        : [];
+
+                    try {
+                        const result = rewriteShot(shot, scn, prevShot, shotChars, styleBible, arcIdx);
+
+                        // Replace image_prompt with the approved canonical version
+                        shot.image_prompt        = result.canonical_prompt;
+                        shot.video_prompt        = shot.video_prompt; // video_prompt already updated by rewriteShot if generic
+
+                        // Attach traceability fields (stored in shot, flow through to Scene)
+                        shot.canonical_prompt    = result.canonical_prompt;
+                        shot.screenplay_beat     = result.screenplay_beat;
+                        shot.must_show           = result.must_show;
+                        shot.verifier_score      = result.verifier.total;
+                        shot.verifier_pass       = result.approved;
+                        shot.verifier_dimensions = result.verifier.dimensions;
+                        shot.verifier_fail_reasons = result.verifier.fail_reasons;
+                        shot.rewrite_count       = result.rewrite_count;
+
+                        if (!result.approved) {
+                            logger.gemini.warn('canonical_verify_fail', {
+                                scene: i + 1, shot: sIdx + 1,
+                                score: result.verifier.total,
+                                fails: result.verifier.fail_reasons,
+                                rewrites: result.rewrite_count,
+                            }, traceId);
+                        }
+                        if (result.gemini_prose_discarded) {
+                            logger.gemini.debug('gemini_prose_discarded', { scene: i + 1, shot: sIdx + 1 }, traceId);
+                        }
+                    } catch (rewriteErr: any) {
+                        logger.gemini.warn('canonical_rewrite_error', { scene: i + 1, shot: sIdx + 1, err: String(rewriteErr.message) }, traceId);
+                    }
+                });
+
+                const passCount = shots.filter((s: any) => s.verifier_pass).length;
+                logger.gemini.debug('canonical_rewrite_summary', {
+                    scene: i + 1,
+                    total: shots.length,
+                    passed: passCount,
+                    failed: shots.length - passCount,
+                    scores: shots.map((s: any) => s.verifier_score ?? '?').join('/'),
+                }, traceId);
+            }
+
             logger.gemini.debug('shot_planner_result', {
                 scene: i + 1,
                 shotsCount: shots.length,
                 shotSizes: shots.map((s: any) => s.shot_size || '?').join('/'),
                 arcChecked: true,
+                canonicalRewrite: !!rewriterModule?.rewriteShot,
                 usedFallback: !shotResponse || !Array.isArray((parsedShots as any)?.shots) || false,
             }, traceId);
 

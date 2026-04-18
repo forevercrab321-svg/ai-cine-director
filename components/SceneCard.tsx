@@ -62,6 +62,127 @@ const ExpandIcon = () => (
 
 
 
+// ─── Shot Inspector Panel (Task 5 — Canonical Prompt Traceability) ────────────
+// Displayed below each shot card when verifier data is available.
+// Shows: screenplay beat · must-show checklist · verifier score · approved prompt.
+const ShotInspectorPanel = ({ scene }: { scene: any }) => {
+  const [expanded, setExpanded] = useState(false);
+  const score    = scene.verifier_score ?? null;
+  const passes   = scene.verifier_pass  ?? null;
+  const beat     = scene.screenplay_beat || '';
+  const mustShow = Array.isArray(scene.must_show) ? scene.must_show : [];
+  const dims     = Array.isArray(scene.verifier_dimensions) ? scene.verifier_dimensions : [];
+  const failReasons = Array.isArray(scene.verifier_fail_reasons) ? scene.verifier_fail_reasons : [];
+  const canonical   = scene.canonical_prompt || scene.image_prompt || '';
+  const rewrites    = scene.rewrite_count ?? 0;
+
+  if (!beat && score == null) return null;
+
+  const scoreColor = passes === true  ? 'text-emerald-400 border-emerald-500/40'
+                   : passes === false ? 'text-red-400 border-red-500/40'
+                   : 'text-slate-400 border-slate-600/40';
+
+  return (
+    <div className="mt-3 border-t border-slate-800/40 pt-3">
+      <button
+        onClick={() => setExpanded(v => !v)}
+        className="flex items-center justify-between w-full text-left group"
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-widest">
+            Shot Inspector
+          </span>
+          {score != null && (
+            <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border ${scoreColor}`}>
+              {score}/35 {passes === true ? '✓' : passes === false ? '✗' : ''}
+            </span>
+          )}
+          {passes === false && (
+            <span className="text-[10px] text-red-400 font-mono">FAILED</span>
+          )}
+          {rewrites > 0 && (
+            <span className="text-[10px] text-amber-400 font-mono">↺ rewritten</span>
+          )}
+        </div>
+        <span className="text-slate-600 text-[10px]">{expanded ? '▲' : '▼'}</span>
+      </button>
+
+      {expanded && (
+        <div className="mt-2 space-y-2">
+          {/* Screenplay Beat */}
+          {beat && (
+            <div className="bg-indigo-950/30 border border-indigo-500/20 rounded p-2">
+              <p className="text-[9px] text-indigo-400 font-mono uppercase tracking-widest mb-1">Screenplay Beat</p>
+              <p className="text-[11px] text-slate-300 leading-snug">{beat}</p>
+            </div>
+          )}
+
+          {/* Must-show checklist */}
+          {mustShow.length > 0 && (
+            <div className="bg-slate-900/50 border border-slate-700/30 rounded p-2">
+              <p className="text-[9px] text-slate-500 font-mono uppercase tracking-widest mb-1">Must Show</p>
+              <ul className="space-y-0.5">
+                {mustShow.map((item: string, idx: number) => (
+                  <li key={idx} className="flex items-start gap-1.5">
+                    <span className="text-emerald-500 text-[10px] mt-0.5">◆</span>
+                    <span className="text-[10px] text-slate-300">{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Verifier dimension scores */}
+          {dims.length > 0 && (
+            <div className="bg-slate-900/50 border border-slate-700/30 rounded p-2">
+              <p className="text-[9px] text-slate-500 font-mono uppercase tracking-widest mb-1.5">Verifier Scores</p>
+              <div className="space-y-1">
+                {dims.map((d: any) => (
+                  <div key={d.name} className="flex items-center gap-2">
+                    <div className="flex gap-0.5">
+                      {[1,2,3,4,5].map(n => (
+                        <div key={n} className={`w-2 h-2 rounded-sm ${n <= d.score ? (d.score >= 4 ? 'bg-emerald-500' : d.score >= 2 ? 'bg-amber-500' : 'bg-red-500') : 'bg-slate-700'}`} />
+                      ))}
+                    </div>
+                    <span className={`text-[9px] font-mono ${d.score >= 4 ? 'text-emerald-400' : d.score >= 2 ? 'text-amber-400' : 'text-red-400'}`}>
+                      {d.name.replace(/_/g,' ')}
+                    </span>
+                    {d.score < 4 && (
+                      <span className="text-[9px] text-slate-500 italic truncate max-w-[180px]">{d.reason}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Fail reasons */}
+          {failReasons.length > 0 && (
+            <div className="bg-red-950/30 border border-red-500/20 rounded p-2">
+              <p className="text-[9px] text-red-400 font-mono uppercase tracking-widest mb-1">Fail Reasons</p>
+              {failReasons.map((r: string, idx: number) => (
+                <p key={idx} className="text-[10px] text-red-300">• {r}</p>
+              ))}
+            </div>
+          )}
+
+          {/* Approved canonical prompt */}
+          {canonical && (
+            <div className="bg-slate-950/60 border border-slate-700/20 rounded p-2">
+              <p className="text-[9px] text-slate-500 font-mono uppercase tracking-widest mb-1">
+                Approved Prompt Sent to Model
+              </p>
+              <pre className="text-[9px] text-slate-400 font-mono whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto">
+                {canonical}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // Simulated terminal output logs
 const LOADING_LOGS = [
   "正在初始化生成上下文...",
@@ -472,6 +593,11 @@ const SceneCard: React.FC<SceneCardProps> = ({
           "{scene.visual_description}"
         </p>
       </div>
+
+      {/* ── Shot Inspector (Task 5: Canonical Prompt Traceability) ─────────── */}
+      {(scene.screenplay_beat || scene.verifier_score != null) && (
+        <ShotInspectorPanel scene={scene} />
+      )}
     </div>
   );
 };

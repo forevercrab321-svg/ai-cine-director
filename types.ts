@@ -105,6 +105,20 @@ export interface Shot {
   // Pipeline control flags
   is_first_shot_in_scene?: boolean;
 
+  // ── Canonical Prompt Rewriter output (Task 5 traceability) ──────────────────
+  // Set by lib/canonicalPromptRewriter.ts after post-planner rewrite.
+  // Used by UI to display inspector panel per shot card.
+  canonical_prompt?:      string;    // The approved prompt actually sent to image model
+  screenplay_beat?:       string;    // One-line beat: what must be visible in this frame
+  must_show?:             string[];  // Checklist: concrete visible proof required
+  verifier_score?:        number;    // 0-35 faithfulness score
+  verifier_pass?:         boolean;   // true if score ≥ 24 AND beat_match ≥ 4 AND non_generic ≥ 4
+  verifier_fail_reasons?: string[];  // Human-readable fail reasons for UI
+  verifier_dimensions?:   Array<{ name: string; score: number; reason: string }>;
+  rewrite_count?:         number;    // How many rewrite passes were needed (0 or 1)
+  // Video grounding fields
+  video_approved?:        boolean;   // false = block batch video gen for this shot
+
   // Backward-compatible aliases used by existing components/routes
   scene_setting?: string;
   visual_description?: string;
