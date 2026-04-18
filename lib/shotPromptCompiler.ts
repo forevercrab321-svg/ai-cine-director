@@ -25,8 +25,41 @@
 
 type Primitive = string | number | boolean | null | undefined;
 
-const norm = (value: Primitive): string =>
-  String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();
+/**
+ * safeString — converts ANY runtime value to a clean string.
+ * Eliminates [object Object] from ALL prompt output.
+ * - null/undefined → ''
+ * - string         → as-is
+ * - number/boolean → String()
+ * - array          → recursively join non-empty string leaves
+ * - object         → extract first meaningful text field, or join string values
+ */
+const safeString = (value: any): string => {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) {
+    return value
+      .map(v => safeString(v))
+      .filter(s => s && s !== '[object Object]')
+      .join(', ');
+  }
+  if (typeof value === 'object') {
+    // Try common text-bearing keys first
+    for (const k of ['text', 'value', 'description', 'name', 'label', 'content', 'line', 'title', 'summary']) {
+      if (typeof value[k] === 'string' && value[k].trim()) return value[k].trim();
+    }
+    // Join all string leaf values (e.g. {primary: "#FF69B4", secondary: "#00FFFF"})
+    const strLeaves = Object.values(value)
+      .filter(v => typeof v === 'string')
+      .join(', ');
+    return strLeaves || '';
+  }
+  return '';
+};
+
+const norm = (value: any): string =>
+  safeString(value).toLowerCase().replace(/\s+/g, ' ').trim();
 
 const normalizeTextForSim = (value: string): string =>
   norm(value).replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
@@ -45,16 +78,31 @@ const jaccard = (a: Set<string>, b: Set<string>): number => {
 };
 
 const toListString = (value: any): string => {
-  if (Array.isArray(value)) return value.map((v) => norm(v)).filter(Boolean).join(', ');
-  return norm(value);
+  if (Array.isArray(value)) return value.map((v) => safeString(v)).filter(s => s && s !== '[object Object]').join(', ');
+  return safeString(value);
 };
 
+/**
+ * getField — safely extracts a string value from shot or scene.
+ * Uses safeString() so arrays and objects never produce [object Object].
+ * Skips values that are empty or literally "[object Object]".
+ */
 const getField = (shot: any, scene: any, candidates: string[], fallback = ''): string => {
   for (const key of candidates) {
-    if (shot?.[key] != null && String(shot[key]).trim()) return String(shot[key]).trim();
-    if (scene?.[key] != null && String(scene[key]).trim()) return String(scene[key]).trim();
+    const sv = shot?.[key];
+    if (sv != null) {
+      const s = safeString(sv).trim();
+      if (s && s !== '[object Object]') return s;
+    }
+    const sc = scene?.[key];
+    if (sc != null) {
+      const s = safeString(sc).trim();
+      if (s && s !== '[object Object]') return s;
+    }
   }
-  return fallback;
+  // Fallback: also safeString it in case caller passed an object
+  const f = safeString(fallback).trim();
+  return (f && f !== '[object Object]') ? f : '';
 };
 
 const clamp = (s: string, max: number): string =>
@@ -153,40 +201,132 @@ export interface CinematicFingerprint {
   emotional_beat:   string;   // from shot.emotional_beat / emotion
 }
 
-function parseShotSize(shotType: string, cameraAngle: string, cameraFraming: string): string {
+function parseShotSize(
+  shotType: string,
+  cameraAngle: string,
+  cameraFraming: string,
+  shotNumberInScene?: number,    // 1-based position within scene, for fallback heuristic
+  explicitShotSize?: string,     // shot.shot_size field from new planner
+): string {
+  // Prefer the explicit shot_size field from the new shot planner
+  if (explicitShotSize) {
+    const e = explicitShotSize.toUpperCase().trim();
+    if (['ECU','CU','MCU','MS','WS','EWS'].includes(e)) return e;
+  }
+
   const s = `${shotType} ${cameraAngle} ${cameraFraming}`.toLowerCase();
-  if (s.match(/\b(ecu|extreme[\s-]?close|extreme[\s-]?cu)\b/))       return 'ECU';
-  if (s.match(/\b(close[\s-]?up|close[\s-]?shot|\bcu\b)\b/))        return 'CU';
-  if (s.match(/\b(medium[\s-]?close|mcu|bust[\s-]?shot)\b/))        return 'MCU';
+
+  // Explicit size tokens
+  if (s.match(/\b(ecu|extreme[\s-]?close[\s-]?up|extreme[\s-]?cu)\b/))  return 'ECU';
+  if (s.match(/\b(close[\s-]?up|\bcu\b)\b/))                             return 'CU';
+  if (s.match(/\b(medium[\s-]?close|mcu|bust[\s-]?shot)\b/))            return 'MCU';
   if (s.match(/\b(medium[\s-]?shot|medium[\s-]?wide|\bms\b|waist|knee)\b/)) return 'MS';
+  if (s.match(/\b(extreme[\s-]?wide|aerial|drone|\bews\b)\b/))           return 'EWS';
   if (s.match(/\b(wide[\s-]?shot|full[\s-]?shot|long[\s-]?shot|\bws\b|establishing|master)\b/)) return 'WS';
-  if (s.match(/\b(extreme[\s-]?wide|aerial|drone|\bews\b)\b/))       return 'EWS';
-  if (s.match(/\b(close)\b/))     return 'CU';
-  if (s.match(/\b(wide|establish)\b/)) return 'WS';
-  return 'MS';
+
+  // Infer from composition/framing content (handles "medium" without "shot" suffix)
+  if (s.match(/\bshallow\s+depth|isolate[sd]?\s+\w+\s+from\b/))         return 'MCU'; // shallow DoF = closer
+  if (s.match(/\bfills?\s+(the\s+)?entire\s+frame|frame\s+filling\b/))  return 'ECU'; // fill frame = ECU
+  if (s.match(/\bfull\s+body|head\s+to\s+toe\b/))                       return 'WS';
+  // NOTE: "two characters" / "two-shot" removed — caused S1.1 and S1.3 to both
+  // resolve WS, collapsing unique shot sizes to 2/4. Position heuristic handles variety.
+  if (s.match(/\bmonster|creature|giant|kaiju\b/))                       return 'WS'; // scale shots = wide
+  if (s.match(/\bclose\b/))                                              return 'CU';
+  if (s.match(/\bwide|establish\b/))                                     return 'WS';
+
+  // SHOT-POSITION HEURISTIC FALLBACK:
+  // When the shot data carries no size signal, force variety by scene position.
+  // This guarantees no 3 consecutive MS shots even with flat legacy data.
+  if (shotNumberInScene != null) {
+    const pos = ((shotNumberInScene - 1) % 4);
+    return pos === 0 ? 'WS' : pos === 1 ? 'MS' : pos === 2 ? 'CU' : 'MCU';
+  }
+
+  return 'MS'; // absolute last resort
 }
 
-function parseCameraAngle(cameraAngle: string, cameraFraming: string): string {
+function parseCameraAngle(
+  cameraAngle: string,
+  cameraFraming: string,
+  shotNumberInScene?: number,
+): string {
   const s = `${cameraAngle} ${cameraFraming}`.toLowerCase();
-  if (s.match(/\blow[\s-]?angle\b/))     return 'LOW-ANGLE';
-  if (s.match(/\bhigh[\s-]?angle\b/))    return 'HIGH-ANGLE';
-  if (s.match(/\bover[\s-]?shoulder\b/)) return 'OTS';
-  if (s.match(/\bpov\b/))                return 'POV';
-  if (s.match(/\bdutch\b/))              return 'DUTCH';
+  if (s.match(/\blow[\s-]?angle\b/))      return 'LOW-ANGLE';
+  if (s.match(/\bhigh[\s-]?angle\b/))     return 'HIGH-ANGLE';
+  if (s.match(/\bover[\s-]?shoulder\b/))  return 'OTS';
+  if (s.match(/\bpov\b/))                 return 'POV';
+  if (s.match(/\bdutch\b/))               return 'DUTCH';
   if (s.match(/\bbird[\s-]?eye|aerial\b/)) return 'BIRD-EYE';
-  if (s.match(/\bprofile\b/))            return 'PROFILE';
+  if (s.match(/\bprofile\b/))             return 'PROFILE';
+
+  // Infer from framing content
+  if (s.match(/\bconverg|looming|tower|loom(s)?\s+above\b/)) return 'LOW-ANGLE';
+  if (s.match(/\bbelow|looking\s+down|overhead\b/))          return 'HIGH-ANGLE';
+
+  // Position-based angle variety when data is flat
+  if (shotNumberInScene != null) {
+    const pos = ((shotNumberInScene - 1) % 4);
+    // Alternate: EYE-LEVEL → LOW-ANGLE → EYE-LEVEL → HIGH-ANGLE
+    return pos === 0 ? 'EYE-LEVEL' : pos === 1 ? 'LOW-ANGLE' : pos === 2 ? 'EYE-LEVEL' : 'HIGH-ANGLE';
+  }
+
   return 'EYE-LEVEL';
 }
 
 function parseSubjectPosition(blocking: string, cameraFraming: string): string {
   const s = `${blocking} ${cameraFraming}`.toLowerCase();
-  if (s.match(/\bright\s+third|right\s+side|screen\s+right|on\s+the\s+right\b/)) return 'frame-right';
-  if (s.match(/\bleft\s+third|left\s+side|screen\s+left|on\s+the\s+left\b/))    return 'frame-left';
-  if (s.match(/\bsymmet|cent(er|re)|mid(dle)?[\s-]?frame\b/))                   return 'centered';
-  if (s.match(/\bbackground|distance\b/))  return 'background';
-  if (s.match(/\bforeground|extreme[\s-]?fg\b/)) return 'foreground';
-  if (s.match(/\bboth|two[\s-]?shot|split\b/)) return 'split';
+  if (s.match(/\bright\s+(third|side)|screen\s+right|on\s+the\s+right\b/)) return 'frame-right';
+  if (s.match(/\bleft\s+(third|side)|screen\s+left|on\s+the\s+left\b/))   return 'frame-left';
+  if (s.match(/\bsymmet|cent(er|re)|mid(dle)?[\s-]?frame\b/))             return 'centered';
+  if (s.match(/\bbackground|distanc\b/))                                   return 'background';
+  if (s.match(/\bforeground|extreme[\s-]?fg\b/))                           return 'foreground';
+  if (s.match(/\bboth|two[\s-]?shot|split\b/))                             return 'split';
   return 'centered';
+}
+
+/**
+ * inferDramaticPurpose — maps generic shot data to a specific cinematic purpose.
+ * Eliminates "scene coverage" and "setup" as repeated generic labels.
+ */
+function inferDramaticPurpose(
+  rawPurpose: string,
+  shotAction: string,
+  emotion: string,
+  shotSize: string,
+  shotNumberInScene: number,
+): string {
+  const combined = `${rawPurpose} ${shotAction} ${emotion}`.toLowerCase();
+
+  // Direct matches from specific language in the data
+  if (combined.match(/\bestablish(ing)?\b/))         return 'establish scale + environment';
+  if (combined.match(/\breact(ion)?\b/))             return 'register reaction';
+  if (combined.match(/\binsert\b/))                  return 'detail emphasis';
+  if (combined.match(/\breveal\b/))                  return 'reveal threat or information';
+  if (combined.match(/\bconfrontation?\b/))          return 'confrontation moment';
+  if (combined.match(/\bmonster|creature|giant|kaiju|godzilla\b/)) return 'establish creature scale';
+  if (combined.match(/\bthre(at|atening)\b/))       return 'emphasize threat';
+  if (combined.match(/\bfear|terror|dread|horror\b/)) return 'amplify dread';
+  if (combined.match(/\bawe|wonder|marvel\b/))      return 'convey awe + wonder';
+  if (combined.match(/\bconfiden(t|ce)|swagger\b/)) return 'establish character confidence';
+  if (combined.match(/\brel(ish|ying)|ador(ation|ing)|fan\b/)) return 'character in their element';
+  if (combined.match(/\bdanger|overwhelm|scale|vast\b/)) return 'reveal overwhelming odds';
+  if (combined.match(/\bpov|perspective\b/))        return 'subjective perspective';
+  if (combined.match(/\btension|suspen\b/))         return 'build tension';
+  if (combined.match(/\bclimax|peak\b/))            return 'climax beat';
+  if (combined.match(/\btwo[\s-]?shot|together\b/)) return 'character dynamic';
+
+  // Shot-size inference when data is generic
+  if (shotSize === 'EWS' || shotSize === 'WS') return 'establish scale and environment';
+  if (shotSize === 'ECU') return 'detail / micro-expression emphasis';
+  if (shotSize === 'CU')  return 'emotional close-up';
+  if (shotSize === 'MCU') return 'character reaction';
+
+  // Scene-position fallback (never return "scene coverage" again)
+  const pos = ((shotNumberInScene - 1) % 4);
+  return pos === 0 ? 'establish scale and environment'
+       : pos === 1 ? 'isolate protagonist reaction'
+       : pos === 2 ? 'reveal threat or detail'
+       : 'emphasize emotional beat';
 }
 
 function compactLocation(location: string, timeOfDay: string): string {
@@ -210,30 +350,35 @@ function compactLightingTag(lightingSetup: string, styleLighting: string): strin
 function compactStyleTags(styleBible: any): string {
   if (!styleBible) return '';
   const tags: string[] = [];
-  // Art direction: first clause only — always coerce to string
-  const artDir = styleBible.art_direction != null ? String(styleBible.art_direction) : '';
+
+  // Art direction: first clause only — safeString handles objects
+  const artDir = safeString(styleBible.art_direction);
   if (artDir) {
     const artShort = artDir.split(/[.;,]/)[0].trim().slice(0, 55);
-    if (artShort) tags.push(artShort);
+    if (artShort && artShort !== '[object Object]') tags.push(artShort);
   }
-  // Colour: hex codes only — always coerce to string before .match()
-  const palette = styleBible.color_palette != null ? String(styleBible.color_palette) : '';
-  if (palette) {
-    const hexes = (palette.match(/#[0-9A-Fa-f]{3,6}/g) || []).slice(0, 4);
-    if (hexes.length) tags.push(hexes.join('/'));
-    else {
-      // No hex codes — take first clause of prose as a tag
-      const paletteShort = palette.split(/[.;,]/)[0].trim().slice(0, 50);
+
+  // Colour: extract hex codes from string or object-with-string-values
+  const paletteRaw = safeString(styleBible.color_palette);
+  if (paletteRaw && paletteRaw !== '[object Object]') {
+    const hexes = (paletteRaw.match(/#[0-9A-Fa-f]{3,6}/g) || []).slice(0, 4);
+    if (hexes.length) {
+      tags.push(hexes.join('/'));
+    } else {
+      // No hex codes in string — use first prose clause
+      const paletteShort = paletteRaw.split(/[.;,]/)[0].trim().slice(0, 50);
       if (paletteShort) tags.push(paletteShort);
     }
   }
-  // Lens: first clause only — always coerce to string
-  const lens = styleBible.lens_language != null ? String(styleBible.lens_language) : '';
-  if (lens) {
+
+  // Lens: first clause — safeString handles objects like {focal: '35mm'}
+  const lens = safeString(styleBible.lens_language);
+  if (lens && lens !== '[object Object]') {
     const lensShort = lens.split(/[,;]/)[0].trim().slice(0, 40);
     if (lensShort) tags.push(lensShort);
   }
-  return tags.filter(Boolean).join(' | ');
+
+  return tags.filter(s => s && s !== '[object Object]').join(' | ');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -726,30 +871,59 @@ function buildImagePromptFromComposer(params: {
 }): { prompt: string; negativePrompt: string; fingerprint: CinematicFingerprint; contrastReport: ContrastReport } {
   const { shot, scene, styleBible, resolvedBibles, characterAnchor, directorBrain, shotGraphNode, styleLabel } = params;
 
-  // ── Core field extraction ─────────────────────────────────────────────────
-  const sceneNumber  = shot.scene_number  ?? scene?.scene_number  ?? '';
-  const shotNumber   = shot.shot_number   ?? '';
-  const perShotImagePrompt = shot.image_prompt ? String(shot.image_prompt).trim() : '';
-  const rawAction    = getField(shot, scene, ['action', 'shot_description', 'visual_description'], '');
-  const locationFull = getField(shot, scene, ['location', 'scene_setting'], 'Cinematic environment');
-  const timeOfDay    = getField(shot, scene, ['time_of_day'], '');
-  const emotion      = directorBrain?.emotional_beat_for_shot
+  // ── Core field extraction (all via safeString — zero [object Object] risk) ─
+  const sceneNumber     = safeString(shot.scene_number  ?? scene?.scene_number  ?? '');
+  const shotNumber      = safeString(shot.shot_number   ?? '');
+  const shotNumInt      = parseInt(shotNumber, 10) || 1;  // numeric shot position for heuristics
+  const perShotImagePrompt = safeString(shot.image_prompt).trim();
+  const rawAction       = getField(shot, scene, ['action', 'shot_description', 'visual_description'], '');
+  const locationFull    = getField(shot, scene, ['location', 'scene_setting'], 'Cinematic environment');
+  const timeOfDay       = getField(shot, scene, ['time_of_day'], '');
+  const emotion         = safeString(directorBrain?.emotional_beat_for_shot)
     || getField(shot, scene, ['emotion', 'mood', 'emotional_beat'], '');
-  const cameraFraming = getField(shot, scene, ['camera_framing', 'composition', 'framing', 'camera'], 'balanced framing');
-  const cameraAngle   = getField(shot, scene, ['camera_angle', 'camera'], 'medium shot');
-  const shotType      = getField(shot, scene, ['shot_type', 'shot_size'], '');
-  const blocking      = getField(shot, scene, ['blocking', 'composition'], '');
-  const focalLength   = getField(shot, scene, ['focal_length', 'lens_style', 'lens', 'lens_hint'], '');
-  const lightingSetup = getField(shot, scene, ['lighting_setup'], '');  // per-shot lighting from shot planner
-  const lightingStyle = directorBrain?.lighting_intention
-    || getField(shot, scene, ['lighting'], styleBible?.lighting || '');
-  const dramaticPurpose = getField(shot, scene, ['dramatic_function', 'shot_type', 'dramatic_purpose'], 'scene coverage');
-  const negativeRaw   = getField(shot, scene, ['negative_constraints', 'negative_prompt'], '');
+  const cameraFraming   = getField(shot, scene, ['camera_framing', 'composition', 'framing', 'camera'], 'balanced framing');
+  const cameraAngle     = getField(shot, scene, ['camera_angle', 'camera'], 'medium shot');
+  const shotType        = getField(shot, scene, ['shot_type'], '');
+  const explicitSize    = getField(shot, scene, ['shot_size'], '');  // new planner field
+  const blocking        = getField(shot, scene, ['blocking', 'composition'], '');
+  const focalLength     = getField(shot, scene, ['focal_length', 'lens_style', 'lens', 'lens_hint'], '');
+  const lightingSetup   = getField(shot, scene, ['lighting_setup'], '');   // per-shot from new planner
+  const lightingStyle   = safeString(directorBrain?.lighting_intention)
+    || getField(shot, scene, ['lighting'], safeString(styleBible?.lighting));
+  const rawDramatic     = getField(shot, scene, ['dramatic_function', 'shot_type', 'dramatic_purpose'], '');
+  const negativeRaw     = getField(shot, scene, ['negative_constraints', 'negative_prompt'], '');
 
-  // ── Cinematic fingerprint ─────────────────────────────────────────────────
-  const shotSize       = parseShotSize(shotType, cameraAngle, cameraFraming);
-  const angleTag       = parseCameraAngle(cameraAngle, cameraFraming);
-  const subjectPos     = parseSubjectPosition(blocking, cameraFraming);
+  // ── Cinematic fingerprint (shot-position heuristics prevent flat MS/EYE-LEVEL) ─
+  const shotSize  = parseShotSize(shotType, cameraAngle, cameraFraming, shotNumInt, explicitSize);
+  const angleTag  = parseCameraAngle(cameraAngle, cameraFraming, shotNumInt);
+  const subjectPos = parseSubjectPosition(blocking, cameraFraming);
+  // Extract shot action early (needed by inferDramaticPurpose)
+  const extractShotAction = (raw: string): string => {
+    if (!raw) return '';
+    // Strip [X LOCK] prefix
+    let s = raw.replace(/^\[.*?\s+LOCK\][,.\s]*/i, '').trim();
+    // If "Action:" label is present, grab what follows it (skip "Characters: X." prefix)
+    const actionM = s.match(/\bAction:\s*(?:Characters:[^.]*\.)?\s*([\s\S]{20,})/i);
+    if (actionM) return actionM[1].trim();
+    // Skip character-description sentences (eye/nose/lip/hair/wearing/holding/build)
+    let faceEnd = 0;
+    const faceRe = /\b(?:eyes?|nose\s+bridge|lips?|jawline|cheekbones?|hair|outfit|wearing|holding|props?|build|gait|height|skin\s+tone)[^.]{0,140}\./gi;
+    let m: RegExpExecArray | null;
+    while ((m = faceRe.exec(s.slice(0, 600))) !== null) {
+      faceEnd = Math.max(faceEnd, m.index + m[0].length);
+    }
+    if (faceEnd > 60) {
+      const remainder = s.slice(faceEnd).trim();
+      if (remainder.length > 30) return remainder;
+    }
+    return s;
+  };
+
+  const shotAction = extractShotAction(perShotImagePrompt) || rawAction || 'Character in motion';
+
+  // ── Dramatic purpose — specific, never "scene coverage" ──────────────────
+  const dramaticPurpose = inferDramaticPurpose(rawDramatic, shotAction, emotion, shotSize, shotNumInt);
+
   const fingerprint: CinematicFingerprint = {
     shot_size:        shotSize,
     angle:            angleTag,
@@ -765,39 +939,10 @@ function buildImagePromptFromComposer(params: {
   // ── Compact lighting (per-shot specific, not global style bible) ──────────
   const lightingCompact = compactLightingTag(lightingSetup, lightingStyle);
 
-  // ── Compact style tags (hex codes + first art tag only) ──────────────────
+  // ── Compact style tags + lens (all via safeString) ────────────────────────
   const styleTags = compactStyleTags(styleBible);
-  const lensTag   = focalLength || (styleBible?.lens_language
-    ? styleBible.lens_language.split(/[,;]/)[0].trim().slice(0, 35)
-    : '35mm cinematic');
-
-  // ── Shot action — extract unique visual moment ────────────────────────────
-  // Strip the character description preamble that Gemini prepends to image_prompt.
-  // What we want: the specific physical action/framing, not the repeated character bio.
-  const extractShotAction = (raw: string): string => {
-    if (!raw) return '';
-    // Strip [X LOCK] prefix
-    let s = raw.replace(/^\[.*?\s+LOCK\][,.\s]*/i, '').trim();
-    // If "Action:" label present, take that content
-    const actionM = s.match(/\bAction:\s*(?:Characters:[^.]+\.)?\s*([\s\S]{20,})/i);
-    if (actionM) return actionM[1].trim();
-    // Skip face-description sentences at the start (eye/nose/lip/hair/wearing/holding)
-    let faceEnd = 0;
-    const faceRe = /\b(?:eyes?|nose\s+bridge|lips?|jawline|cheekbones?|hair|outfit|wearing|holding|props?|build|gait|height|skin\s+tone)[^.]{0,140}\./gi;
-    let m: RegExpExecArray | null;
-    while ((m = faceRe.exec(s.slice(0, 600))) !== null) {
-      faceEnd = Math.max(faceEnd, m.index + m[0].length);
-    }
-    if (faceEnd > 60) {
-      const remainder = s.slice(faceEnd).trim();
-      if (remainder.length > 30) return remainder;
-    }
-    return s;
-  };
-
-  const shotAction = extractShotAction(perShotImagePrompt)
-    || rawAction
-    || 'Character in motion';
+  const lensTagRaw = focalLength || safeString(styleBible?.lens_language).split(/[,;]/)[0].trim().slice(0, 35);
+  const lensTag = lensTagRaw || '35mm cinematic';
 
   // ── Character identity locks (compact, at END) ────────────────────────────
   const compactLocks: string[] = [];
@@ -820,9 +965,14 @@ function buildImagePromptFromComposer(params: {
     tg?.end_frame_intent   ? `Frame close: ${tg.end_frame_intent}`  : '',
   ].filter(Boolean).join('. ');
 
-  // ── Characters present ────────────────────────────────────────────────────
+  // ── Characters present (safeString handles objects like {name:"X", id:"Y"}) ─
   const characters = Array.isArray(shot.characters)
-    ? shot.characters.map((c: any) => String(c).trim()).filter(Boolean)
+    ? shot.characters
+        .map((c: any) => {
+          const s = safeString(c).trim();
+          return (s && s !== '[object Object]') ? s : '';
+        })
+        .filter(Boolean)
     : [];
 
   // ── Shot fingerprint header (① — unique per shot, every token different) ─
@@ -975,7 +1125,7 @@ export function composeAllPrompts(input: ComposeAllPromptsInput): ComposeAllProm
 
   // ── Resolve character bibles for this specific shot ───────────────────────
   const shotCharacters = Array.isArray(shot.characters)
-    ? shot.characters.map((c: any) => String(c).trim()).filter(Boolean)
+    ? shot.characters.map((c: any) => { const s = safeString(c).trim(); return (s && s !== '[object Object]') ? s : ''; }).filter(Boolean)
     : [];
   const resolvedBibles = resolveBiblesForShot(shotCharacters, characterBibles);
 
@@ -1078,7 +1228,7 @@ export function buildShotImagePrompt(input: ShotPromptCompilerInput): CompiledSh
 
   // Rebuild continuity_notes for the legacy CompiledShotPrompt shape
   const characters = Array.isArray(shot.characters)
-    ? shot.characters.map((c: any) => String(c).trim()).filter(Boolean)
+    ? shot.characters.map((c: any) => { const s = safeString(c).trim(); return (s && s !== '[object Object]') ? s : ''; }).filter(Boolean)
     : [];
   const continuityConstraints = getField(shot, scene, ['continuity_constraints', 'continuity_notes', 'continuity_from_previous'], 'preserve character identity, wardrobe, and key props');
   const motionBridge = input.shotGraphNode?.motion_bridge || '';
