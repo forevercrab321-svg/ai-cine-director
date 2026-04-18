@@ -152,6 +152,10 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
   const [storyboardWarning, setStoryboardWarning] = useState<'not_approved' | null>(null);
   const [approvalChecked, setApprovalChecked] = useState(false);
 
+  // ★ Verifier hard gate — shots that failed screenplay verifier (Task 2)
+  const [verifierBlockedShots, setVerifierBlockedShots] = useState<Scene[]>([]);
+  const [showVerifierBlockBanner, setShowVerifierBlockBanner] = useState(false);
+
   // ★ Auto-audio: called automatically when a video finishes generating
   const generateAutoAudio = async (sceneNum: number, scene: Scene) => {
     // ★ Use audio_description first, then shot_type (which holds video_motion_prompt), then visual_description
@@ -295,6 +299,15 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
       setApprovalChecked(true);
     }
     setStoryboardWarning(null);
+
+    // ★ HARD VIDEO GATE — Task 2: block any shot with verifier_pass === false
+    // verifier_pass is set by canonicalPromptRewriter; undefined = not yet verified (allow).
+    const failedShots = project.scenes.filter(s => s.verifier_pass === false);
+    if (failedShots.length > 0) {
+      setVerifierBlockedShots(failedShots);
+      setShowVerifierBlockBanner(true);
+      return; // HARD STOP — do not continue chain generation
+    }
 
     setIsRenderingChain(true);
     setChainProgress({ completed: 0, total: project.scenes.length });
@@ -553,6 +566,13 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
     const imgUrl = sceneImages[sceneNum];
     if (!scene || !imgUrl) return;
 
+    // ★ HARD VIDEO GATE — Task 2: verifier_pass must not be explicitly false
+    if (scene.verifier_pass === false) {
+      setVerifierBlockedShots([scene]);
+      setShowVerifierBlockBanner(true);
+      return; // HARD STOP — no video from a failed shot
+    }
+
     const baseCost = MODEL_COSTS[settings.videoModel] || 28;
 
     if (!userState.isAdmin && !hasEnoughCredits(baseCost)) {
@@ -762,6 +782,42 @@ const VideoGenerator: React.FC<VideoGeneratorProps> = ({
           total={chainProgress.total}
           label="正在执行连续锁链生成 (图片/首尾帧提取/视频)..."
         />
+      )}
+
+      {/* ★ VERIFIER HARD GATE BANNER — Task 2+3: blocks video gen for failed shots */}
+      {showVerifierBlockBanner && verifierBlockedShots.length > 0 && (
+        <div className="max-w-3xl mx-auto mb-4 p-4 bg-red-950/50 border border-red-500/50 rounded-xl animate-in fade-in">
+          <div className="flex items-start gap-3">
+            <span className="text-red-400 text-xl mt-0.5 shrink-0">🚫</span>
+            <div className="flex-1">
+              <p className="text-red-300 font-bold text-sm">VIDEO BLOCKED — Screenplay Verifier Failed</p>
+              <p className="text-red-400/80 text-xs mt-1">
+                {verifierBlockedShots.length} shot{verifierBlockedShots.length > 1 ? 's' : ''} failed the screenplay faithfulness verifier.
+                No video may be generated from a shot that failed verification.
+                Fix the canonical prompt first, then retry.
+              </p>
+              <div className="mt-2 space-y-1">
+                {verifierBlockedShots.map((s) => (
+                  <div key={s.scene_number} className="flex items-center gap-2 text-[11px] font-mono">
+                    <span className="text-red-500">✗</span>
+                    <span className="text-red-300">Shot {s.scene_number}</span>
+                    <span className="text-red-400/60">score: {s.verifier_score ?? '?'}/35</span>
+                    {s.verifier_fail_reasons?.length ? (
+                      <span className="text-red-400/50 truncate max-w-[300px]">— {s.verifier_fail_reasons[0]}</span>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+              <p className="text-red-400/60 text-[10px] mt-2 font-mono">
+                To fix: open Shot Inspector on each failed card → review fail reasons → use /api/shots/rewrite-canonical to retrofit, or regenerate the storyboard.
+              </p>
+            </div>
+            <button
+              onClick={() => setShowVerifierBlockBanner(false)}
+              className="text-red-400/60 hover:text-red-300 text-lg leading-none shrink-0"
+            >×</button>
+          </div>
+        </div>
       )}
 
       {/* ★ Chain error banner — replaces alert() */}

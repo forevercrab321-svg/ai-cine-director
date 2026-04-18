@@ -340,6 +340,11 @@ const SceneCard: React.FC<SceneCardProps> = ({
               📍 {scene.scene_setting}
             </span>
           )}
+          {scene.verifier_pass === false && (
+            <span className="bg-red-900/40 text-red-400 border border-red-500/40 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-widest animate-pulse">
+              ✗ VERIFIER FAILED
+            </span>
+          )}
           {predictionId && <span className="text-[10px] font-mono text-slate-600">#{predictionId.slice(0, 6)}</span>}
         </div>
       </div>
@@ -550,32 +555,49 @@ const SceneCard: React.FC<SceneCardProps> = ({
               </>
             ) : (
               <button
-                onClick={canAffordVideo ? handleGenerateVideoClick : openPricingModal}
-                disabled={!imageUrl || isImageLoading}
+                onClick={scene.verifier_pass === false ? undefined : (canAffordVideo ? handleGenerateVideoClick : openPricingModal)}
+                disabled={!imageUrl || isImageLoading || scene.verifier_pass === false}
+                title={scene.verifier_pass === false ? 'Shot failed screenplay verifier — regenerate or use retrofit endpoint before generating video' : undefined}
                 className={`relative group/btn w-full h-full flex flex-col items-center justify-center gap-3 transition-all
-                  ${!imageUrl || isImageLoading
-                    ? 'opacity-30 cursor-not-allowed'
-                    : !canAffordVideo
-                      ? 'opacity-80 hover:opacity-100 bg-red-950/20'
-                      : 'opacity-60 hover:opacity-100 hover:bg-slate-900/50'}
+                  ${scene.verifier_pass === false
+                    ? 'opacity-60 cursor-not-allowed bg-red-950/30'
+                    : !imageUrl || isImageLoading
+                      ? 'opacity-30 cursor-not-allowed'
+                      : !canAffordVideo
+                        ? 'opacity-80 hover:opacity-100 bg-red-950/20'
+                        : 'opacity-60 hover:opacity-100 hover:bg-slate-900/50'}
                 `}
               >
-                <VideoCameraIcon className={`w-8 h-8 transition-colors ${!canAffordVideo ? 'text-red-400' : 'text-slate-500 group-hover/btn:text-rose-500'}`} />
-                {!imageUrl ? (
-                  <span className="text-[10px] font-mono text-slate-600">等待原画图片...</span>
+                {scene.verifier_pass === false ? (
+                  <>
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8 text-red-500/70">
+                      <path fillRule="evenodd" d="M12 1.5a5.25 5.25 0 0 0-5.25 5.25v3a3 3 0 0 0-3 3v6.75a3 3 0 0 0 3 3h10.5a3 3 0 0 0 3-3v-6.75a3 3 0 0 0-3-3v-3c0-2.9-2.35-5.25-5.25-5.25Zm3.75 8.25v-3a3.75 3.75 0 1 0-7.5 0v3h7.5Z" clipRule="evenodd" />
+                    </svg>
+                    <div className="flex flex-col items-center gap-1">
+                      <span className="text-xs font-bold tracking-widest uppercase text-red-400">VIDEO LOCKED</span>
+                      <span className="text-[10px] text-red-500/70 text-center px-2 leading-tight">Verifier failed — fix prompt first</span>
+                    </div>
+                  </>
                 ) : (
-                  <div className="flex flex-col items-center gap-1">
-                    <span className={`text-xs font-bold tracking-widest uppercase transition-colors ${!canAffordVideo ? 'text-red-300' : 'group-hover/btn:text-white'}`}>
-                      {canAffordVideo ? '生成动态' : '请先充值'}
-                    </span>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full border transition-all
-                      ${!canAffordVideo
-                        ? 'bg-red-900/30 text-red-300 border-red-500/30'
-                        : 'bg-slate-800 text-slate-300 border-slate-700 group-hover/btn:border-rose-500/50 group-hover/btn:text-rose-400'}
-                    `}>
-                      {videoCost} 💎
-                    </span>
-                  </div>
+                  <>
+                    <VideoCameraIcon className={`w-8 h-8 transition-colors ${!canAffordVideo ? 'text-red-400' : 'text-slate-500 group-hover/btn:text-rose-500'}`} />
+                    {!imageUrl ? (
+                      <span className="text-[10px] font-mono text-slate-600">等待原画图片...</span>
+                    ) : (
+                      <div className="flex flex-col items-center gap-1">
+                        <span className={`text-xs font-bold tracking-widest uppercase transition-colors ${!canAffordVideo ? 'text-red-300' : 'group-hover/btn:text-white'}`}>
+                          {canAffordVideo ? '生成动态' : '请先充值'}
+                        </span>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full border transition-all
+                          ${!canAffordVideo
+                            ? 'bg-red-900/30 text-red-300 border-red-500/30'
+                            : 'bg-slate-800 text-slate-300 border-slate-700 group-hover/btn:border-rose-500/50 group-hover/btn:text-rose-400'}
+                        `}>
+                          {videoCost} 💎
+                        </span>
+                      </div>
+                    )}
+                  </>
                 )}
               </button>
             )}

@@ -5296,6 +5296,216 @@ app.post('/api/batch/compile-prompts', async (req: any, res: any) => {
     }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// POST /api/shots/rewrite-canonical — Retrofit existing DB shots with canonical prompts
+//
+// TASK 1: Loads stored shots from Supabase, runs the canonical prompt rewriter
+// and screenplay verifier on each, then writes canonical_prompt / verifier_score /
+// verifier_pass / must_show_json / screenplay_beat back to the scenes table.
+//
+// Input (one of):  { project_id }  |  { scene_id }  |  { shot_id }
+// Response:        { total, passed, failed, shots: [...audit rows] }
+// ═══════════════════════════════════════════════════════════════════════════════
+app.post('/api/shots/rewrite-canonical', requireAuth, async (req: any, res: any) => {
+    const traceId = req.traceId || generateTraceId();
+    try {
+        const { project_id, scene_id, shot_id } = req.body;
+        if (!project_id && !scene_id && !shot_id) {
+            return res.status(400).json({ error: 'Provide project_id, scene_id, or shot_id' });
+        }
+
+        // ── Load the rewriter module ────────────────────────────────────────────
+        let rewriterModule: any;
+        try {
+            rewriterModule = await import('../lib/canonicalPromptRewriter.js');
+        } catch (e: any) {
+            return res.status(500).json({ error: 'canonicalPromptRewriter module failed to load', detail: e.message });
+        }
+        const { rewriteShot } = rewriterModule;
+
+        // ── Determine which scenes to load ─────────────────────────────────────
+        let scenesQuery = supabase.from('scenes').select('*');
+        if (shot_id) {
+            scenesQuery = scenesQuery.eq('id', shot_id);
+        } else if (scene_id) {
+            scenesQuery = scenesQuery.eq('source_scene_id', scene_id);
+        } else {
+            scenesQuery = scenesQuery.eq('storyboard_id', project_id);
+        }
+        const { data: rawScenes, error: loadErr } = await scenesQuery.order('scene_number', { ascending: true });
+        if (loadErr) throw loadErr;
+        if (!rawScenes || rawScenes.length === 0) {
+            return res.status(404).json({ error: 'No shots found for the given id(s)' });
+        }
+
+        // ── Load story bibles for character locks ──────────────────────────────
+        let characterBible: any[] = [];
+        let styleBible: any = {};
+        const sbId = project_id || rawScenes[0]?.storyboard_id;
+        if (sbId) {
+            const { data: sbRow } = await supabase.from('storyboards').select('story_entities, style_bible').eq('id', sbId).maybeSingle();
+            if (sbRow?.story_entities) {
+                try { characterBible = typeof sbRow.story_entities === 'string' ? JSON.parse(sbRow.story_entities) : (sbRow.story_entities || []); } catch {}
+            }
+            if (sbRow?.style_bible) {
+                try { styleBible = typeof sbRow.style_bible === 'string' ? JSON.parse(sbRow.style_bible) : (sbRow.style_bible || {}); } catch {}
+            }
+        }
+
+        // ── Arc enforcer constants (same as pipeline) ──────────────────────────
+        const SCENE_ARC_MANDATES = [
+            { sizes: ['WS','EWS'],        angle: 'low-angle',  height: 'low',       fn: 'establish', bgDom: 'dominant' },
+            { sizes: ['MS','MCU'],         angle: 'eye-level',  height: 'eye-level', fn: 'cover',     bgDom: 'balanced' },
+            { sizes: ['CU','MCU'],         angle: 'eye-level',  height: 'eye-level', fn: 'react',     bgDom: 'minimal'  },
+            { sizes: ['ECU','CU','insert'],angle: 'eye-level',  height: 'high',      fn: 'insert',    bgDom: 'minimal'  },
+        ];
+
+        // Group shots by scene so we can compute per-scene arc indices
+        const bySceneNum = new Map<number, any[]>();
+        rawScenes.forEach((s: any) => {
+            const k = s.scene_number || 1;
+            if (!bySceneNum.has(k)) bySceneNum.set(k, []);
+            bySceneNum.get(k)!.push(s);
+        });
+
+        const auditRows: any[] = [];
+        const updates: any[] = [];
+
+        for (const [, sceneShots] of bySceneNum) {
+            // Reconstruct a minimal scene object from the first shot in this group
+            const firstShot = sceneShots[0];
+            const sceneCtx: any = {
+                scene_number: firstShot.scene_number,
+                location:     firstShot.visual_description?.split('\n')[0] || '',
+                time_of_day:  '',
+                synopsis:     firstShot.visual_description || '',
+            };
+
+            sceneShots.forEach((rawShot: any, sIdx: number) => {
+                // Restore characters from characters_json
+                let characters: string[] = [];
+                if (rawShot.characters_json) {
+                    try { characters = JSON.parse(rawShot.characters_json); } catch {}
+                }
+
+                // Build a flat shot object with all structured fields for the rewriter
+                const shotCtx: any = {
+                    scene_number:         rawShot.scene_number,
+                    shot_number:          sIdx + 1,
+                    shot_type:            rawShot.shot_type          || '',
+                    camera_angle:         rawShot.camera_angle       || 'eye-level',
+                    camera_motion:        rawShot.camera_motion      || 'static',
+                    action:               rawShot.visual_description || '',
+                    emotional_beat:       rawShot.emotional_beat     || '',
+                    image_prompt:         rawShot.image_prompt       || '',
+                    video_prompt:         rawShot.video_motion_prompt || '',
+                    characters,
+                    dramatic_function:    rawShot.dramatic_function  || '',
+                };
+
+                // Run arc enforcer so shot has shot_size / camera_height / background_dominance
+                const arcIdx = Math.min(sIdx, 3);
+                const arc = SCENE_ARC_MANDATES[arcIdx];
+                if (!shotCtx.shot_size) shotCtx.shot_size = arc.sizes[0];
+                if (!shotCtx.camera_height) shotCtx.camera_height = arc.height;
+                if (!shotCtx.background_dominance) shotCtx.background_dominance = arc.bgDom;
+                if (!shotCtx.dramatic_function || ['scene coverage','coverage',''].includes((shotCtx.dramatic_function||'').toLowerCase())) {
+                    shotCtx.dramatic_function = arc.fn;
+                }
+
+                // Resolve character bibles
+                const shotCharBibles = characters.map((cid: string) =>
+                    characterBible.find((c: any) => c.character_id === cid || c.name === cid)
+                ).filter(Boolean);
+
+                const prevShot = sIdx > 0 ? sceneShots[sIdx - 1] : null;
+                const oldPromptSummary = (rawShot.image_prompt || '').slice(0, 80);
+
+                let result: any;
+                try {
+                    result = rewriteShot(shotCtx, sceneCtx, prevShot, shotCharBibles, styleBible, arcIdx);
+                } catch (rewriteErr: any) {
+                    logger.gemini.warn('retrofit_rewrite_error', { id: rawShot.id, err: String(rewriteErr.message) }, traceId);
+                    auditRows.push({ shot_id: rawShot.id, scene_number: rawShot.scene_number, status: 'error', error: rewriteErr.message });
+                    return;
+                }
+
+                updates.push({
+                    id:               rawShot.id,
+                    image_prompt:     result.canonical_prompt,
+                    canonical_prompt: result.canonical_prompt,
+                    verifier_score:   result.verifier.total,
+                    verifier_pass:    result.approved,
+                    must_show_json:   JSON.stringify(result.must_show),
+                    screenplay_beat:  result.screenplay_beat,
+                });
+
+                auditRows.push({
+                    shot_id:                rawShot.id,
+                    scene_number:           rawShot.scene_number,
+                    shot_position_in_scene: sIdx + 1,
+                    screenplay_beat:        result.screenplay_beat,
+                    old_prompt_summary:     oldPromptSummary,
+                    new_canonical_prompt:   result.canonical_prompt.slice(0, 200),
+                    verifier_score:         result.verifier.total,
+                    pass:                   result.approved,
+                    fail_reasons:           result.verifier.fail_reasons,
+                    rewrite_count:          result.rewrite_count,
+                    regenerate_required:    !result.approved,
+                    status:                 result.approved ? 'PASS' : 'FAIL',
+                });
+            });
+        }
+
+        // ── Persist updates to Supabase ────────────────────────────────────────
+        const persistErrors: string[] = [];
+        for (const upd of updates) {
+            const updatePayload: any = {
+                image_prompt:    upd.image_prompt,
+                screenplay_beat: upd.screenplay_beat,
+            };
+            // Try with new columns; fall back to base on column-missing error
+            let { error: upErr } = await supabase.from('scenes').update({
+                ...updatePayload,
+                canonical_prompt: upd.canonical_prompt,
+                verifier_score:   upd.verifier_score,
+                verifier_pass:    upd.verifier_pass,
+                must_show_json:   upd.must_show_json,
+            }).eq('id', upd.id);
+
+            if (upErr && (upErr.code === '42703' || upErr.code === 'PGRST204' || upErr.message?.includes('column'))) {
+                // Column doesn't exist yet — fall back to updating only image_prompt
+                const { error: fallbackErr } = await supabase.from('scenes').update(updatePayload).eq('id', upd.id);
+                if (fallbackErr) persistErrors.push(`shot ${upd.id}: ${fallbackErr.message}`);
+                else logger.gemini.warn('retrofit_fallback_columns', { id: upd.id }, traceId);
+            } else if (upErr) {
+                persistErrors.push(`shot ${upd.id}: ${upErr.message}`);
+            }
+        }
+
+        const passed = auditRows.filter(r => r.status === 'PASS').length;
+        const failed = auditRows.filter(r => r.status === 'FAIL').length;
+        const errors = auditRows.filter(r => r.status === 'error').length;
+
+        logger.gemini.debug('retrofit_canonical_complete', {
+            total: updates.length, passed, failed, errors, persistErrors: persistErrors.length
+        }, traceId);
+
+        return res.json({
+            total:           updates.length,
+            passed,
+            failed,
+            errors,
+            persist_errors:  persistErrors.length ? persistErrors : undefined,
+            shots:           auditRows,
+        });
+
+    } catch (err: any) {
+        logger.gemini.error('retrofit_canonical_error', err?.message || String(err), {}, traceId);
+        return res.status(500).json({ error: err?.message || 'Retrofit failed' });
+    }
+});
+
 // ───────────────────────────────────────────────────────────────
 // POST /api/batch/gen-images — Synchronous batch image generation with SSE streaming
 // On Vercel serverless, in-memory state doesn't persist across requests.

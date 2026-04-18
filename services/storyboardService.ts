@@ -66,6 +66,12 @@ function sceneToDbPayload(scene: Scene, storyboardId: string): any {
         camera_angle:        raw.camera_angle  || raw.camera  || null,
         camera_motion:       raw.camera_motion || raw.movement || null,
         characters_json:     Array.isArray(raw.characters) ? JSON.stringify(raw.characters) : null,
+        // ★ Phase 3 — Canonical prompt rewriter + verifier (may not exist on pre-migration DBs)
+        canonical_prompt:    raw.canonical_prompt    || null,
+        verifier_score:      raw.verifier_score      ?? null,
+        verifier_pass:       raw.verifier_pass       ?? null,
+        must_show_json:      Array.isArray(raw.must_show) ? JSON.stringify(raw.must_show) : null,
+        screenplay_beat:     raw.screenplay_beat     || null,
     };
     if (scene.id && scene.id.includes('-')) {
         payload.id = scene.id;
@@ -103,6 +109,12 @@ function dbRowToScene(row: any): Scene {
         camera_angle:        row.camera_angle        || undefined,
         camera_motion:       row.camera_motion       || undefined,
         characters:          restoredCharacters.length > 0 ? restoredCharacters : undefined,
+        // ★ Phase 3 — Canonical prompt rewriter + verifier fields
+        canonical_prompt:    row.canonical_prompt    || undefined,
+        verifier_score:      row.verifier_score      ?? undefined,
+        verifier_pass:       row.verifier_pass       ?? undefined,
+        must_show:           (() => { try { return row.must_show_json ? JSON.parse(row.must_show_json) : undefined; } catch { return undefined; } })(),
+        screenplay_beat:     row.screenplay_beat     || undefined,
     };
     return scene as Scene;
 }
@@ -186,6 +198,8 @@ export const saveStoryboard = async (
             'scene_title','dramatic_function','tension_level','emotional_beat',
             'dialogue_text','dialogue_speaker',
             'shot_id','source_scene_id','camera_angle','camera_motion','characters_json',
+            // Phase 3 verifier columns — strip on pre-migration DBs
+            'canonical_prompt','verifier_score','verifier_pass','must_show_json','screenplay_beat',
         ];
         const stripNewSceneColumns = (rows: any[]) => rows.map(r => {
             const clean = { ...r };
