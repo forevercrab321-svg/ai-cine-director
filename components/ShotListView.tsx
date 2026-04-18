@@ -392,9 +392,47 @@ const SceneSection: React.FC<{
     return (
         <div className="bg-slate-950/50 border border-slate-800 rounded-2xl overflow-hidden">
             <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between">
-                <div>
-                    <div className="flex items-center gap-2"><span className="text-indigo-400 font-bold text-sm uppercase tracking-wider">Scene {scene.scene_number ?? sceneIndex + 1}</span></div>
-                    {scene.scene_setting && <p className="text-xs text-amber-400/70 mt-1 font-medium">📍 {scene.scene_setting}</p>}
+                <div className="flex-1 min-w-0 mr-4">
+                    {/* Scene number + dramatic function + tension badge */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-indigo-400 font-bold text-sm uppercase tracking-wider shrink-0">
+                            Scene {scene.scene_number ?? sceneIndex + 1}
+                        </span>
+                        {(scene as any).dramatic_function && (
+                            <span className="px-2 py-0.5 rounded-full bg-violet-900/50 border border-violet-500/30 text-violet-300 text-[10px] font-bold uppercase tracking-wide shrink-0">
+                                {(scene as any).dramatic_function}
+                            </span>
+                        )}
+                        {(scene as any).tension_level != null && (
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
+                                (scene as any).tension_level >= 8 ? 'bg-red-900/50 border border-red-500/30 text-red-300' :
+                                (scene as any).tension_level >= 5 ? 'bg-amber-900/50 border border-amber-500/30 text-amber-300' :
+                                'bg-slate-800 border border-slate-600 text-slate-400'
+                            }`}>
+                                ⚡ T{(scene as any).tension_level}/10
+                            </span>
+                        )}
+                    </div>
+                    {/* Location */}
+                    {scene.scene_setting && (
+                        <p className="text-xs text-amber-400/80 mt-1 font-medium truncate">
+                            📍 {scene.scene_setting}
+                        </p>
+                    )}
+                    {/* Synopsis — the UNIQUE story beat for this scene from the screenplay */}
+                    {((scene as any).synopsis || (scene as any).narrative_purpose) && (
+                        <p className="text-xs text-slate-300/80 mt-1.5 leading-snug line-clamp-2">
+                            {(scene as any).synopsis || (scene as any).narrative_purpose}
+                        </p>
+                    )}
+                    {/* Character goal + obstacle — makes each scene's conflict visible */}
+                    {((scene as any).character_goal || (scene as any).scene_obstacle) && (
+                        <p className="text-[10px] text-slate-500 mt-1 leading-snug">
+                            {(scene as any).character_goal && <span>🎯 {(scene as any).character_goal}</span>}
+                            {(scene as any).character_goal && (scene as any).scene_obstacle && <span className="mx-1">·</span>}
+                            {(scene as any).scene_obstacle && <span>🚧 {(scene as any).scene_obstacle}</span>}
+                        </p>
+                    )}
                 </div>
 
                 <div className="flex gap-2 items-center">

@@ -2837,6 +2837,11 @@ Output strictly valid JSON according to the schema. No markdown formatting.`;
                     narrative_purpose: sanitizePromptInput(scn.emotional_goal || shot.action || '', 220),
                     // Director beat arc fields — from AI scene data
                     scene_title: sanitizePromptInput(scn.location || `Scene ${i + 1}`, 120),
+                    // ★ Synopsis = the actual story beat — UNIQUE per scene, displayed in scene card header
+                    synopsis: sanitizePromptInput(scn.synopsis || '', 300),
+                    scene_obstacle: sanitizePromptInput(scn.scene_obstacle || '', 180),
+                    character_goal: sanitizePromptInput(scn.character_goal || '', 180),
+                    emotional_goal: sanitizePromptInput(scn.emotional_goal || '', 180),
                     dramatic_function: sanitizePromptInput(scn.dramatic_function || '', 80),
                     tension_level: typeof scn.tension_level === 'number' ? scn.tension_level : null,
                     framing: sanitizePromptInput(shot.composition || '', 220),
