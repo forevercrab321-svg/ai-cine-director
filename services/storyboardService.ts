@@ -143,7 +143,7 @@ export const saveStoryboard = async (
             if (isInsert) {
                 const insertPayload: any = { user_id: userId, ...payload };
                 if (id) insertPayload.id = id;
-                const { data, error } = await supabase.from('storyboards').insert(insertPayload).select().single();
+                const { data, error } = await supabase.from('storyboards').insert(insertPayload).select().maybeSingle();
                 return { data, error };
             } else {
                 const { data, error } = await supabase.from('storyboards').update(payload).eq('id', id!).select().maybeSingle();
