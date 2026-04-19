@@ -183,6 +183,19 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
     // Storyboard grid: which 12-shot page is visible (0 = shots 1-12, 12 = shots 13-24, …)
     const [gridOffset, setGridOffset] = useState(0);
 
+    // ── Screenplay binding failure map ────────────────────────────────────────
+    // Keyed by shot_id. Populated from compiledPrompts after compile step.
+    // Drives FAILED badges on grid cells and blocks video generation.
+    const [screenplayFailMap, setScreenplayFailMap] = useState<Record<string, {
+        fail_reasons: string[];
+        hard_fail_codes: string[];
+        verifier_score: string;
+        explain_beat?: string;
+        explain_action?: string;
+        explain_why?: string;
+        explain_differs?: string;
+    }>>({});
+
     // ── Batch video generation state ─────────────────────────────────────────
     const [videosByShot, setVideosByShot] = useState<Record<string, string>>(videosByShortProp || {});
     const [batchVideoRunning, setBatchVideoRunning] = useState(false);
@@ -232,8 +245,11 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
     const currentPage = Math.floor(gridOffset / 12) + 1;
 
     // ── Batch video generation — for all shots that already have an image ────
+    // BLOCKED: shots with screenplay binding failures cannot enter video generation.
     const shotsWithImages = sortedShots.filter(s => !!(imagesByShot[s.shot_id]?.[0]?.url));
-    const shotsNeedingVideo = shotsWithImages.filter(s => !videosByShot[s.shot_id]);
+    const shotsNeedingVideo = shotsWithImages.filter(s =>
+        !videosByShot[s.shot_id] && !screenplayFailMap[s.shot_id]
+    );
 
     const handleBatchGenerateVideos = useCallback(async () => {
         if (shotsNeedingVideo.length === 0) return;
@@ -255,11 +271,11 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
             setBatchVideoLog(`🎬 [${i + 1}/${shotsNeedingVideo.length}] 生成视频: ${shot.scene_id}.${shot.shot_number}...`);
             try {
                 const prompt = [
-                    shot.video_prompt || shot.video_motion_prompt || shot.action || 'cinematic motion',
+                    shot.video_prompt || shot.action || 'cinematic motion',
                     'Maintain exact character identity, costume, location, and screen direction.',
                 ].filter(Boolean).join(' ');
 
-                const activeVideoModel: VideoModel = videoModel || 'wan';
+                const activeVideoModel: VideoModel = videoModel || 'wan_2_2_fast';
                 const videoRes = await startVideoTask(
                     prompt,
                     imageUrl,
@@ -313,10 +329,10 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
         setVideosByShot(prev => ({ ...prev, [shot.shot_id]: 'loading' }));
         try {
             const prompt = [
-                shot.video_prompt || shot.video_motion_prompt || shot.action || 'cinematic motion',
+                shot.video_prompt || shot.action || 'cinematic motion',
                 'Maintain exact character identity, costume, location, and screen direction.',
             ].filter(Boolean).join(' ');
-            const activeVideoModel: VideoModel = videoModel || 'wan';
+            const activeVideoModel: VideoModel = videoModel || 'wan_2_2_fast';
             const videoRes = await startVideoTask(prompt, imageUrl, activeVideoModel, 'none', 'storyboard', 'standard', 6, 24, '720p', characterAnchor, '16:9', { storyEntities, shot_id: shot.shot_id, project_id: projectId });
             let videoUrl = '';
             let status = 'processing';
@@ -371,6 +387,27 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
             refreshBalance().catch(() => { });
         }
     }, [onImagesGenerated, refreshBalance]);
+
+    // ── Sync screenplay fail map from compiled prompts ─────────────────────────
+    // Whenever compiledPrompts updates, rebuild the failure map.
+    useEffect(() => {
+        const map: typeof screenplayFailMap = {};
+        compiledPrompts.forEach(p => {
+            const binding = p.screenplay_binding;
+            if (binding && !binding.approved) {
+                map[p.shot_id] = {
+                    fail_reasons: binding.fail_reasons ?? [],
+                    hard_fail_codes: binding.hard_fail_codes ?? [],
+                    verifier_score: binding.verifier_score ?? '?/40',
+                    explain_beat:    binding.explain?.screenplay_beat,
+                    explain_action:  binding.explain?.required_action,
+                    explain_why:     binding.explain?.why_matches,
+                    explain_differs: binding.explain?.why_differs,
+                };
+            }
+        });
+        setScreenplayFailMap(map);
+    }, [compiledPrompts]);
 
     // Sync count when shots load asynchronously after mount.
     // If count is still 0 (shots were empty at mount) and shots have now arrived, reset to 12.
@@ -834,7 +871,7 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                 <div className="space-y-2">
                     {/* Grid header */}
                     <div className="flex items-center justify-between flex-wrap gap-2">
-                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 flex-wrap">
                             <span>🎞</span>
                             分镜宫格 · 剧本顺序
                             <span className="text-[10px] text-slate-600 font-normal normal-case ml-1">
@@ -844,6 +881,11 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                                     ` · ${Object.values(videosByShot).filter(v => v && v !== 'loading').length} 已生视频`
                                 }
                             </span>
+                            {Object.keys(screenplayFailMap).length > 0 && (
+                                <span className="text-[10px] font-bold text-red-400 bg-red-900/30 border border-red-700/40 rounded-full px-2 py-0.5 ml-1">
+                                    ⛔ {Object.keys(screenplayFailMap).length} 剧本绑定失败
+                                </span>
+                            )}
                         </h4>
                         <div className="flex items-center gap-2 flex-wrap">
                             {/* ── Batch video generation button ── */}
@@ -924,6 +966,10 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                             const isQueued = batchItem?.status === 'queued';
                             const hasImage = !!imageUrl;
 
+                            // ── Screenplay binding failure ──────────────────────────────────────
+                            const spFail = screenplayFailMap[shot.shot_id];
+                            const isScreenplayFailed = !!spFail;
+
                             const sceneLabel = shot.scene_id && /^\d+$/.test(String(shot.scene_id))
                                 ? `S${shot.scene_id}.${shot.shot_number}`
                                 : `#${absIdx + 1}`;
@@ -932,20 +978,32 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                             const isVideoLoading = cellVideoUrl === 'loading';
                             const hasVideo = !!cellVideoUrl && cellVideoUrl !== 'loading';
 
+                            // Tooltip for screenplay fail reasons
+                            const spFailTooltip = isScreenplayFailed
+                                ? [
+                                    `SCREENPLAY BINDING FAILED (${spFail.verifier_score})`,
+                                    ...spFail.fail_reasons.slice(0, 3),
+                                    spFail.hard_fail_codes.length ? `Codes: ${spFail.hard_fail_codes.join(', ')}` : '',
+                                  ].filter(Boolean).join('\n')
+                                : undefined;
+
                             return (
                                 <div
                                     key={shot.shot_id}
                                     className={`rounded-xl border overflow-hidden transition-all group/cell ${
-                                        isGenerating
-                                            ? 'border-indigo-500/70 ring-1 ring-indigo-500/30 shadow-lg shadow-indigo-500/10'
-                                            : isFailed
-                                                ? 'border-red-500/30'
-                                                : hasImage
-                                                    ? 'border-green-500/20'
-                                                    : isQueued
-                                                        ? 'border-indigo-500/20'
-                                                        : 'border-slate-800'
+                                        isScreenplayFailed
+                                            ? 'border-red-600/70 ring-1 ring-red-600/30 shadow-lg shadow-red-900/20'
+                                            : isGenerating
+                                                ? 'border-indigo-500/70 ring-1 ring-indigo-500/30 shadow-lg shadow-indigo-500/10'
+                                                : isFailed
+                                                    ? 'border-red-500/30'
+                                                    : hasImage
+                                                        ? 'border-green-500/20'
+                                                        : isQueued
+                                                            ? 'border-indigo-500/20'
+                                                            : 'border-slate-800'
                                     }`}
+                                    title={spFailTooltip}
                                 >
                                     <div className="aspect-video relative bg-slate-900">
                                         {hasImage ? (
@@ -1000,6 +1058,14 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                                                     <div className="absolute top-1 left-1 w-5 h-5 rounded-full bg-purple-900/80 border border-purple-500/40 flex items-center justify-center">
                                                         <LoaderIcon className="w-3 h-3 animate-spin text-purple-300" />
                                                     </div>
+                                                ) : isScreenplayFailed ? (
+                                                    /* Screenplay-failed: video button disabled */
+                                                    <div
+                                                        className="absolute top-1 left-1 opacity-0 group-hover/cell:opacity-100 transition-opacity w-6 h-6 rounded-full bg-red-900/80 border border-red-600/40 flex items-center justify-center cursor-not-allowed"
+                                                        title="⛔ 剧本绑定失败 — 修复 verifier 后才能生成视频"
+                                                    >
+                                                        <span className="text-red-400 text-[9px] font-bold">✗</span>
+                                                    </div>
                                                 ) : (
                                                     <button
                                                         onClick={e => { e.stopPropagation(); handleSingleVideoGenerate(shot); }}
@@ -1035,6 +1101,42 @@ const BatchImagePanel: React.FC<BatchImagePanelProps> = ({
                                         <div className="absolute bottom-0 left-0 right-0 px-1.5 py-0.5 bg-black/60 backdrop-blur-sm text-center">
                                             <span className="text-[9px] font-bold text-slate-300">{sceneLabel}</span>
                                         </div>
+
+                                        {/* ── SCREENPLAY BINDING FAILED badge ─────────────── */}
+                                        {isScreenplayFailed && (
+                                            <div className="absolute top-0 left-0 right-0 flex items-center justify-center gap-1 bg-red-700/90 backdrop-blur-sm py-0.5 px-1">
+                                                <span className="text-[8px] font-black text-red-100 uppercase tracking-widest">⛔ FAILED</span>
+                                            </div>
+                                        )}
+
+                                        {/* ── Screenplay fail inspector (visible on hover) ── */}
+                                        {isScreenplayFailed && (
+                                            <div className="absolute inset-x-0 bottom-6 mx-1 opacity-0 group-hover/cell:opacity-100 transition-opacity z-10">
+                                                <div className="bg-red-950/95 border border-red-700/60 rounded-lg p-2 space-y-1 shadow-xl">
+                                                    <div className="text-[8px] font-black text-red-300 uppercase tracking-wider">
+                                                        Screenplay Fail · {spFail.verifier_score}
+                                                    </div>
+                                                    {spFail.hard_fail_codes.length > 0 && (
+                                                        <div className="text-[7px] text-red-400 font-mono">
+                                                            {spFail.hard_fail_codes.join(' · ')}
+                                                        </div>
+                                                    )}
+                                                    {spFail.fail_reasons.slice(0, 2).map((r, i) => (
+                                                        <div key={i} className="text-[7px] text-red-300/80 leading-tight">
+                                                            • {r.slice(0, 80)}{r.length > 80 ? '…' : ''}
+                                                        </div>
+                                                    ))}
+                                                    {spFail.explain_beat && (
+                                                        <div className="text-[7px] text-slate-400 border-t border-red-800/40 pt-1 mt-1">
+                                                            Beat: {spFail.explain_beat.slice(0, 60)}
+                                                        </div>
+                                                    )}
+                                                    <div className="text-[7px] text-red-500 font-bold mt-1">
+                                                        ⛔ Video generation BLOCKED
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             );

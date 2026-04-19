@@ -499,6 +499,14 @@ export interface Scene {
   video_url?: string;
   audio_url?: string;
 
+  // ── Canonical Prompt Rewriter output (mirrored from Shot — populated per-scene) ──
+  screenplay_beat?:        string;
+  verifier_pass?:          boolean;
+  verifier_score?:         number;
+  verifier_fail_reasons?:  string[];
+  narrative_function?:     string;
+  duplicate_risk_score?:   number;
+
   // Director OS sequence graph fields
   panel_id?: string;
   panel_index?: number;

@@ -30,12 +30,19 @@ export interface VerifierDimension {
   reason: string;
 }
 
+export interface VerifierHardFail {
+  code: string;   // e.g. 'MISSING_SPECIFIC_ACTION'
+  reason: string; // human-readable explanation in Chinese + English
+}
+
 export interface VerifierResult {
   total: number;                  // 0–40 (8 dims × 5)
   passes: boolean;
   dimensions: VerifierDimension[];
   fail_reasons: string[];
   generic_portrait_detected: boolean;
+  /** Explicit hard-fail conditions that block generation regardless of total score */
+  hard_fails?: VerifierHardFail[];
 }
 
 /** Shot Difference Contract — what makes THIS shot distinct from the previous */
@@ -95,7 +102,7 @@ const GENERIC_PORTRAIT_PATTERNS: RegExp[] = [
   /\b(stares?|gazes?)\s+(into\s+the\s+distance|off[- ]?camera|into\s+the\s+middle\s+distance)\b/i,
 ];
 
-const REQUIRED_ACTION_VERBS: RegExp = /\b(perch|crouches?|leaps?|grabs?|fires?|swings?|pulls?|yanks?|slams?|dives?|rolls?|spins?|lunges?|blocks?|deflects?|pivots?|tears?|rips?|holds?|clutches?|tightens?|reaches?|extends?|points?|throws?|catches?|strikes?|kicks?|punches?|stumbles?|falls?|rises?|lands?|crashes?|explodes?|erupts?|collapses?|staggers?|freezes?|flinches?|trembles?|shakes?|twists?|ducking?|vaulting?|sprinting?|climbing?)\b/i;
+const REQUIRED_ACTION_VERBS: RegExp = /\b(perch(?:es|ing)?|crouches?|crouching|leaps?|leaping|grabs?|grabbing|fires?|firing|swings?|swinging|pulls?|pulling|yanks?|yanking|slams?|slamming|dives?|diving|rolls?|rolling|spins?|spinning|lunges?|lunging|blocks?|blocking|deflects?|deflecting|pivots?|pivoting|tears?|tearing|rips?|ripping|holds?|holding|clutches?|clutching|tightens?|tightening|reaches?|reaching|extends?|extending|points?|pointing|throws?|throwing|catches?|catching|strikes?|striking|kicks?|kicking|punches?|punching|stumbles?|stumbling|falls?|falling|rises?|rising|lands?|landing|crashes?|crashing|explodes?|exploding|erupts?|erupting|collapses?|collapsing|staggers?|staggering|freezes?|freezing|flinches?|flinching|trembles?|trembling|shakes?|shaking|twists?|twisting|ducks?|ducking|vaults?|vaulting|sprints?|sprinting|climbs?|climbing|shields?|shielding|dwarfs?|looms?|looming|towers?|towering|rains?|raining|flees?|fleeing|charges?|charging|bolts?|bolting|surges?|surging|scrambles?|scrambling|crawls?|crawling|dodges?|dodging|rushes?|rushing|barrels?|barreling|hurls?|hurling|flings?|flinging|slashes?|slashing|smashes?|smashing|shoves?|shoving|drags?|dragging|lifts?|lifting|snaps?|snapping|wraps?|wrapping|braces?|bracing|dashes?|dashing|leaps?|skids?|skidding|swerves?|swerving|spins?|twirls?|twirling)\b/i;
 
 // ─── NARRATIVE FUNCTION DERIVER ───────────────────────────────────────────────
 // Maps shot position + dramatic_function + shot_size to the canonical narrative function enum.
@@ -111,7 +118,7 @@ function deriveNarrativeFunction(shot: any, scene: any, arcIdx: number, prevShot
     return (size === 'ews' || size === 'ws') ? 'establishing' : 'scale';
   }
   if (arcIdx === 1) {
-    return fn === 'cover' || fn === 'character_intro' ? 'character_intro' : 'cover' in fn ? 'character_intro' : 'reaction';
+    return fn === 'cover' || fn === 'character_intro' ? 'character_intro' : fn.includes('cover') ? 'character_intro' : 'reaction';
   }
   if (arcIdx === 2) {
     return 'reaction';
@@ -570,12 +577,23 @@ export function verifyPrompt(
   dims.push({ name: 'screenplay_beat_match', score: beatScore, reason: beatScore < 4 ? `beat tokens from "${beatRef.slice(0,40)}" not found in prompt` : 'beat reflected in prompt' });
   if (beatScore < 4) failReasons.push(`screenplay beat match too low (${beatScore}/5)`);
 
-  // 2. Action visibility
-  const actionNowSection = prompt.match(/REQUIRED ACTION:(.+)/)?.[1] || prompt.match(/ACTION NOW:(.+)/)?.[1] || '';
-  const hasStrongVerb = REQUIRED_ACTION_VERBS.test(actionNowSection);
+  // 2. Action visibility — HARD FAIL if no specific action verb
+  // Check BOTH the REQUIRED ACTION section AND the SCREENPLAY BEAT section.
+  // This ensures establishing shots (arcIdx=0) where REQUIRED ACTION is positional
+  // still pass if the screenplay beat itself contains a strong physical verb
+  // (e.g. "Godzilla silhouette rises above Tokyo skyline, dwarfing skyscrapers").
+  const actionNowSection = prompt.match(/REQUIRED ACTION:([^\n]+)/)?.[1] || prompt.match(/ACTION NOW:([^\n]+)/)?.[1] || '';
+  const beatSection      = prompt.match(/SCREENPLAY BEAT:([^\n]+)/)?.[1] || '';
+  // Also include the raw shot action as a final fallback so verb detection is not
+  // sabotaged by the derived positional text for establishing/wide shots.
+  const rawActionField   = s(shot.action || shot.visual_description || '').slice(0, 150);
+  const combinedActionText = [actionNowSection, beatSection, rawActionField].join(' ');
+  const hasStrongVerb  = REQUIRED_ACTION_VERBS.test(combinedActionText);
   const hasGenericVerb = /\b(looks?|stands?|sits?|walks?|watches?|gazes?)\b/i.test(actionNowSection) && !hasStrongVerb;
-  const actionScore = hasStrongVerb ? 5 : hasGenericVerb ? 2 : 3;
-  dims.push({ name: 'action_visibility', score: actionScore, reason: hasStrongVerb ? 'strong specific verb present' : hasGenericVerb ? 'only generic verb found' : 'action present but could be more specific' });
+  const actionMissing  = !combinedActionText.trim() || (!hasStrongVerb && !hasGenericVerb);
+  const actionScore    = hasStrongVerb ? 5 : hasGenericVerb ? 2 : actionMissing ? 0 : 3;
+  dims.push({ name: 'action_visibility', score: actionScore, reason: hasStrongVerb ? 'strong specific verb present' : hasGenericVerb ? 'only generic verb found — must use specific physical action' : actionMissing ? 'HARD FAIL: 缺少具体动作 — REQUIRED ACTION/BEAT section lacks any action verb' : 'action present but could be more specific' });
+  if (!hasStrongVerb && (hasGenericVerb || actionMissing)) failReasons.push(`缺少具体动作 — action_visibility ${actionScore}/5: REQUIRED ACTION must use a specific physical verb (not looks/stands/walks/gazes)`);
 
   // 3. Location evidence
   const locRef = s(scene?.location || shot.location || '').split(/[,.\n]/)[0].toLowerCase();
@@ -662,18 +680,55 @@ export function verifyPrompt(
   dims.push({ name: 'screenplay_removal_value', score: removalScore, reason: removalReason });
 
   const total = dims.reduce((acc, d) => acc + d.score, 0);
-  const beatMatch  = dims.find(d => d.name === 'screenplay_beat_match')?.score ?? 0;
-  const nonGeneric = dims.find(d => d.name === 'non_genericity')?.score ?? 0;
-  const removal    = dims.find(d => d.name === 'screenplay_removal_value')?.score ?? 0;
+  const beatMatch      = dims.find(d => d.name === 'screenplay_beat_match')?.score ?? 0;
+  const nonGeneric     = dims.find(d => d.name === 'non_genericity')?.score ?? 0;
+  const removal        = dims.find(d => d.name === 'screenplay_removal_value')?.score ?? 0;
+  const actionVis      = dims.find(d => d.name === 'action_visibility')?.score ?? 0;
 
-  // Pass requires: total ≥ 28/40, beat_match ≥ 4, non_generic ≥ 4, removal ≥ 3
-  const passes = total >= 28 && beatMatch >= 4 && nonGeneric >= 4 && removal >= 3;
+  // ── 5 EXPLICIT HARD-FAIL CONDITIONS ─────────────────────────────────────────
+  // Any one of these blocks generation regardless of total score.
+  const HARD_FAIL_CHECKS: Array<{ condition: boolean; code: string; reason: string }> = [
+    {
+      condition: actionVis < 3,
+      code: 'MISSING_SPECIFIC_ACTION',
+      reason: `缺少具体动作 — REQUIRED ACTION must contain a specific physical verb (score ${actionVis}/5). Generic verbs like looks/stands/gazes are banned.`,
+    },
+    {
+      condition: removal < 3 && !sdc?.visual_delta_from_previous?.includes('Opens scene'),
+      code: 'MISSING_UNIQUE_INFO',
+      reason: `缺少本镜头独有信息 — screenplay_removal_value ${removal}/5. This shot does not introduce new narrative information that would be lost if removed.`,
+    },
+    {
+      condition: sdc != null && sdc.visual_delta_from_previous.includes('MINIMAL VISUAL DELTA'),
+      code: 'MISSING_VISUAL_DELTA',
+      reason: `缺少与上一镜头的差异 — visual_delta is MINIMAL. This shot must differ from the previous in size, angle, height, function, or emotion.`,
+    },
+    {
+      condition: genericDetected,
+      code: 'GENERIC_PORTRAIT',
+      reason: `仍然是通用人物肖像/氛围图 — GENERIC_PORTRAIT_COLLAPSE detected. Prompt matches a banned visual pattern (standing/looking, blurred city portrait, centered hero pose, etc.).`,
+    },
+    {
+      condition: beatMatch < 4,
+      code: 'NOT_SCREENPLAY_BOUND',
+      reason: `不能回答"这张图为什么必须是S${s(sdc ? (sdc as any).scene_number ?? '?' : '?')}.${s(sdc ? (sdc as any).shot_number ?? '?' : '?')}" — screenplay_beat_match ${beatMatch}/5. The prompt does not trace back to this specific shot's beat.`,
+    },
+  ];
+
+  const hardFails = HARD_FAIL_CHECKS.filter(c => c.condition);
+  hardFails.forEach(hf => {
+    if (!failReasons.includes(hf.reason)) failReasons.push(hf.reason);
+  });
+
+  // Pass requires ALL hard-fail conditions clear + numeric thresholds
+  // total ≥ 28/40, beat_match ≥ 4, non_generic ≥ 4, removal ≥ 3, action_visibility ≥ 3
+  const passes = hardFails.length === 0 && total >= 28 && beatMatch >= 4 && nonGeneric >= 4 && removal >= 3 && actionVis >= 3;
 
   if (!passes && failReasons.length === 0) {
     failReasons.push(`total score ${total}/40 below threshold 28`);
   }
 
-  return { total, passes, dimensions: dims, fail_reasons: failReasons, generic_portrait_detected: genericDetected };
+  return { total, passes, dimensions: dims, fail_reasons: failReasons, generic_portrait_detected: genericDetected, hard_fails: hardFails.map(hf => ({ code: hf.code, reason: hf.reason })) } as VerifierResult;
 }
 
 // ─── VIDEO GROUNDING ──────────────────────────────────────────────────────────
@@ -811,5 +866,78 @@ export function rewriteShot(
     rewrite_count:         rewrites,
     gemini_prose_discarded: geminiProseDifferent,
     sdc,
+  };
+}
+
+// ─── SHOT EXPLAIN BUILDER ─────────────────────────────────────────────────────
+// Produces the required per-shot explain output.
+//
+// Format:
+//   SHOT Sx.y
+//   - screenplay beat:
+//   - required action:
+//   - must show:
+//   - why this image matches this exact shot:
+//   - why it is different from previous shot:
+
+export interface ShotExplain {
+  shot_label:      string;    // "SHOT S1.2"
+  screenplay_beat: string;    // one-line beat description
+  required_action: string;    // required physical action
+  must_show:       string[];  // concrete visual proof checklist
+  why_matches:     string;    // why this image matches this exact shot
+  why_differs:     string;    // why it differs from previous shot
+  verifier_passes: boolean;
+  verifier_score:  string;    // e.g. "32/40"
+  fail_reasons:    string[];  // populated if verifier fails
+  hard_fail_codes: string[];  // e.g. ['MISSING_SPECIFIC_ACTION']
+  blocked:         boolean;   // true when hard_fails exist → cannot enter video generation
+}
+
+export function buildShotExplain(
+  shot:     any,
+  scene:    any,
+  prevShot: any | null,
+  sdc:      ShotDifferenceContract,
+  verifier: VerifierResult,
+  mustShow: string[],
+): ShotExplain {
+  const sceneNum = s(shot.scene_number ?? scene?.scene_number ?? '?');
+  const shotNum  = s(shot.shot_number  ?? '?');
+  const label    = `SHOT S${sceneNum}.${shotNum}`;
+
+  const beat = s(shot.action || shot.visual_description || '').split(/[.!?]/)[0].trim().slice(0, 100);
+
+  const scoreStr = `${verifier.total}/${verifier.dimensions.length * 5}`;
+
+  const hardFailCodes = (verifier.hard_fails ?? []).map(hf => hf.code);
+
+  const whyMatches = verifier.passes
+    ? [
+        `"${beat}"`,
+        `narrative function: ${sdc.narrative_function}`,
+        `required action: "${sdc.required_visible_action.slice(0, 60)}"`,
+        `new info: ${sdc.new_information_introduced.slice(0, 60)}`,
+      ].join(' | ')
+    : `FAILED (${scoreStr}) — ${verifier.fail_reasons.slice(0, 2).join('; ')}`;
+
+  const whyDiffers = sdc.visual_delta_from_previous.includes('MINIMAL VISUAL DELTA')
+    ? `⚠ MINIMAL DELTA — ${sdc.visual_delta_from_previous}`
+    : `${sdc.visual_delta_from_previous}`;
+
+  const blocked = (verifier.hard_fails ?? []).length > 0 || !verifier.passes;
+
+  return {
+    shot_label:      label,
+    screenplay_beat: beat,
+    required_action: sdc.required_visible_action,
+    must_show:       mustShow,
+    why_matches:     whyMatches,
+    why_differs:     whyDiffers,
+    verifier_passes: verifier.passes,
+    verifier_score:  scoreStr,
+    fail_reasons:    verifier.fail_reasons,
+    hard_fail_codes: hardFailCodes,
+    blocked,
   };
 }

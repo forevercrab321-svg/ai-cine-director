@@ -78,6 +78,24 @@ export interface CompiledShotPromptPreview {
             summary: string;
         };
     };
+    /** Screenplay binding result — populated when backend runs canonical rewriter */
+    screenplay_binding?: {
+        approved:        boolean;
+        blocked:         boolean;
+        verifier_score:  string;
+        fail_reasons:    string[];
+        hard_fail_codes: string[];
+        explain?: {
+            shot_label:      string;
+            screenplay_beat: string;
+            required_action: string;
+            must_show:       string[];
+            why_matches:     string;
+            why_differs:     string;
+            verifier_passes: boolean;
+            verifier_score:  string;
+        };
+    } | null;
 }
 
 /**

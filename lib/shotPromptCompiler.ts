@@ -20,6 +20,18 @@
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Screenplay binding — canonical rewriter integration
+// ─────────────────────────────────────────────────────────────────────────────
+import {
+  rewriteShot,
+  buildShotExplain,
+  type CanonicalShotResult,
+  type ShotExplain,
+  type VerifierResult,
+  type ShotDifferenceContract,
+} from './canonicalPromptRewriter';
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Internal utilities
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -516,6 +528,30 @@ export interface BgmDirection {
   instrumentation: string;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Screenplay Binding — attached to every ComposeAllPromptsOutput
+// Contains the SDC + verifier + explain for that shot.
+// UI uses this to show FAILED markers and block video generation.
+// ─────────────────────────────────────────────────────────────────────────────
+export interface ScreenplayBinding {
+  /** True when ALL 5 hard-fail conditions pass and numeric thresholds met */
+  approved:        boolean;
+  /** True when hard_fails > 0 — shot is BLOCKED from video generation */
+  blocked:         boolean;
+  /** Verifier total score e.g. "32/40" */
+  verifier_score:  string;
+  /** All verifier dimensions (8 × 0–5) */
+  verifier:        VerifierResult;
+  /** Shot Difference Contract */
+  sdc:             ShotDifferenceContract;
+  /** Structured explain for UI inspector */
+  explain:         ShotExplain;
+  /** The canonical (SDC-first) prompt that was used */
+  canonical_prompt: string;
+  /** How many auto-rewrite passes were needed (0 = clean first pass) */
+  rewrite_count:   number;
+}
+
 export interface ComposeAllPromptsOutput {
   // ── Image generation prompt (Replicate Flux / image models) ───────────────
   /** Full model prompt — send as `prompt` to Replicate image API */
@@ -556,6 +592,10 @@ export interface ComposeAllPromptsOutput {
     style_tags:       string;   // compact palette/lens/art tags
     contrast:         ContrastReport; // vs previous shot
   };
+
+  // ── Screenplay binding (canonical rewriter verification result) ────────────
+  /** Null only if rewriteShot() threw an unexpected error (should not happen). */
+  screenplay_binding: ScreenplayBinding | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -594,6 +634,8 @@ export interface CompiledShotPrompt {
     reference_policy: string;
     continuity_notes: string[];
   };
+  /** Screenplay binding verification — used by UI to show FAILED markers */
+  screenplay_binding?: ScreenplayBinding | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1187,8 +1229,65 @@ export function composeAllPrompts(input: ComposeAllPromptsInput): ComposeAllProm
     ? clamp(input.characterAnchor, 80)
     : 'no character lock';
 
+  // ── SCREENPLAY BINDING (Task 1–5) ─────────────────────────────────────────
+  // Run canonical rewriter → SDC + 8-dim verifier + 5 hard-fail conditions.
+  // The canonical prompt (SDC fields first) REPLACES the fingerprint prompt
+  // as the final image_prompt so that the first 120 tokens carry screenplay info.
+  // Identity locks from the fingerprint builder are appended at the end.
+  let screenplayBinding: ScreenplayBinding | null = null;
+  let finalImagePrompt = imagePrompt; // fallback if rewriter throws
+
+  try {
+    // arcIdx: shot's 0-based position within its scene (0=establishing, 1=cover, 2=react, 3=insert)
+    // Approximate from shot_number within scene (mod 4).  Scene-level shot lists could pass
+    // a dedicated field (scene_arc_index) for more precision, but this is safe for all cases.
+    const shotNumRaw = parseInt(safeString(shot.shot_number), 10);
+    const arcIdx = isNaN(shotNumRaw) ? 0 : Math.max(0, (shotNumRaw - 1) % 4);
+
+    const canonicalResult: CanonicalShotResult = rewriteShot(
+      shot,
+      scene,
+      input.previousShot || null,
+      resolvedBibles,          // already-resolved CharacterBibleEntry[] for this shot
+      input.styleBible || {},
+      arcIdx,
+    );
+
+    const explain: ShotExplain = buildShotExplain(
+      shot,
+      scene,
+      input.previousShot || null,
+      canonicalResult.sdc,
+      canonicalResult.verifier,
+      canonicalResult.must_show,
+    );
+
+    // The canonical prompt leads with SDC fields (first 120 tokens = screenplay contract).
+    // Append identity lock block from the fingerprint builder so production constraints trail.
+    const identityTrail = compactIdentityDebug && compactIdentityDebug !== 'no character lock'
+      ? `\nIDENTITY LOCK (production): ${compactIdentityDebug}`
+      : '';
+    finalImagePrompt = clamp(canonicalResult.canonical_prompt + identityTrail, 1800);
+
+    const verifierScore = `${canonicalResult.verifier.total}/${canonicalResult.verifier.dimensions.length * 5}`;
+
+    screenplayBinding = {
+      approved:         canonicalResult.approved,
+      blocked:          !canonicalResult.approved,
+      verifier_score:   verifierScore,
+      verifier:         canonicalResult.verifier,
+      sdc:              canonicalResult.sdc,
+      explain,
+      canonical_prompt: canonicalResult.canonical_prompt,
+      rewrite_count:    canonicalResult.rewrite_count,
+    };
+  } catch (err: any) {
+    console.error('[ScreenplayBinding] rewriteShot() threw:', err?.message);
+    // Fall through — use fingerprint prompt, binding = null
+  }
+
   return {
-    image_prompt: imagePrompt,
+    image_prompt: finalImagePrompt,
     image_negative_prompt: imageNegativePrompt,
     video_prompt: videoPrompt,
     motion_prompt: motionPrompt,
@@ -1210,6 +1309,7 @@ export function composeAllPrompts(input: ComposeAllPromptsInput): ComposeAllProm
       style_tags:       compactStyleTags(styleBible),
       contrast:         contrastReport,
     },
+    screenplay_binding: screenplayBinding,
   };
 }
 
@@ -1275,6 +1375,8 @@ export function buildShotImagePrompt(input: ShotPromptCompilerInput): CompiledSh
       reference_policy: String(shot.reference_policy || 'anchor'),
       continuity_notes: continuityNotes,
     },
+    // Pass through screenplay binding for UI failure indicators
+    screenplay_binding: composed.screenplay_binding,
   };
 }
 

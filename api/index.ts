@@ -5332,6 +5332,7 @@ app.post('/api/batch/compile-prompts', async (req: any, res: any) => {
 // ═══════════════════════════════════════════════════════════════════════════════
 app.post('/api/shots/rewrite-canonical', requireAuth, async (req: any, res: any) => {
     const traceId = req.traceId || generateTraceId();
+    const supabase = getSupabaseAdmin();
     try {
         const { project_id, scene_id, shot_id } = req.body;
         if (!project_id && !scene_id && !shot_id) {
@@ -5356,7 +5357,8 @@ app.post('/api/shots/rewrite-canonical', requireAuth, async (req: any, res: any)
         } else {
             scenesQuery = scenesQuery.eq('storyboard_id', project_id);
         }
-        const { data: rawScenes, error: loadErr } = await scenesQuery.order('scene_number', { ascending: true });
+        const { data: rawScenesTyped, error: loadErr } = await scenesQuery.order('scene_number', { ascending: true });
+        const rawScenes = rawScenesTyped as any[];
         if (loadErr) throw loadErr;
         if (!rawScenes || rawScenes.length === 0) {
             return res.status(404).json({ error: 'No shots found for the given id(s)' });
@@ -5367,7 +5369,8 @@ app.post('/api/shots/rewrite-canonical', requireAuth, async (req: any, res: any)
         let styleBible: any = {};
         const sbId = project_id || rawScenes[0]?.storyboard_id;
         if (sbId) {
-            const { data: sbRow } = await supabase.from('storyboards').select('story_entities, style_bible').eq('id', sbId).maybeSingle();
+            const { data: sbRowTyped } = await supabase.from('storyboards').select('story_entities, style_bible').eq('id', sbId).maybeSingle();
+            const sbRow = sbRowTyped as any;
             if (sbRow?.story_entities) {
                 try { characterBible = typeof sbRow.story_entities === 'string' ? JSON.parse(sbRow.story_entities) : (sbRow.story_entities || []); } catch {}
             }
@@ -5509,7 +5512,7 @@ app.post('/api/shots/rewrite-canonical', requireAuth, async (req: any, res: any)
                 screenplay_beat: upd.screenplay_beat,
             };
             // Try with new columns; fall back to base on column-missing error
-            let { error: upErr } = await supabase.from('scenes').update({
+            let { error: upErr } = await (supabase.from('scenes') as any).update({
                 ...updatePayload,
                 canonical_prompt: upd.canonical_prompt,
                 verifier_score:   upd.verifier_score,
@@ -5519,7 +5522,7 @@ app.post('/api/shots/rewrite-canonical', requireAuth, async (req: any, res: any)
 
             if (upErr && (upErr.code === '42703' || upErr.code === 'PGRST204' || upErr.message?.includes('column'))) {
                 // Column doesn't exist yet — fall back to updating only image_prompt
-                const { error: fallbackErr } = await supabase.from('scenes').update(updatePayload).eq('id', upd.id);
+                const { error: fallbackErr } = await (supabase.from('scenes') as any).update(updatePayload).eq('id', upd.id);
                 if (fallbackErr) persistErrors.push(`shot ${upd.id}: ${fallbackErr.message}`);
                 else logger.gemini.warn('retrofit_fallback_columns', { id: upd.id }, traceId);
             } else if (upErr) {
