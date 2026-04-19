@@ -102,7 +102,7 @@ const GENERIC_PORTRAIT_PATTERNS: RegExp[] = [
   /\b(stares?|gazes?)\s+(into\s+the\s+distance|off[- ]?camera|into\s+the\s+middle\s+distance)\b/i,
 ];
 
-const REQUIRED_ACTION_VERBS: RegExp = /\b(perch(?:es|ing)?|crouches?|crouching|leaps?|leaping|grabs?|grabbing|fires?|firing|swings?|swinging|pulls?|pulling|yanks?|yanking|slams?|slamming|dives?|diving|rolls?|rolling|spins?|spinning|lunges?|lunging|blocks?|blocking|deflects?|deflecting|pivots?|pivoting|tears?|tearing|rips?|ripping|holds?|holding|clutches?|clutching|tightens?|tightening|reaches?|reaching|extends?|extending|points?|pointing|throws?|throwing|catches?|catching|strikes?|striking|kicks?|kicking|punches?|punching|stumbles?|stumbling|falls?|falling|rises?|rising|lands?|landing|crashes?|crashing|explodes?|exploding|erupts?|erupting|collapses?|collapsing|staggers?|staggering|freezes?|freezing|flinches?|flinching|trembles?|trembling|shakes?|shaking|twists?|twisting|ducks?|ducking|vaults?|vaulting|sprints?|sprinting|climbs?|climbing|shields?|shielding|dwarfs?|looms?|looming|towers?|towering|rains?|raining|flees?|fleeing|charges?|charging|bolts?|bolting|surges?|surging|scrambles?|scrambling|crawls?|crawling|dodges?|dodging|rushes?|rushing|barrels?|barreling|hurls?|hurling|flings?|flinging|slashes?|slashing|smashes?|smashing|shoves?|shoving|drags?|dragging|lifts?|lifting|snaps?|snapping|wraps?|wrapping|braces?|bracing|dashes?|dashing|leaps?|skids?|skidding|swerves?|swerving|spins?|twirls?|twirling)\b/i;
+const REQUIRED_ACTION_VERBS: RegExp = /\b(perch(?:es|ing)?|crouches?|crouching|leaps?|leaping|grabs?|grabbing|fires?|firing|swings?|swinging|pulls?|pulling|yanks?|yanking|slams?|slamming|dives?|diving|rolls?|rolling|spins?|spinning|lunges?|lunging|blocks?|blocking|deflects?|deflecting|pivots?|pivoting|tears?|tearing|rips?|ripping|holds?|holding|clutches?|clutching|tightens?|tightening|reaches?|reaching|extends?|extending|points?|pointing|throws?|throwing|catches?|catching|strikes?|striking|kicks?|kicking|punches?|punching|stumbles?|stumbling|falls?|falling|rises?|rising|lands?|landing|crashes?|crashing|explodes?|exploding|erupts?|erupting|collapses?|collapsing|staggers?|staggering|freezes?|freezing|flinches?|flinching|trembles?|trembling|shakes?|shaking|twists?|twisting|ducks?|ducking|vaults?|vaulting|sprints?|sprinting|climbs?|climbing|shields?|shielding|dwarfs?|looms?|looming|towers?|towering|rains?|raining|flees?|fleeing|charges?|charging|bolts?|bolting|surges?|surging|scrambles?|scrambling|crawls?|crawling|dodges?|dodging|rushes?|rushing|barrels?|barreling|hurls?|hurling|flings?|flinging|slashes?|slashing|smashes?|smashing|shoves?|shoving|drags?|dragging|lifts?|lifting|snaps?|snapping|wraps?|wrapping|braces?|bracing|dashes?|dashing|leaps?|skids?|skidding|swerves?|swerving|spins?|twirls?|twirling|stomps?|stomping|crushes?|crushing|attacks?|attacking|confronts?|confronting|battles?|battling|fights?|fighting|destroys?|destroying|obliterates?|obliterating|threatens?|threatening|overwhelms?|overwhelming|topples?|toppling|pursues?|pursuing|transforms?|transforming|emerges?|emerging|reveals?|revealing|shatters?|shattering|protects?|protecting|rescues?|rescuing|saves?|saving|activates?|activating|demolishes?|demolishing|decimates?|decimating|defeats?|defeating|overpowers?|overpowering|intercepts?|intercepting|repels?|repelling|deflects?|deflecting|rebuffs?|rebuffing|propels?|propelling|launches?|launching|catapults?|catapulting|flings?|flinging|detonates?|detonating|ignites?|igniting|burns?|burning|melts?|melting|freezes?|freezing|shatters?|shattering|pierces?|piercing|impales?|impaling|severs?|severing|decapitates?|decapitating|obliterates?|obliterating|annihilates?|annihilating|devastates?|devastating|tramples?|trampling|flattens?|flattening|crushes?|crushing|buries?|burying|entombs?|entombing|swallows?|swallowing|engulfs?|engulfing|consumes?|consuming|sweeps?|sweeping|carries?|carrying|drags?|dragging|pulls?|pulling)\b/i;
 
 // ─── NARRATIVE FUNCTION DERIVER ───────────────────────────────────────────────
 // Maps shot position + dramatic_function + shot_size to the canonical narrative function enum.
@@ -181,25 +181,38 @@ function deriveNewInformation(shot: any, scene: any, arcIdx: number, prevShot: a
 // What specific physical action MUST be visible in this frame?
 
 function deriveRequiredAction(shot: any, scene: any, arcIdx: number): string {
-  const raw    = s(shot.action || shot.visual_description || '').split(/[.!?]/)[0].trim().slice(0, 100);
+  // Use the first meaningful sentence from action, or fall back to visual_description.
+  // Strip "Characters: …" style prefix that some DB rows store instead of a real action.
+  const rawFull = s(shot.action || shot.visual_description || '');
+  const raw = rawFull.split(/[.!?]/)[0].trim().slice(0, 100);
   const size   = n(shot.shot_size);
   const fn     = n(shot.dramatic_function || '');
   const chars  = Array.isArray(shot.characters) ? shot.characters.slice(0, 1) : [];
   const charName = chars.length ? chars[0] : 'subject';
 
+  // Detect whether "raw" is a real physical action or just a character/metadata listing.
+  // "Characters: X" or very short strings carry no action information.
+  const isOnlyCharListing = !raw || /^characters?\s*:/i.test(raw.trim()) || raw.trim().length < 6;
+
   if (arcIdx === 0) {
-    return `${charName} physically present in environment — body ≤25% of frame — environment scale dominates`;
+    // ALWAYS append raw shot action so physical verbs (stomps, crashes, etc.)
+    // flow through to the REQUIRED ACTION line and are seen by the verifier.
+    // If raw is only a character listing, fall back to positional-only template.
+    const actionSuffix = isOnlyCharListing ? '' : ` — ${raw}`;
+    return `${charName} physically present in environment — body ≤25% of frame — environment scale dominates${actionSuffix}`;
   }
   if (arcIdx === 1) {
-    return raw || `${charName} body language communicates intent — no passive standing`;
+    return (isOnlyCharListing ? '' : raw) || `${charName} body language communicates intent — no passive standing`;
   }
   if (arcIdx === 2) {
-    return `${charName} face visible — micro-expression readable — ${raw.slice(0, 60) || 'internal reaction'}`;
+    const actionPart = isOnlyCharListing ? 'internal reaction' : (raw.slice(0, 60) || 'internal reaction');
+    return `${charName} face visible — micro-expression readable — ${actionPart}`;
   }
   if (arcIdx === 3) {
-    return `Object, hand, or environmental detail fills frame — ${raw.slice(0, 60) || 'specific prop or body part'}`;
+    const actionPart = isOnlyCharListing ? 'specific prop or body part' : (raw.slice(0, 60) || 'specific prop or body part');
+    return `Object, hand, or environmental detail fills frame — ${actionPart}`;
   }
-  return raw || `${charName} performs specific action`;
+  return (isOnlyCharListing ? '' : raw) || `${charName} performs specific action`;
 }
 
 // ─── VISUAL DELTA FROM PREVIOUS ───────────────────────────────────────────────
@@ -584,9 +597,16 @@ export function verifyPrompt(
   // (e.g. "Godzilla silhouette rises above Tokyo skyline, dwarfing skyscrapers").
   const actionNowSection = prompt.match(/REQUIRED ACTION:([^\n]+)/)?.[1] || prompt.match(/ACTION NOW:([^\n]+)/)?.[1] || '';
   const beatSection      = prompt.match(/SCREENPLAY BEAT:([^\n]+)/)?.[1] || '';
-  // Also include the raw shot action as a final fallback so verb detection is not
-  // sabotaged by the derived positional text for establishing/wide shots.
-  const rawActionField   = s(shot.action || shot.visual_description || '').slice(0, 150);
+  // Combine ALL available text fields so verb detection is not sabotaged when
+  // shot.action is only a character listing ("Characters: X") and the real physical
+  // action lives in visual_description, shot_description, or scene_summary.
+  // Use join (not ||) so both action AND visual_description are always searched.
+  const rawActionField = s([
+    shot.action           || '',
+    shot.visual_description || '',
+    shot.shot_description || '',
+    shot.scene_summary    || '',
+  ].filter(Boolean).join(' ')).slice(0, 300);
   const combinedActionText = [actionNowSection, beatSection, rawActionField].join(' ');
   const hasStrongVerb  = REQUIRED_ACTION_VERBS.test(combinedActionText);
   const hasGenericVerb = /\b(looks?|stands?|sits?|walks?|watches?|gazes?)\b/i.test(actionNowSection) && !hasStrongVerb;
